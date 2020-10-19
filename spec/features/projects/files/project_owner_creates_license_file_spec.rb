@@ -1,17 +1,19 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'project owner creates a license file', js: true do
-  let(:project_master) { create(:user) }
+RSpec.describe 'Projects > Files > Project owner creates a license file', :js do
   let(:project) { create(:project, :repository) }
-  background do
-    project.repository.delete_file(project_master, 'LICENSE',
+  let(:project_maintainer) { project.owner }
+
+  before do
+    project.repository.delete_file(project_maintainer, 'LICENSE',
       message: 'Remove LICENSE', branch_name: 'master')
-    project.team << [project_master, :master]
-    sign_in(project_master)
+    sign_in(project_maintainer)
     visit project_path(project)
   end
 
-  scenario 'project master creates a license file manually from a template' do
+  it 'project maintainer creates a license file manually from a template' do
     visit project_tree_path(project, project.repository.root_ref)
     find('.add-to-tree').click
     click_link 'New file'
@@ -35,8 +37,8 @@ feature 'project owner creates a license file', js: true do
     expect(page).to have_content("Copyright (c) #{Time.now.year} #{project.namespace.human_name}")
   end
 
-  scenario 'project master creates a license file from the "Add license" link' do
-    click_link 'Add License'
+  it 'project maintainer creates a license file from the "Add license" link' do
+    click_link 'Add LICENSE'
 
     expect(page).to have_content('New file')
     expect(current_path).to eq(
@@ -61,7 +63,7 @@ feature 'project owner creates a license file', js: true do
 
   def select_template(template)
     page.within('.js-license-selector-wrap') do
-      click_button 'Apply a license template'
+      click_button 'Apply a template'
       click_link template
       wait_for_requests
     end

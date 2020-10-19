@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module DataBuilder
     module Note
@@ -9,6 +11,7 @@ module Gitlab
       #
       # data = {
       #   object_kind: "note",
+      #   event_type: "confidential_note",
       #   user: {
       #     name: String,
       #     username: String,
@@ -41,6 +44,7 @@ module Gitlab
           data[:commit] = build_data_for_commit(project, user, note)
         elsif note.for_issue?
           data[:issue] = note.noteable.hook_attrs
+          data[:issue][:labels] = note.noteable.labels_hook_attrs
         elsif note.for_merge_request?
           data[:merge_request] = note.noteable.hook_attrs
         elsif note.for_snippet?
@@ -51,8 +55,11 @@ module Gitlab
       end
 
       def build_base_data(project, user, note)
+        event_type = note.confidential?(include_noteable: true) ? 'confidential_note' : 'note'
+
         base_data = {
           object_kind: "note",
+          event_type: event_type,
           user: user.hook_attrs,
           project_id: project.id,
           project: project.hook_attrs,

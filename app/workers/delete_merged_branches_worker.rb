@@ -1,6 +1,9 @@
-class DeleteMergedBranchesWorker
-  include Sidekiq::Worker
-  include DedicatedSidekiqQueue
+# frozen_string_literal: true
+
+class DeleteMergedBranchesWorker # rubocop:disable Scalability/IdempotentWorker
+  include ApplicationWorker
+
+  feature_category :source_code_management
 
   def perform(project_id, user_id)
     begin
@@ -12,9 +15,8 @@ class DeleteMergedBranchesWorker
     user = User.find(user_id)
 
     begin
-      DeleteMergedBranchesService.new(project, user).execute
+      ::Branches::DeleteMergedService.new(project, user).execute
     rescue Gitlab::Access::AccessDeniedError
-      return
     end
   end
 end

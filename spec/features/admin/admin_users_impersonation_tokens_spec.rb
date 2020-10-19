@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'Admin > Users > Impersonation Tokens', js: true do
+RSpec.describe 'Admin > Users > Impersonation Tokens', :js do
   let(:admin) { create(:admin) }
   let!(:user) { create(:user) }
 
@@ -10,6 +12,10 @@ describe 'Admin > Users > Impersonation Tokens', js: true do
 
   def no_personal_access_tokens_message
     find(".settings-message")
+  end
+
+  def created_impersonation_token
+    find("#created-personal-access-token").value
   end
 
   before do
@@ -24,7 +30,7 @@ describe 'Admin > Users > Impersonation Tokens', js: true do
       fill_in "Name", with: name
 
       # Set date to 1st of next month
-      find_field("Expires at").trigger('focus')
+      find_field("Expires at").click
       find(".pika-next").click
       click_on "1"
 
@@ -39,6 +45,7 @@ describe 'Admin > Users > Impersonation Tokens', js: true do
       expect(active_impersonation_tokens).to have_text('api')
       expect(active_impersonation_tokens).to have_text('read_user')
       expect(PersonalAccessTokensFinder.new(impersonation: true).execute.count).to equal(1)
+      expect(created_impersonation_token).not_to be_empty
     end
   end
 
@@ -60,10 +67,10 @@ describe 'Admin > Users > Impersonation Tokens', js: true do
     it "allows revocation of an active impersonation token" do
       visit admin_user_impersonation_tokens_path(user_id: user.username)
 
-      click_on "Revoke"
+      accept_confirm { click_on "Revoke" }
 
       expect(page).to have_selector(".settings-message")
-      expect(no_personal_access_tokens_message).to have_text("This user has no active Impersonation Tokens.")
+      expect(no_personal_access_tokens_message).to have_text("This user has no active impersonation tokens.")
     end
 
     it "removes expired tokens from 'active' section" do
@@ -72,7 +79,7 @@ describe 'Admin > Users > Impersonation Tokens', js: true do
       visit admin_user_impersonation_tokens_path(user_id: user.username)
 
       expect(page).to have_selector(".settings-message")
-      expect(no_personal_access_tokens_message).to have_text("This user has no active Impersonation Tokens.")
+      expect(no_personal_access_tokens_message).to have_text("This user has no active impersonation tokens.")
     end
   end
 end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'projects/ci/jobs/_build' do
+RSpec.describe 'projects/ci/jobs/_build' do
   include Devise::Test::ControllerHelpers
 
   let(:project) { create(:project, :repository) }

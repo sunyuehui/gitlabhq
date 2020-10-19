@@ -1,34 +1,35 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe AbuseReportMailer do
+require 'spec_helper'
+
+RSpec.describe AbuseReportMailer do
   include EmailSpec::Matchers
 
   describe '.notify' do
-    context 'with admin_notification_email set' do
-      before do
-        stub_application_setting(admin_notification_email: 'admin@example.com')
-      end
+    before do
+      stub_application_setting(abuse_notification_email: 'admin@example.com')
+    end
 
-      it 'sends to the admin_notification_email' do
-        report = create(:abuse_report)
+    let(:report) { create(:abuse_report) }
 
-        mail = described_class.notify(report.id)
+    subject { described_class.notify(report.id) }
 
-        expect(mail).to deliver_to 'admin@example.com'
+    it_behaves_like 'appearance header and footer enabled'
+    it_behaves_like 'appearance header and footer not enabled'
+
+    context 'with abuse_notification_email set' do
+      it 'sends to the abuse_notification_email' do
+        is_expected.to deliver_to 'admin@example.com'
       end
 
       it 'includes the user in the subject' do
-        report = create(:abuse_report)
-
-        mail = described_class.notify(report.id)
-
-        expect(mail).to have_subject "#{report.user.name} (#{report.user.username}) was reported for abuse"
+        is_expected.to have_subject "#{report.user.name} (#{report.user.username}) was reported for abuse"
       end
     end
 
-    context 'with no admin_notification_email set' do
+    context 'with no abuse_notification_email set' do
       it 'returns early' do
-        stub_application_setting(admin_notification_email: nil)
+        stub_application_setting(abuse_notification_email: nil)
 
         expect { described_class.notify(spy).deliver_now }
           .not_to change { ActionMailer::Base.deliveries.count }

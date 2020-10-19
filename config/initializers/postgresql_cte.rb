@@ -61,11 +61,13 @@ module ActiveRecord
 
     def with_values=(values)
       raise ImmutableRelation if @loaded
+
       @values[:with] = values
     end
 
     def recursive_value=(value)
       raise ImmutableRelation if @loaded
+
       @values[:recursive] = value
     end
 
@@ -92,8 +94,8 @@ module ActiveRecord
       end
     end
 
-    def build_arel
-      arel = super()
+    def build_arel(aliases)
+      arel = super
 
       build_with(arel) if @values[:with]
 
@@ -106,7 +108,7 @@ module ActiveRecord
         when String
           with_value
         when Hash
-          with_value.map  do |name, expression|
+          with_value.map do |name, expression|
             case expression
             when String
               select = Arel::Nodes::SqlLiteral.new "(#{expression})"

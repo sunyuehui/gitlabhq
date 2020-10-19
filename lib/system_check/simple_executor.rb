@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module SystemCheck
   # Simple Executor is current default executor for GitLab
   # It is a simple port from display logic in the old check.rake
@@ -23,7 +25,8 @@ module SystemCheck
     #
     # @param [BaseCheck] check class
     def <<(check)
-      raise ArgumentError unless check < BaseCheck
+      raise ArgumentError unless check.is_a?(Class) && check < BaseCheck
+
       @checks << check
     end
 
@@ -42,34 +45,35 @@ module SystemCheck
     #
     # @param [SystemCheck::BaseCheck] check_klass
     def run_check(check_klass)
-      $stdout.print "#{check_klass.display_name} ... "
+      print_display_name(check_klass)
 
       check = check_klass.new
 
       # When implements skip method, we run it first, and if true, skip the check
       if check.can_skip? && check.skip?
-        $stdout.puts check_klass.skip_reason.color(:magenta)
+        $stdout.puts check.skip_reason.try(:color, :magenta) || check_klass.skip_reason.color(:magenta)
         return
       end
 
       # When implements a multi check, we don't control the output
-      if check.is_multi_check?
+      if check.multi_check?
         check.multi_check
         return
       end
 
       if check.check?
-        $stdout.puts check_klass.check_pass.color(:green)
+        print_check_pass(check_klass)
       else
-        $stdout.puts check_klass.check_fail.color(:red)
+        print_check_failure(check_klass)
 
         if check.can_repair?
           $stdout.print 'Trying to fix error automatically. ...'
+
           if check.repair!
-            $stdout.puts 'Success'.color(:green)
+            print_success
             return
           else
-            $stdout.puts 'Failed'.color(:red)
+            print_failure
           end
         end
 
@@ -80,6 +84,26 @@ module SystemCheck
     end
 
     private
+
+    def print_display_name(check_klass)
+      $stdout.print "#{check_klass.display_name} ... "
+    end
+
+    def print_check_pass(check_klass)
+      $stdout.puts check_klass.check_pass.color(:green)
+    end
+
+    def print_check_failure(check_klass)
+      $stdout.puts check_klass.check_fail.color(:red)
+    end
+
+    def print_success
+      $stdout.puts 'Success'.color(:green)
+    end
+
+    def print_failure
+      $stdout.puts 'Failed'.color(:red)
+    end
 
     # Prints header content for the series of checks to be executed for this component
     #

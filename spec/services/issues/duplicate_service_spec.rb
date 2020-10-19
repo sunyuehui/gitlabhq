@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Issues::DuplicateService do
+RSpec.describe Issues::DuplicateService do
   let(:user) { create(:user) }
   let(:canonical_project) { create(:project) }
   let(:duplicate_project) { create(:project) }
@@ -74,6 +76,23 @@ describe Issues::DuplicateService do
           .to receive(:mark_canonical_issue_of_duplicate).with(canonical_issue, canonical_project, user, duplicate_issue)
 
         subject.execute(duplicate_issue, canonical_issue)
+      end
+
+      it 'updates duplicate issue with canonical issue id' do
+        subject.execute(duplicate_issue, canonical_issue)
+
+        expect(duplicate_issue.reload.duplicated_to).to eq(canonical_issue)
+      end
+
+      it 'relates the duplicate issues' do
+        canonical_project.add_reporter(user)
+        duplicate_project.add_reporter(user)
+
+        subject.execute(duplicate_issue, canonical_issue)
+
+        issue_link = IssueLink.last
+        expect(issue_link.source).to eq(duplicate_issue)
+        expect(issue_link.target).to eq(canonical_issue)
       end
     end
   end

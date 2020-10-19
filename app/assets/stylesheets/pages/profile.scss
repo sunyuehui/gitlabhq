@@ -5,7 +5,7 @@
 }
 
 .avatar-image {
-  @media (min-width: $screen-sm-min) {
+  @include media-breakpoint-up(sm) {
     float: left;
     margin-bottom: 0;
   }
@@ -15,12 +15,6 @@
   position: relative;
   top: 2px;
   display: inline-block;
-}
-
-.account-btn-link,
-.profile-settings-sidebar a,
-.settings-sidebar a {
-  color: $md-link-color;
 }
 
 .private-tokens-reset div.reset-action:not(:first-child) {
@@ -73,24 +67,19 @@
 .profile-link-holder {
   display: inline;
 
-  a {
+  a:not(.text-link) {
     text-decoration: none;
   }
 }
 
 // Middle dot divider between each element in a list of items.
 .middle-dot-divider {
-  &::after {
-    content: "\00B7"; // Middle Dot
-    padding: 0 6px;
-    font-weight: bold;
-  }
+  @include middle-dot-divider;
+}
 
-  &:last-child {
-    &::after {
-      content: "";
-      padding: 0;
-    }
+.middle-dot-divider-sm {
+  @include media-breakpoint-up(sm) {
+    @include middle-dot-divider;
   }
 }
 
@@ -98,7 +87,6 @@
   // Limits the width of the user bio for readability.
   max-width: 600px;
   margin: 10px auto;
-  padding: 0 16px;
 }
 
 .user-avatar-button {
@@ -108,17 +96,28 @@
   }
 }
 
+.subkeys-list {
+  @include basic-list;
+
+  li {
+    padding: 3px 0;
+    border: 0;
+  }
+}
+
 .key-list-item {
   .key-list-item-info {
-    @media (min-width: $screen-sm-min) {
+    @include media-breakpoint-up(sm) {
       float: left;
     }
   }
+}
 
-  .description {
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
+.ssh-keys-list {
+  .last-used-at,
+  .expires,
+  .key-created-at {
+    line-height: 32px;
   }
 }
 
@@ -126,20 +125,16 @@
   line-height: 42px;
 }
 
-.profile-settings-content {
-  a {
-    color: $md-link-color;
-  }
-}
-
 .provider-btn-group {
   display: inline-block;
   margin-right: 10px;
+  margin-bottom: 10px;
   border: 1px solid $border-color;
   border-radius: 3px;
 
   &:last-child {
     margin-right: 0;
+    margin-bottom: 0;
   }
 }
 
@@ -159,10 +154,6 @@
   margin-left: -3px;
   line-height: 22px;
   background-color: $gray-light;
-
-  &.not-active {
-    color: $provider-btn-not-active-color;
-  }
 }
 
 .oauth-applications {
@@ -179,10 +170,9 @@
   .modal-dialog {
     width: 380px;
 
-    @media (max-width: $screen-xs-max) {
+    @include media-breakpoint-down(xs) {
       width: auto;
     }
-
   }
 
   .profile-crop-image-container {
@@ -201,24 +191,18 @@
 }
 
 .created-personal-access-token-container {
-  #created-personal-access-token {
-    width: 90%;
-    display: inline;
-  }
-
   .btn-clipboard {
-    margin-left: 5px;
+    border: 1px solid $border-color;
   }
 }
 
-
 .user-profile {
-  .cover-controls a {
-    margin-left: 5px;
-  }
-
   .profile-header {
-    margin: 0 auto;
+    margin: 0 $gl-padding;
+
+    &.with-no-profile-tabs {
+      margin-bottom: $gl-padding-24;
+    }
 
     .avatar-holder {
       width: 90px;
@@ -238,26 +222,29 @@
     left: 0;
   }
 
-  @media (max-width: $screen-xs-max) {
-    .cover-block {
-      padding-top: 20px;
+  .activities-block {
+    .event-item {
+      padding-left: 40px;
     }
 
-    .cover-controls {
-      position: static;
-      padding: 0 16px;
-      margin-bottom: 20px;
-      display: -webkit-flex;
-      display: flex;
+    .gl-label-scoped {
+      --label-inset-border: inset 0 0 0 1px currentColor;
+    }
 
-      .btn {
-        -webkit-flex-grow: 1;
-        flex-grow: 1;
+    @include media-breakpoint-up(lg) {
+      margin-right: 5px;
+    }
+  }
 
-        &:first-child {
-          margin-left: 0;
-        }
-      }
+  .projects-block {
+    @include media-breakpoint-up(lg) {
+      margin-left: 5px;
+    }
+  }
+
+  @include media-breakpoint-down(xs) {
+    .cover-block {
+      padding-top: 20px;
     }
 
     .user-profile-nav {
@@ -265,21 +252,28 @@
         margin-right: 0;
       }
     }
+
+    .activities-block {
+      .event-item {
+        padding-left: 0;
+      }
+    }
   }
 }
 
-table.u2f-registrations {
+table.u2f-registrations,
+.webauthn-registrations {
   th:not(:last-child),
   td:not(:last-child) {
     border-right: solid 1px transparent;
   }
 }
 
-.oauth-application-show {
-  .scope-name {
-    font-weight: 600;
-  }
+.codes {
+  padding-top: 14px;
+}
 
+.oauth-application-show {
   .scopes-list {
     padding-left: 18px;
   }
@@ -289,9 +283,10 @@ table.u2f-registrations {
   margin: 20px -5px 0;
 
   .bordered-box {
+    padding: 32px;
     border: 1px solid $blue-300;
     border-radius: $border-radius-default;
-    background-color: $blue-25;
+    background-color: $blue-50;
     position: relative;
     display: flex;
     justify-content: center;
@@ -300,108 +295,91 @@ table.u2f-registrations {
 
   .landing {
     padding: 32px;
+  }
 
-    .close {
-      position: absolute;
-      top: 20px;
-      right: 20px;
-      opacity: 1;
+  .close {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    opacity: 1;
+
+    .dismiss-icon {
+      float: right;
+      cursor: pointer;
+      color: $blue-300;
+    }
+
+    &:hover {
+      background-color: transparent;
+      border: 0;
 
       .dismiss-icon {
-        float: right;
-        cursor: pointer;
-        color: $blue-300;
+        color: $blue-400;
       }
-
-      &:hover {
-        background-color: transparent;
-        border: 0;
-
-        .dismiss-icon {
-          color: $blue-400;
-        }
-      }
-    }
-
-    .svg-container {
-      margin-right: 30px;
-      display: inline-block;
-
-      svg {
-        height: 110px;
-        vertical-align: top;
-      }
-
-      &.convdev {
-        margin: 0 0 0 30px;
-
-        svg {
-          height: 127px;
-        }
-      }
-    }
-
-    .user-callout-copy {
-      display: inline-block;
-      vertical-align: top;
-      max-width: 570px;
     }
   }
 
-  @media(max-width: $screen-xs-max) {
+  .svg-container {
+    margin-right: 30px;
+    display: inline-block;
+
+    svg {
+      height: 110px;
+      vertical-align: top;
+    }
+
+    &.convdev {
+      margin: 0 0 0 30px;
+
+      svg {
+        height: 127px;
+      }
+    }
+  }
+
+  .user-callout-copy {
+    display: inline-block;
+    vertical-align: top;
+    max-width: 570px;
+  }
+
+  @include media-breakpoint-down(xs) {
     text-align: center;
 
     .bordered-box {
       display: block;
     }
 
-    .landing {
-      .svg-container,
-      .user-callout-copy {
-        margin: 0 auto;
-        display: block;
+    .svg-container,
+    .user-callout-copy {
+      margin: 0 auto;
+      display: block;
+
+      svg {
+        height: 75px;
+      }
+
+      &.convdev {
+        margin: $gl-padding auto 0;
 
         svg {
-          height: 75px;
-        }
-
-        &.convdev {
-          margin: $gl-padding auto 0;
-
-          svg {
-            height: 120px;
-          }
+          height: 120px;
         }
       }
     }
   }
 }
 
-.nav-wip {
-  border: 1px solid $blue-500;
-  background: $blue-25;
-  padding: $gl-padding;
-  margin-bottom: $gl-padding;
-
-  a {
-    color: $blue-500;
-  }
-
-  p:last-child {
-    margin-bottom: 0;
-  }
-}
-
-.gpg-email-badge {
+.email-badge {
   display: inline;
   margin-right: $gl-padding / 2;
 
-  .gpg-email-badge-email {
+  .email-badge-email {
     display: inline;
     margin-right: $gl-padding / 4;
   }
 
-  .label-verification-status {
+  .badge-verification-status {
     border-width: 1px;
     border-style: solid;
 
@@ -410,7 +388,62 @@ table.u2f-registrations {
     }
 
     &.unverified {
-      @include status-color($gray-dark, $gray, $common-gray-dark);
+      @include status-color($gray-dark, color('gray'), $common-gray-dark);
     }
   }
+}
+
+.edit-user {
+  svg {
+    fill: $gl-text-color-secondary;
+  }
+
+  .form-group > label {
+    font-weight: $gl-font-weight-bold;
+  }
+
+  .form-group > .form-text {
+    font-size: $gl-font-size;
+  }
+
+  .emoji-menu-toggle-button {
+    @include emoji-menu-toggle-button;
+    padding: 6px 10px;
+
+    .no-emoji-placeholder {
+      position: relative;
+    }
+  }
+
+  @include media-breakpoint-down(sm) {
+    .input-md,
+    .input-lg {
+      max-width: 100%;
+    }
+  }
+}
+
+.help-block {
+  color: $gl-text-color-secondary;
+}
+
+.gitlab-slack-gif {
+  width: 100%;
+  max-width: $add-to-slack-gif-max-width;
+}
+
+.gitlab-slack-well {
+  background-color: $white;
+  box-shadow: none;
+  max-width: $add-to-slack-well-max-width;
+}
+
+.gitlab-slack-logo {
+  width: $add-to-slack-logo-size;
+  height: $add-to-slack-logo-size;
+}
+
+.gitlab-slack-popup {
+  width: 100%;
+  max-width: $add-to-slack-popup-max-width;
 }

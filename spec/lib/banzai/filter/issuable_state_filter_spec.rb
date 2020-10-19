@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::IssuableStateFilter do
+RSpec.describe Banzai::Filter::IssuableStateFilter do
   include ActionView::Helpers::UrlHelper
   include FilterSpecHelper
 
@@ -8,6 +10,7 @@ describe Banzai::Filter::IssuableStateFilter do
   let(:context) { { current_user: user, issuable_state_filter_enabled: true } }
   let(:closed_issue) { create_issue(:closed) }
   let(:project) { create(:project, :public) }
+  let(:group) { create(:group) }
   let(:other_project) { create(:project, :public) }
 
   def create_link(text, data)
@@ -77,6 +80,21 @@ describe Banzai::Filter::IssuableStateFilter do
     expect(doc.css('a').last.text).to eq("#{closed_issue.to_reference(other_project)} (closed)")
   end
 
+  it 'handles references from group scopes' do
+    link = create_link(closed_issue.to_reference(other_project), issue: closed_issue.id, reference_type: 'issue')
+    doc = filter(link, context.merge(project: nil, group: group))
+
+    expect(doc.css('a').last.text).to eq("#{closed_issue.to_reference(other_project)} (closed)")
+  end
+
+  it 'skips cross project references if the user cannot read cross project' do
+    expect(Ability).to receive(:allowed?).with(user, :read_cross_project) { false }
+    link = create_link(closed_issue.to_reference(other_project), issue: closed_issue.id, reference_type: 'issue')
+    doc = filter(link, context.merge(project: other_project))
+
+    expect(doc.css('a').last.text).to eq("#{closed_issue.to_reference(other_project)}")
+  end
+
   it 'does not append state when filter is not enabled' do
     link = create_link('text', issue: closed_issue.id, reference_type: 'issue')
     context = { current_user: user }
@@ -113,24 +131,18 @@ describe Banzai::Filter::IssuableStateFilter do
 
       expect(doc.css('a').last.text).to eq("#{closed_issue.to_reference} (closed)")
     end
+
+    it 'appends state to moved issue references' do
+      moved_issue = create(:issue, :closed, project: project, moved_to: create_issue(:opened))
+      link = create_link(moved_issue.to_reference, issue: moved_issue.id, reference_type: 'issue')
+      doc = filter(link, context)
+
+      expect(doc.css('a').last.text).to eq("#{moved_issue.to_reference} (moved)")
+    end
   end
 
   context 'for merge request references' do
     it 'ignores open merge request references' do
-      merge_request = create_merge_request(:opened)
-
-      link = create_link(
-        merge_request.to_reference,
-        merge_request: merge_request.id,
-        reference_type: 'merge_request'
-      )
-
-      doc = filter(link, context)
-
-      expect(doc.css('a').last.text).to eq(merge_request.to_reference)
-    end
-
-    it 'ignores reopened merge request references' do
       merge_request = create_merge_request(:opened)
 
       link = create_link(

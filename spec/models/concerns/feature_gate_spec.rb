@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe FeatureGate do
+RSpec.describe FeatureGate do
   describe 'User' do
     describe '#flipper_id' do
       context 'when user is not persisted' do

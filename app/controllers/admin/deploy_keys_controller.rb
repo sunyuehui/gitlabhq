@@ -1,6 +1,10 @@
+# frozen_string_literal: true
+
 class Admin::DeployKeysController < Admin::ApplicationController
   before_action :deploy_keys, only: [:index]
   before_action :deploy_key, only: [:destroy, :edit, :update]
+
+  feature_category :continuous_delivery
 
   def index
   end
@@ -10,9 +14,8 @@ class Admin::DeployKeysController < Admin::ApplicationController
   end
 
   def create
-    @deploy_key = deploy_keys.new(create_params.merge(user: current_user))
-
-    if @deploy_key.save
+    @deploy_key = DeployKeys::CreateService.new(current_user, create_params.merge(public: true)).execute
+    if @deploy_key.persisted?
       redirect_to admin_deploy_keys_path
     else
       render 'new'
@@ -23,8 +26,8 @@ class Admin::DeployKeysController < Admin::ApplicationController
   end
 
   def update
-    if deploy_key.update_attributes(update_params)
-      flash[:notice] = 'Deploy key was successfully updated.'
+    if deploy_key.update(update_params)
+      flash[:notice] = _('Deploy key was successfully updated.')
       redirect_to admin_deploy_keys_path
     else
       render 'edit'
@@ -35,7 +38,7 @@ class Admin::DeployKeysController < Admin::ApplicationController
     deploy_key.destroy
 
     respond_to do |format|
-      format.html { redirect_to admin_deploy_keys_path, status: 302 }
+      format.html { redirect_to admin_deploy_keys_path, status: :found }
       format.json { head :ok }
     end
   end
@@ -51,10 +54,10 @@ class Admin::DeployKeysController < Admin::ApplicationController
   end
 
   def create_params
-    params.require(:deploy_key).permit(:key, :title, :can_push)
+    params.require(:deploy_key).permit(:key, :title)
   end
 
   def update_params
-    params.require(:deploy_key).permit(:title, :can_push)
+    params.require(:deploy_key).permit(:title)
   end
 end

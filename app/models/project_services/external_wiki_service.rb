@@ -1,16 +1,16 @@
-class ExternalWikiService < Service
-  include HTTParty
+# frozen_string_literal: true
 
+class ExternalWikiService < Service
   prop_accessor :external_wiki_url
 
-  validates :external_wiki_url, presence: true, url: true, if: :activated?
+  validates :external_wiki_url, presence: true, public_url: true, if: :activated?
 
   def title
-    'External Wiki'
+    s_('ExternalWikiService|External Wiki')
   end
 
   def description
-    'Replaces the link to the internal wiki with a link to an external wiki.'
+    s_('ExternalWikiService|Replaces the link to the internal wiki with a link to an external wiki.')
   end
 
   def self.to_param
@@ -19,15 +19,20 @@ class ExternalWikiService < Service
 
   def fields
     [
-      { type: 'text', name: 'external_wiki_url', placeholder: 'The URL of the external Wiki', required: true }
+      {
+        type: 'text',
+        name: 'external_wiki_url',
+        placeholder: s_('ExternalWikiService|The URL of the external Wiki'),
+        required: true
+      }
     ]
   end
 
   def execute(_data)
-    @response = HTTParty.get(properties['external_wiki_url'], verify: true) rescue nil
-    if @response != 200
-      nil
-    end
+    response = Gitlab::HTTP.get(properties['external_wiki_url'], verify: true)
+    response.body if response.code == 200
+  rescue
+    nil
   end
 
   def self.supported_events

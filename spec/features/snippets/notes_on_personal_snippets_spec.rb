@@ -1,21 +1,27 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'Comments on personal snippets', :js do
+RSpec.describe 'Comments on personal snippets', :js do
   include NoteInteractionHelpers
 
-  let!(:user)    { create(:user) }
-  let!(:snippet) { create(:personal_snippet, :public) }
+  let_it_be(:snippet) { create(:personal_snippet, :public) }
+  let_it_be(:other_note) { create(:note_on_personal_snippet) }
+
+  let(:user_name) { 'Test User' }
+  let!(:user) { create(:user, name: user_name) }
   let!(:snippet_notes) do
     [
       create(:note_on_personal_snippet, noteable: snippet, author: user),
       create(:note_on_personal_snippet, noteable: snippet)
     ]
   end
-  let!(:other_note) { create(:note_on_personal_snippet) }
 
   before do
     sign_in user
     visit snippet_path(snippet)
+
+    wait_for_requests
   end
 
   subject { page }
@@ -42,6 +48,35 @@ describe 'Comments on personal snippets', :js do
         expect(page).to have_selector('.note-emoji-button')
       end
     end
+
+    it 'shows the status of a note author' do
+      status = create(:user_status, user: user)
+      visit snippet_path(snippet)
+
+      within("#note_#{snippet_notes[0].id}") do
+        expect(page).to show_user_status(status)
+      end
+    end
+
+    it 'shows the author name' do
+      visit snippet_path(snippet)
+
+      within("#note_#{snippet_notes[0].id}") do
+        expect(page).to have_content(user_name)
+      end
+    end
+
+    context 'when the author name contains HTML' do
+      let(:user_name) { '<h1><a href="https://bad.link/malicious.exe" class="evil">Fake Content<img class="fake-icon" src="image.png"></a></h1>' }
+
+      it 'renders the name as plain text' do
+        visit snippet_path(snippet)
+
+        content = find("#note_#{snippet_notes[0].id} .note-header-author-name").text
+
+        expect(content).to eq user_name
+      end
+    end
   end
 
   context 'when submitting a note' do
@@ -59,7 +94,7 @@ describe 'Comments on personal snippets', :js do
       fill_in 'note[note]', with: 'This is **awesome**!'
       find('.js-md-preview-button').click
 
-      page.within('.new-note .md-preview') do
+      page.within('.new-note .md-preview-holder') do
         expect(page).to have_content('This is awesome!')
         expect(page).to have_selector('strong')
       end
@@ -72,20 +107,28 @@ describe 'Comments on personal snippets', :js do
       expect(find('div#notes')).to have_content('This is awesome!')
     end
 
-    it 'should not have autocomplete' do
+    it 'does not have autocomplete' do
       wait_for_requests
-      request_count_before = page.driver.network_traffic.count
 
       find('#note_note').native.send_keys('')
       fill_in 'note[note]', with: '@'
 
       wait_for_requests
-      request_count_after = page.driver.network_traffic.count
 
       # This selector probably won't be in place even if autocomplete was enabled
       # but we want to make sure
       expect(page).not_to have_selector('.atwho-view')
-      expect(request_count_before).to eq(request_count_after)
+    end
+
+    it_behaves_like 'personal snippet with references' do
+      let(:container) { 'div#notes' }
+
+      subject do
+        fill_in 'note[note]', with: references
+        click_button 'Comment'
+
+        wait_for_requests
+      end
     end
   end
 
@@ -95,7 +138,7 @@ describe 'Comments on personal snippets', :js do
 
       page.within('.current-note-edit-form') do
         fill_in 'note[note]', with: 'new content'
-        find('.btn-save').click
+        find('.btn-success').click
       end
 
       page.within("#notes-list li#note_#{snippet_notes[0].id}") do
@@ -113,7 +156,7 @@ describe 'Comments on personal snippets', :js do
       open_more_actions_dropdown(snippet_notes[0])
 
       page.within("#notes-list li#note_#{snippet_notes[0].id}") do
-        click_on 'Delete comment'
+        accept_confirm { click_on 'Delete comment' }
       end
 
       wait_for_requests

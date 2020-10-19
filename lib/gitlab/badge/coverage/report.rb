@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Badge
     module Coverage
@@ -5,14 +7,18 @@ module Gitlab
       # Test coverage report badge
       #
       class Report < Badge::Base
-        attr_reader :project, :ref, :job
+        attr_reader :project, :ref, :job, :customization
 
-        def initialize(project, ref, job = nil)
+        def initialize(project, ref, opts: { job: nil })
           @project = project
           @ref = ref
-          @job = job
+          @job = opts[:job]
+          @customization = {
+            key_width: opts[:key_width].to_i,
+            key_text: opts[:key_text]
+          }
 
-          @pipeline = @project.pipelines.latest_successful_for(@ref)
+          @pipeline = @project.ci_pipelines.latest_successful_for_ref(@ref)
         end
 
         def entity
@@ -23,7 +29,7 @@ module Gitlab
           @coverage ||= raw_coverage
           return unless @coverage
 
-          @coverage.to_i
+          @coverage.to_f.round(2)
         end
 
         def metadata
@@ -36,6 +42,7 @@ module Gitlab
 
         private
 
+        # rubocop: disable CodeReuse/ActiveRecord
         def raw_coverage
           return unless @pipeline
 
@@ -47,6 +54,7 @@ module Gitlab
               .try(:coverage)
           end
         end
+        # rubocop: enable CodeReuse/ActiveRecord
       end
     end
   end

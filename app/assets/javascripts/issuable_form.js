@@ -1,160 +1,220 @@
-/* eslint-disable func-names, space-before-function-paren, no-var, prefer-rest-params, wrap-iife, no-use-before-define, no-useless-escape, no-new, quotes, object-shorthand, no-unused-vars, comma-dangle, no-alert, consistent-return, no-else-return, prefer-template, one-var, one-var-declaration-per-line, curly, max-len */
-/* global GitLab */
-/* global Autosave */
-/* global dateFormat */
-
+import $ from 'jquery';
 import Pikaday from 'pikaday';
+import GfmAutoComplete from 'ee_else_ce/gfm_auto_complete';
+import Autosave from './autosave';
 import UsersSelect from './users_select';
-import GfmAutoComplete from './gfm_auto_complete';
 import ZenMode from './zen_mode';
+import AutoWidthDropdownSelect from './issuable/auto_width_dropdown_select';
+import { parsePikadayDate, pikadayToString } from './lib/utils/datetime_utility';
+import { queryToObject, objectToQuery } from './lib/utils/url_utility';
 
-(function() {
-  this.IssuableForm = (function() {
-    IssuableForm.prototype.issueMoveConfirmMsg = 'Are you sure you want to move this issue to another project?';
+const MR_SOURCE_BRANCH = 'merge_request[source_branch]';
+const MR_TARGET_BRANCH = 'merge_request[target_branch]';
 
-    IssuableForm.prototype.wipRegex = /^\s*(\[WIP\]\s*|WIP:\s*|WIP\s+)+\s*/i;
+function organizeQuery(obj, isFallbackKey = false) {
+  if (!obj[MR_SOURCE_BRANCH] && !obj[MR_TARGET_BRANCH]) {
+    return obj;
+  }
 
-    function IssuableForm(form) {
-      var $issuableDueDate, calendar;
-      this.form = form;
-      this.toggleWip = this.toggleWip.bind(this);
-      this.renderWipExplanation = this.renderWipExplanation.bind(this);
-      this.resetAutosave = this.resetAutosave.bind(this);
-      this.handleSubmit = this.handleSubmit.bind(this);
-      new GfmAutoComplete(gl.GfmAutoComplete && gl.GfmAutoComplete.dataSources).setup();
-      new UsersSelect();
-      new ZenMode();
-      this.titleField = this.form.find("input[name*='[title]']");
-      this.descriptionField = this.form.find("textarea[name*='[description]']");
-      this.issueMoveField = this.form.find("#move_to_project_id");
-      if (!(this.titleField.length && this.descriptionField.length)) {
-        return;
-      }
-      this.initAutosave();
-      this.form.on("submit", this.handleSubmit);
-      this.form.on("click", ".btn-cancel", this.resetAutosave);
-      this.initWip();
-      this.initMoveDropdown();
-      $issuableDueDate = $('#issuable-due-date');
-      if ($issuableDueDate.length) {
-        calendar = new Pikaday({
-          field: $issuableDueDate.get(0),
-          theme: 'gitlab-theme animate-picker',
-          format: 'yyyy-mm-dd',
-          container: $issuableDueDate.parent().get(0),
-          onSelect: function(dateText) {
-            $issuableDueDate.val(dateFormat(new Date(dateText), 'yyyy-mm-dd'));
-          }
-        });
-        calendar.setDate(new Date($issuableDueDate.val()));
-      }
+  if (isFallbackKey) {
+    return {
+      [MR_SOURCE_BRANCH]: obj[MR_SOURCE_BRANCH],
+    };
+  }
+
+  return {
+    [MR_SOURCE_BRANCH]: obj[MR_SOURCE_BRANCH],
+    [MR_TARGET_BRANCH]: obj[MR_TARGET_BRANCH],
+  };
+}
+
+function format(searchTerm, isFallbackKey = false) {
+  const queryObject = queryToObject(searchTerm);
+  const organizeQueryObject = organizeQuery(queryObject, isFallbackKey);
+  const formattedQuery = objectToQuery(organizeQueryObject);
+
+  return formattedQuery;
+}
+
+function getFallbackKey() {
+  const searchTerm = format(document.location.search, true);
+  return ['autosave', document.location.pathname, searchTerm].join('/');
+}
+
+export default class IssuableForm {
+  constructor(form) {
+    this.form = form;
+    this.toggleWip = this.toggleWip.bind(this);
+    this.renderWipExplanation = this.renderWipExplanation.bind(this);
+    this.resetAutosave = this.resetAutosave.bind(this);
+    this.handleSubmit = this.handleSubmit.bind(this);
+    /* eslint-disable @gitlab/require-i18n-strings */
+    this.wipRegex = new RegExp(
+      '^\\s*(' + // Line start, then any amount of leading whitespace
+      'draft\\s-\\s' + // Draft_-_ where "_" are *exactly* one whitespace
+      '|\\[(draft|wip)\\]\\s*' + // [Draft] or [WIP] and any following whitespace
+      '|(draft|wip):\\s*' + // Draft: or WIP: and any following whitespace
+      '|(draft|wip)\\s+' + // Draft_ or WIP_ where "_" is at least one whitespace
+      '|\\(draft\\)\\s*' + // (Draft) and any following whitespace
+      ')+' + // At least one repeated match of the preceding parenthetical
+        '\\s*', // Any amount of trailing whitespace
+      'i', // Match any case(s)
+    );
+    /* eslint-enable @gitlab/require-i18n-strings */
+
+    this.gfmAutoComplete = new GfmAutoComplete(
+      gl.GfmAutoComplete && gl.GfmAutoComplete.dataSources,
+    ).setup();
+    this.usersSelect = new UsersSelect();
+    this.reviewersSelect = new UsersSelect(undefined, '.js-reviewer-search');
+    this.zenMode = new ZenMode();
+
+    this.titleField = this.form.find('input[name*="[title]"]');
+    this.descriptionField = this.form.find('textarea[name*="[description]"]');
+    if (!(this.titleField.length && this.descriptionField.length)) {
+      return;
     }
 
-    IssuableForm.prototype.initAutosave = function() {
-      new Autosave(this.titleField, [document.location.pathname, document.location.search, "title"]);
-      return new Autosave(this.descriptionField, [document.location.pathname, document.location.search, "description"]);
-    };
+    this.initAutosave();
+    this.form.on('submit', this.handleSubmit);
+    this.form.on('click', '.btn-cancel', this.resetAutosave);
+    this.initWip();
 
-    IssuableForm.prototype.handleSubmit = function() {
-      var fieldId = (this.issueMoveField != null) ? this.issueMoveField.val() : null;
-      if ((parseInt(fieldId, 10) || 0) > 0) {
-        if (!confirm(this.issueMoveConfirmMsg)) {
-          return false;
-        }
-      }
-      return this.resetAutosave();
-    };
+    const $issuableDueDate = $('#issuable-due-date');
 
-    IssuableForm.prototype.resetAutosave = function() {
-      this.titleField.data("autosave").reset();
-      return this.descriptionField.data("autosave").reset();
-    };
+    if ($issuableDueDate.length) {
+      const calendar = new Pikaday({
+        field: $issuableDueDate.get(0),
+        theme: 'gitlab-theme animate-picker',
+        format: 'yyyy-mm-dd',
+        container: $issuableDueDate.parent().get(0),
+        parse: dateString => parsePikadayDate(dateString),
+        toString: date => pikadayToString(date),
+        onSelect: dateText => $issuableDueDate.val(calendar.toString(dateText)),
+        firstDay: gon.first_day_of_week,
+      });
+      calendar.setDate(parsePikadayDate($issuableDueDate.val()));
+    }
 
-    IssuableForm.prototype.initWip = function() {
-      this.$wipExplanation = this.form.find(".js-wip-explanation");
-      this.$noWipExplanation = this.form.find(".js-no-wip-explanation");
-      if (!(this.$wipExplanation.length && this.$noWipExplanation.length)) {
-        return;
-      }
-      this.form.on("click", ".js-toggle-wip", this.toggleWip);
-      this.titleField.on("keyup blur", this.renderWipExplanation);
-      return this.renderWipExplanation();
-    };
+    this.$targetBranchSelect = $('.js-target-branch-select', this.form);
 
-    IssuableForm.prototype.workInProgress = function() {
-      return this.wipRegex.test(this.titleField.val());
-    };
+    if (this.$targetBranchSelect.length) {
+      this.initTargetBranchDropdown();
+    }
+  }
 
-    IssuableForm.prototype.renderWipExplanation = function() {
-      if (this.workInProgress()) {
-        this.$wipExplanation.show();
-        return this.$noWipExplanation.hide();
-      } else {
-        this.$wipExplanation.hide();
-        return this.$noWipExplanation.show();
-      }
-    };
+  initAutosave() {
+    const { search } = document.location;
+    const searchTerm = format(search);
+    const fallbackKey = getFallbackKey();
 
-    IssuableForm.prototype.toggleWip = function(event) {
-      event.preventDefault();
-      if (this.workInProgress()) {
-        this.removeWip();
-      } else {
-        this.addWip();
-      }
-      return this.renderWipExplanation();
-    };
+    this.autosave = new Autosave(
+      this.titleField,
+      [document.location.pathname, searchTerm, 'title'],
+      `${fallbackKey}=title`,
+    );
 
-    IssuableForm.prototype.removeWip = function() {
-      return this.titleField.val(this.titleField.val().replace(this.wipRegex, ""));
-    };
+    return new Autosave(
+      this.descriptionField,
+      [document.location.pathname, searchTerm, 'description'],
+      `${fallbackKey}=description`,
+    );
+  }
 
-    IssuableForm.prototype.addWip = function() {
-      return this.titleField.val("WIP: " + (this.titleField.val()));
-    };
+  handleSubmit() {
+    return this.resetAutosave();
+  }
 
-    IssuableForm.prototype.initMoveDropdown = function() {
-      var $moveDropdown, pageSize;
-      $moveDropdown = $('.js-move-dropdown');
-      if ($moveDropdown.length) {
-        pageSize = $moveDropdown.data('page-size');
-        return $('.js-move-dropdown').select2({
+  resetAutosave() {
+    this.titleField.data('autosave').reset();
+    return this.descriptionField.data('autosave').reset();
+  }
+
+  initWip() {
+    this.$wipExplanation = this.form.find('.js-wip-explanation');
+    this.$noWipExplanation = this.form.find('.js-no-wip-explanation');
+    if (!(this.$wipExplanation.length && this.$noWipExplanation.length)) {
+      return undefined;
+    }
+    this.form.on('click', '.js-toggle-wip', this.toggleWip);
+    this.titleField.on('keyup blur', this.renderWipExplanation);
+    return this.renderWipExplanation();
+  }
+
+  workInProgress() {
+    return this.wipRegex.test(this.titleField.val());
+  }
+  titlePrefixContainsDraft() {
+    const prefix = this.titleField.val().match(this.wipRegex);
+
+    return prefix && prefix[0].match(/draft/i);
+  }
+
+  renderWipExplanation() {
+    if (this.workInProgress()) {
+      // These strings are not "translatable" (the code is hard-coded to look for them)
+      this.$wipExplanation.find('code')[0].textContent = this.titlePrefixContainsDraft()
+        ? 'Draft' /* eslint-disable-line @gitlab/require-i18n-strings */
+        : 'WIP';
+      this.$wipExplanation.show();
+      return this.$noWipExplanation.hide();
+    }
+    this.$wipExplanation.hide();
+    return this.$noWipExplanation.show();
+  }
+
+  toggleWip(event) {
+    event.preventDefault();
+    if (this.workInProgress()) {
+      this.removeWip();
+    } else {
+      this.addWip();
+    }
+    return this.renderWipExplanation();
+  }
+
+  removeWip() {
+    return this.titleField.val(this.titleField.val().replace(this.wipRegex, ''));
+  }
+
+  addWip() {
+    this.titleField.val(`Draft: ${this.titleField.val()}`);
+  }
+
+  initTargetBranchDropdown() {
+    import(/* webpackChunkName: 'select2' */ 'select2/select2')
+      .then(() => {
+        this.$targetBranchSelect.select2({
+          ...AutoWidthDropdownSelect.selectOptions('js-target-branch-select'),
           ajax: {
-            url: $moveDropdown.data('projects-url'),
-            quietMillis: 125,
-            data: function(term, page, context) {
+            url: this.$targetBranchSelect.data('endpoint'),
+            dataType: 'JSON',
+            quietMillis: 250,
+            data(search) {
               return {
-                search: term,
-                offset_id: context
+                search,
               };
             },
-            results: function(data) {
-              var context,
-                more;
-
-              if (data.length >= pageSize)
-                more = true;
-
-              if (data[data.length - 1])
-                context = data[data.length - 1].id;
-
+            results(data) {
               return {
-                results: data,
-                more: more,
-                context: context
+                // `data` keys are translated so we can't just access them with a string based key
+                results: data[Object.keys(data)[0]].map(name => ({
+                  id: name,
+                  text: name,
+                })),
               };
-            }
+            },
           },
-          formatResult: function(project) {
-            return project.name_with_namespace;
-          },
-          formatSelection: function(project) {
-            return project.name_with_namespace;
-          }
-        });
-      }
-    };
+          initSelection(el, callback) {
+            const val = el.val();
 
-    return IssuableForm;
-  })();
-}).call(window);
+            callback({
+              id: val,
+              text: val,
+            });
+          },
+        });
+      })
+      .catch(() => {});
+  }
+}

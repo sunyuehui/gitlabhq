@@ -1,18 +1,20 @@
-class SentNotification < ActiveRecord::Base
+# frozen_string_literal: true
+
+class SentNotification < ApplicationRecord
   serialize :position, Gitlab::Diff::Position # rubocop:disable Cop/ActiveRecordSerialize
 
   belongs_to :project
   belongs_to :noteable, polymorphic: true # rubocop:disable Cop/PolymorphicAssociations
   belongs_to :recipient, class_name: "User"
 
-  validates :project, :recipient, presence: true
+  validates :recipient, presence: true
   validates :reply_key, presence: true, uniqueness: true
   validates :noteable_id, presence: true, unless: :for_commit?
   validates :commit_id, presence: true, if: :for_commit?
   validates :in_reply_to_discussion_id, format: { with: /\A\h{40}\z/, allow_nil: true }
   validate :note_valid
 
-  after_save :keep_around_commit
+  after_save :keep_around_commit, if: :for_commit?
 
   class << self
     def reply_key
@@ -46,18 +48,22 @@ class SentNotification < ActiveRecord::Base
     end
 
     def record_note(note, recipient_id, reply_key = self.reply_key, attrs = {})
-      attrs[:in_reply_to_discussion_id] = note.discussion_id
+      attrs[:in_reply_to_discussion_id] = note.discussion_id if note.part_of_discussion?
 
       record(note.noteable, recipient_id, reply_key, attrs)
     end
   end
 
   def unsubscribable?
-    !for_commit?
+    !(for_commit? || for_snippet?)
   end
 
   def for_commit?
     noteable_type == "Commit"
+  end
+
+  def for_snippet?
+    noteable_type.end_with?('Snippet')
   end
 
   def noteable
@@ -70,12 +76,14 @@ class SentNotification < ActiveRecord::Base
 
   def position=(new_position)
     if new_position.is_a?(String)
-      new_position = JSON.parse(new_position) rescue nil
+      new_position = Gitlab::Json.parse(new_position) rescue nil
     end
 
     if new_position.is_a?(Hash)
       new_position = new_position.with_indifferent_access
       new_position = Gitlab::Diff::Position.new(new_position)
+    else
+      new_position = nil
     end
 
     super(new_position)
@@ -93,36 +101,22 @@ class SentNotification < ActiveRecord::Base
   private
 
   def reply_params
-    attrs = {
+    {
       noteable_type: self.noteable_type,
       noteable_id: self.noteable_id,
-      commit_id: self.commit_id
+      commit_id: self.commit_id,
+      in_reply_to_discussion_id: self.in_reply_to_discussion_id
     }
-
-    if self.in_reply_to_discussion_id.present?
-      attrs[:in_reply_to_discussion_id] = self.in_reply_to_discussion_id
-    else
-      # Remove in GitLab 10.0, when we will not support replying to SentNotifications
-      # that don't have `in_reply_to_discussion_id` anymore.
-      attrs.merge!(
-        type: self.note_type,
-
-        # LegacyDiffNote
-        line_code: self.line_code,
-
-        # DiffNote
-        position: self.position.to_json
-      )
-    end
-
-    attrs
   end
 
   def note_valid
     note = create_reply('Test', dryrun: true)
 
     unless note.valid?
-      self.errors.add(:base, "Note parameters are invalid: #{note.errors.full_messages.to_sentence}")
+      self.errors.add(
+        :base, _("Note parameters are invalid: %{errors}") %
+          { errors: note.errors.full_messages.to_sentence }
+      )
     end
   end
 

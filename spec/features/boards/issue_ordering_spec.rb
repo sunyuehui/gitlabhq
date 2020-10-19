@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe 'Issue Boards', :js do
+require 'spec_helper'
+
+RSpec.describe 'Issue Boards', :js do
   include DragTo
 
   let(:project) { create(:project, :public) }
@@ -13,13 +15,13 @@ describe 'Issue Boards', :js do
   let!(:issue3) { create(:labeled_issue, project: project, title: 'testing 3', labels: [label], relative_position: 1) }
 
   before do
-    project.team << [user, :master]
+    project.add_maintainer(user)
 
     sign_in(user)
   end
 
   context 'un-ordered issues' do
-    let!(:issue4) { create(:labeled_issue, project: project, labels: [label]) }
+    let!(:issue4) { create(:labeled_issue, project: project, labels: [label], relative_position: nil) }
 
     before do
       visit project_board_path(project, board)
@@ -30,17 +32,42 @@ describe 'Issue Boards', :js do
 
     it 'has un-ordered issue as last issue' do
       page.within(find('.board:nth-child(2)')) do
-        expect(all('.card').last).to have_content(issue4.title)
+        expect(all('.board-card').last).to have_content(issue4.title)
       end
     end
 
     it 'moves un-ordered issue to top of list' do
-      drag(from_index: 3, to_index: 0)
+      drag(from_index: 3, to_index: 0, duration: 1180)
 
       wait_for_requests
 
       page.within(find('.board:nth-child(2)')) do
-        expect(first('.card')).to have_content(issue4.title)
+        expect(first('.board-card')).to have_content(issue4.title)
+      end
+    end
+  end
+
+  context 'closed issues' do
+    let!(:issue7) { create(:closed_issue, project: project, title: 'Closed issue 1', closed_at: 1.day.ago) }
+    let!(:issue8) { create(:closed_issue, project: project, title: 'Closed issue 2', closed_at: 1.week.ago) }
+    let!(:issue9) { create(:closed_issue, project: project, title: 'Closed issue 3', closed_at: 2.weeks.ago) }
+
+    before do
+      visit project_board_path(project, board)
+      wait_for_requests
+
+      expect(page).to have_selector('.board', count: 3)
+    end
+
+    it 'orders issues by closed_at' do
+      wait_for_requests
+
+      page.within(find('.board:nth-child(3)')) do
+        first, second, third = all('.board-card').to_a
+
+        expect(first).to have_content(issue7.title)
+        expect(second).to have_content(issue8.title)
+        expect(third).to have_content(issue9.title)
       end
     end
   end
@@ -58,7 +85,7 @@ describe 'Issue Boards', :js do
 
       wait_for_requests
 
-      expect(first('.card')).to have_content(issue2.title)
+      expect(first('.board-card')).to have_content(issue2.title)
     end
 
     it 'moves from middle to bottom' do
@@ -66,7 +93,7 @@ describe 'Issue Boards', :js do
 
       wait_for_requests
 
-      expect(all('.card').last).to have_content(issue2.title)
+      expect(all('.board-card').last).to have_content(issue2.title)
     end
 
     it 'moves from top to bottom' do
@@ -74,15 +101,15 @@ describe 'Issue Boards', :js do
 
       wait_for_requests
 
-      expect(all('.card').last).to have_content(issue3.title)
+      expect(all('.board-card').last).to have_content(issue3.title)
     end
 
     it 'moves from bottom to top' do
-      drag(from_index: 2, to_index: 0)
+      drag(from_index: 2, to_index: 0, duration: 1020)
 
       wait_for_requests
 
-      expect(first('.card')).to have_content(issue1.title)
+      expect(first('.board-card')).to have_content(issue1.title)
     end
 
     it 'moves from top to middle' do
@@ -90,7 +117,7 @@ describe 'Issue Boards', :js do
 
       wait_for_requests
 
-      expect(first('.card')).to have_content(issue2.title)
+      expect(first('.board-card')).to have_content(issue2.title)
     end
 
     it 'moves from bottom to middle' do
@@ -98,7 +125,7 @@ describe 'Issue Boards', :js do
 
       wait_for_requests
 
-      expect(all('.card').last).to have_content(issue2.title)
+      expect(all('.board-card').last).to have_content(issue2.title)
     end
   end
 
@@ -121,24 +148,24 @@ describe 'Issue Boards', :js do
 
       wait_for_requests
 
-      expect(find('.board:nth-child(2)')).to have_selector('.card', count: 2)
-      expect(all('.board')[2]).to have_selector('.card', count: 4)
+      expect(find('.board:nth-child(2)')).to have_selector('.board-card', count: 2)
+      expect(all('.board')[2]).to have_selector('.board-card', count: 4)
 
       page.within(all('.board')[2]) do
-        expect(first('.card')).to have_content(issue3.title)
+        expect(first('.board-card')).to have_content(issue3.title)
       end
     end
 
     it 'moves to bottom of another list' do
-      drag(list_from_index: 1, list_to_index: 2, to_index: 2)
+      drag(list_from_index: 1, list_to_index: 2, to_index: 2, duration: 1020)
 
       wait_for_requests
 
-      expect(find('.board:nth-child(2)')).to have_selector('.card', count: 2)
-      expect(all('.board')[2]).to have_selector('.card', count: 4)
+      expect(find('.board:nth-child(2)')).to have_selector('.board-card', count: 2)
+      expect(all('.board')[2]).to have_selector('.board-card', count: 4)
 
       page.within(all('.board')[2]) do
-        expect(all('.card').last).to have_content(issue3.title)
+        expect(all('.board-card').last).to have_content(issue3.title)
       end
     end
 
@@ -147,21 +174,22 @@ describe 'Issue Boards', :js do
 
       wait_for_requests
 
-      expect(find('.board:nth-child(2)')).to have_selector('.card', count: 2)
-      expect(all('.board')[2]).to have_selector('.card', count: 4)
+      expect(find('.board:nth-child(2)')).to have_selector('.board-card', count: 2)
+      expect(all('.board')[2]).to have_selector('.board-card', count: 4)
 
       page.within(all('.board')[2]) do
-        expect(all('.card')[1]).to have_content(issue3.title)
+        expect(all('.board-card')[1]).to have_content(issue3.title)
       end
     end
   end
 
-  def drag(selector: '.board-list', list_from_index: 1, from_index: 0, to_index: 0, list_to_index: 1)
+  def drag(selector: '.board-list', list_from_index: 1, from_index: 0, to_index: 0, list_to_index: 1, duration: 1000)
     drag_to(selector: selector,
             scrollable: '#board-app',
             list_from_index: list_from_index,
             from_index: from_index,
             to_index: to_index,
-            list_to_index: list_to_index)
+            list_to_index: list_to_index,
+            duration: duration)
   end
 end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::OtherMarkup do
+RSpec.describe Gitlab::OtherMarkup do
   let(:context) { {} }
 
   context "XSS Checks" do

@@ -1,65 +1,11 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Ability do
+RSpec.describe Ability do
   context 'using a nil subject' do
     it 'has no permissions' do
       expect(described_class.policy_for(nil, nil)).to be_banned
-    end
-  end
-
-  describe '.can_edit_note?' do
-    let(:project) { create(:project) }
-    let(:note) { create(:note_on_issue, project: project) }
-
-    context 'using an anonymous user' do
-      it 'returns false' do
-        expect(described_class.can_edit_note?(nil, note)).to be_falsy
-      end
-    end
-
-    context 'using a system note' do
-      it 'returns false' do
-        system_note = create(:note, system: true)
-        user = create(:user)
-
-        expect(described_class.can_edit_note?(user, system_note)).to be_falsy
-      end
-    end
-
-    context 'using users with different access levels' do
-      let(:user) { create(:user) }
-
-      it 'returns true for the author' do
-        expect(described_class.can_edit_note?(note.author, note)).to be_truthy
-      end
-
-      it 'returns false for a guest user' do
-        project.team << [user, :guest]
-
-        expect(described_class.can_edit_note?(user, note)).to be_falsy
-      end
-
-      it 'returns false for a developer' do
-        project.team << [user, :developer]
-
-        expect(described_class.can_edit_note?(user, note)).to be_falsy
-      end
-
-      it 'returns true for a master' do
-        project.team << [user, :master]
-
-        expect(described_class.can_edit_note?(user, note)).to be_truthy
-      end
-
-      it 'returns true for a group owner' do
-        group = create(:group)
-        project.project_group_links.create(
-          group: group,
-          group_access: Gitlab::Access::MASTER)
-        group.add_owner(user)
-
-        expect(described_class.can_edit_note?(user, note)).to be_truthy
-      end
     end
   end
 
@@ -128,11 +74,18 @@ describe Ability do
     context 'using a private project' do
       let(:project) { create(:project, :private) }
 
-      it 'returns users that are administrators' do
+      it 'returns users that are administrators when admin mode is enabled', :enable_admin_mode do
         user = build(:user, admin: true)
 
         expect(described_class.users_that_can_read_project([user], project))
           .to eq([user])
+      end
+
+      it 'does not return users that are administrators when admin mode is disabled' do
+        user = build(:user, admin: true)
+
+        expect(described_class.users_that_can_read_project([user], project))
+            .to eq([])
       end
 
       it 'returns external users if they are the project owner' do
@@ -191,12 +144,6 @@ describe Ability do
       expect(users_for_snippet(snippet)).to match_array([author])
     end
 
-    it 'internal snippet is readable by all registered users' do
-      snippet = create(:personal_snippet, :public, author: author)
-
-      expect(users_for_snippet(snippet)).to match_array(users)
-    end
-
     it 'public snippet is readable by all users' do
       snippet = create(:personal_snippet, :public, author: author)
 
@@ -204,14 +151,120 @@ describe Ability do
     end
   end
 
+  describe '.merge_requests_readable_by_user' do
+    context 'with an admin when admin mode is enabled', :enable_admin_mode do
+      it 'returns all merge requests' do
+        user = build(:user, admin: true)
+        merge_request = build(:merge_request)
+
+        expect(described_class.merge_requests_readable_by_user([merge_request], user))
+          .to eq([merge_request])
+      end
+    end
+
+    context 'with an admin when admin mode is disabled' do
+      it 'returns merge_requests that are publicly visible' do
+        user = build(:user, admin: true)
+        hidden_merge_request = build(:merge_request)
+        visible_merge_request = build(:merge_request, source_project: build(:project, :public))
+
+        merge_requests = described_class
+            .merge_requests_readable_by_user([hidden_merge_request, visible_merge_request], user)
+
+        expect(merge_requests).to eq([visible_merge_request])
+      end
+    end
+
+    context 'without a user' do
+      it 'returns merge_requests that are publicly visible' do
+        hidden_merge_request = build(:merge_request)
+        visible_merge_request = build(:merge_request, source_project: build(:project, :public))
+
+        merge_requests = described_class
+                           .merge_requests_readable_by_user([hidden_merge_request, visible_merge_request])
+
+        expect(merge_requests).to eq([visible_merge_request])
+      end
+    end
+
+    context 'with a user' do
+      let(:user) { create(:user) }
+      let(:project) { create(:project) }
+      let(:merge_request) { create(:merge_request, source_project: project) }
+      let(:cross_project_merge_request) do
+        create(:merge_request, source_project: create(:project, :public))
+      end
+
+      let(:other_merge_request) { create(:merge_request) }
+      let(:all_merge_requests) do
+        [merge_request, cross_project_merge_request, other_merge_request]
+      end
+
+      subject(:readable_merge_requests) do
+        described_class.merge_requests_readable_by_user(all_merge_requests, user)
+      end
+
+      before do
+        project.add_developer(user)
+      end
+
+      it 'returns projects visible to the user' do
+        expect(readable_merge_requests).to contain_exactly(merge_request, cross_project_merge_request)
+      end
+
+      context 'when a user cannot read cross project and a filter is passed' do
+        before do
+          allow(described_class).to receive(:allowed?).and_call_original
+          expect(described_class).to receive(:allowed?).with(user, :read_cross_project) { false }
+        end
+
+        subject(:readable_merge_requests) do
+          read_cross_project_filter = -> (merge_requests) do
+            merge_requests.select { |mr| mr.source_project == project }
+          end
+          described_class.merge_requests_readable_by_user(
+            all_merge_requests, user,
+            filters: { read_cross_project: read_cross_project_filter }
+          )
+        end
+
+        it 'returns only MRs of the specified project without checking access on others' do
+          expect(described_class).not_to receive(:allowed?).with(user, :read_merge_request, cross_project_merge_request)
+
+          expect(readable_merge_requests).to contain_exactly(merge_request)
+        end
+      end
+    end
+  end
+
   describe '.issues_readable_by_user' do
-    context 'with an admin user' do
+    context 'with an admin when admin mode is enabled', :enable_admin_mode do
       it 'returns all given issues' do
         user = build(:user, admin: true)
         issue = build(:issue)
 
         expect(described_class.issues_readable_by_user([issue], user))
           .to eq([issue])
+      end
+    end
+
+    context 'with an admin when admin mode is disabled' do
+      it 'returns the issues readable by the admin' do
+        user = build(:user, admin: true)
+        issue = build(:issue)
+
+        expect(issue).to receive(:readable_by?).with(user).and_return(true)
+
+        expect(described_class.issues_readable_by_user([issue], user))
+          .to eq([issue])
+      end
+
+      it 'returns no issues when not given access' do
+        user = build(:user, admin: true)
+        issue = build(:issue)
+
+        expect(described_class.issues_readable_by_user([issue], user))
+          .to be_empty
       end
     end
 
@@ -250,6 +303,29 @@ describe Ability do
         expect(issues).to eq([visible_issue])
       end
     end
+
+    context 'when the user cannot read cross project' do
+      let(:user) { create(:user) }
+      let(:issue) { create(:issue) }
+      let(:other_project_issue) { create(:issue) }
+      let(:project) { issue.project }
+
+      before do
+        project.add_developer(user)
+
+        allow(described_class).to receive(:allowed?).and_call_original
+        allow(described_class).to receive(:allowed?).with(user, :read_cross_project, any_args) { false }
+      end
+
+      it 'excludes issues from other projects whithout checking separatly when passing a scope' do
+        expect(described_class).not_to receive(:allowed?).with(user, :read_issue, other_project_issue)
+
+        filters = { read_cross_project: -> (issues) { issues.where(project: project) } }
+        result = described_class.issues_readable_by_user(Issue.all, user, filters: filters)
+
+        expect(result).to contain_exactly(issue)
+      end
+    end
   end
 
   describe '.project_disabled_features_rules' do
@@ -259,7 +335,6 @@ describe Ability do
 
     context 'wiki named abilities' do
       it 'disables wiki abilities if the project has no wiki' do
-        expect(project).to receive(:has_external_wiki?).and_return(false)
         expect(subject).not_to be_allowed(:read_wiki)
         expect(subject).not_to be_allowed(:create_wiki)
         expect(subject).not_to be_allowed(:update_wiki)

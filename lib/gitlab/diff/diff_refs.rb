@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Diff
     class DiffRefs
@@ -13,15 +15,15 @@ module Gitlab
 
       def ==(other)
         other.is_a?(self.class) &&
-          base_sha == other.base_sha &&
-          start_sha == other.start_sha &&
-          head_sha == other.head_sha
+          Git.shas_eql?(base_sha, other.base_sha) &&
+          Git.shas_eql?(start_sha, other.start_sha) &&
+          Git.shas_eql?(head_sha, other.head_sha)
       end
 
       alias_method :eql?, :==
 
       def hash
-        [base_sha, start_sha, head_sha].hash
+        [self.class, base_sha, start_sha, head_sha].hash
       end
 
       # There is only one case in which we will have `start_sha` and `head_sha`,
@@ -35,7 +37,7 @@ module Gitlab
       # We have `base_sha` directly available on `DiffRefs` because it's faster#
       # than having to look it up in the repo every time.
       def complete?
-        start_sha && head_sha
+        start_sha.present? && head_sha.present?
       end
 
       def compare_in(project)
@@ -44,7 +46,11 @@ module Gitlab
           project.commit(head_sha)
         else
           straight = start_sha == base_sha
-          CompareService.new(project, head_sha).execute(project, start_sha, straight: straight)
+
+          CompareService.new(project, head_sha).execute(project,
+                                                        start_sha,
+                                                        base_sha: base_sha,
+                                                        straight: straight)
         end
       end
     end

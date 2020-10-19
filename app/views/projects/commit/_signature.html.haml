@@ -1,5 +1,3 @@
 - if signature
-  - if signature.valid_signature?
-    = render partial: 'projects/commit/valid_signature_badge', locals: { signature: signature }
-  - else
-    = render partial: 'projects/commit/invalid_signature_badge', locals: { signature: signature }
+  - uri = "projects/commit/#{"x509/" if x509_signature?(signature)}"
+  = render partial: "#{uri}#{signature.verification_status}_signature_badge", locals: { signature: signature }

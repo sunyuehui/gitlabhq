@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-feature 'Issue markdown toolbar', js: true do
+require 'spec_helper'
+
+RSpec.describe 'Issue markdown toolbar', :js do
   let(:project) { create(:project, :public) }
   let(:issue)   { create(:issue, project: project) }
   let(:user)    { create(:user) }
@@ -12,26 +14,28 @@ feature 'Issue markdown toolbar', js: true do
   end
 
   it "doesn't include first new line when adding bold" do
-    find('#note_note').native.send_keys('test')
-    find('#note_note').native.send_key(:enter)
-    find('#note_note').native.send_keys('bold')
+    find('#note-body').native.send_keys('test')
+    find('#note-body').native.send_key(:enter)
+    find('#note-body').native.send_keys('bold')
 
-    page.evaluate_script('document.querySelectorAll(".js-main-target-form #note_note")[0].setSelectionRange(4, 9)')
+    find('.js-main-target-form #note-body')
+    page.evaluate_script('document.querySelectorAll(".js-main-target-form #note-body")[0].setSelectionRange(4, 9)')
 
     first('.toolbar-btn').click
 
-    expect(find('#note_note')[:value]).to eq("test\n**bold**\n")
+    expect(find('#note-body')[:value]).to eq("test\n**bold**\n")
   end
 
   it "doesn't include first new line when adding underline" do
-    find('#note_note').native.send_keys('test')
-    find('#note_note').native.send_key(:enter)
-    find('#note_note').native.send_keys('underline')
+    find('#note-body').native.send_keys('test')
+    find('#note-body').native.send_key(:enter)
+    find('#note-body').native.send_keys('underline')
 
-    page.evaluate_script('document.querySelectorAll(".js-main-target-form #note_note")[0].setSelectionRange(4, 50)')
+    find('.js-main-target-form #note-body')
+    page.evaluate_script('document.querySelectorAll(".js-main-target-form #note-body")[0].setSelectionRange(4, 50)')
 
-    find('.toolbar-btn:nth-child(2)').click
+    all('.toolbar-btn')[1].click
 
-    expect(find('#note_note')[:value]).to eq("test\n*underline*\n")
+    expect(find('#note-body')[:value]).to eq("test\n_underline_\n")
   end
 end

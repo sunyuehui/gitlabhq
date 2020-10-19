@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
@@ -8,11 +10,15 @@ module Gitlab
           end
 
           def action_icon
-            'icon_action_retry'
+            'retry'
           end
 
           def action_title
             'Retry'
+          end
+
+          def action_button_title
+            _('Retry this job')
           end
 
           def action_path

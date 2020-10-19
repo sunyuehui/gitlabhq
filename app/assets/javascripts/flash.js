@@ -1,71 +1,178 @@
-/* eslint-disable func-names, space-before-function-paren, wrap-iife, no-var, one-var, one-var-declaration-per-line, no-param-reassign, quotes, quote-props, prefer-template, comma-dangle, max-len */
+import { escape } from 'lodash';
+import * as Sentry from '~/sentry/wrapper';
+import { spriteIcon } from './lib/utils/common_utils';
 
-window.Flash = (function() {
-  var hideFlash;
+const FLASH_TYPES = {
+  ALERT: 'alert',
+  NOTICE: 'notice',
+  SUCCESS: 'success',
+  WARNING: 'warning',
+};
 
-  hideFlash = function() {
-    return $(this).fadeOut();
-  };
-
-  /**
-   * Flash banner supports different types of Flash configurations
-   * along with ability to provide actionConfig which can be used to show
-   * additional action or link on banner next to message
-   *
-   * @param {String} message Flash message
-   * @param {String} type Type of Flash, it can be `notice` or `alert` (default)
-   * @param {Object} parent Reference to Parent element under which Flash needs to appear
-   * @param {Object} actionConfig Map of config to show action on banner
-   *    @param {String} href URL to which action link should point (default '#')
-   *    @param {String} title Title of action
-   *    @param {Function} clickHandler Method to call when action is clicked on
-   */
-  function Flash(message, type, parent, actionConfig) {
-    var flash, textDiv, actionLink;
-    if (type == null) {
-      type = 'alert';
-    }
-    if (parent == null) {
-      parent = null;
-    }
-    if (parent) {
-      this.flashContainer = parent.find('.flash-container');
-    } else {
-      this.flashContainer = $('.flash-container-page');
-    }
-    this.flashContainer.html('');
-    flash = $('<div/>', {
-      "class": "flash-" + type
+const hideFlash = (flashEl, fadeTransition = true) => {
+  if (fadeTransition) {
+    Object.assign(flashEl.style, {
+      transition: 'opacity 0.15s',
+      opacity: '0',
     });
-    flash.on('click', hideFlash);
-    textDiv = $('<div/>', {
-      "class": 'flash-text',
-      text: message
-    });
-    textDiv.appendTo(flash);
-
-    if (actionConfig) {
-      const actionLinkConfig = {
-        class: 'flash-action',
-        href: actionConfig.href || '#',
-        text: actionConfig.title
-      };
-
-      if (!actionConfig.href) {
-        actionLinkConfig.role = 'button';
-      }
-
-      actionLink = $('<a/>', actionLinkConfig);
-
-      actionLink.appendTo(flash);
-      this.flashContainer.on('click', '.flash-action', actionConfig.clickHandler);
-    }
-    if (this.flashContainer.parent().hasClass('content-wrapper')) {
-      textDiv.addClass('container-fluid container-limited');
-    }
-    flash.appendTo(this.flashContainer);
-    this.flashContainer.show();
   }
 
-  return Flash;
-})();
+  flashEl.addEventListener(
+    'transitionend',
+    () => {
+      flashEl.remove();
+      window.dispatchEvent(new Event('resize'));
+      if (document.body.classList.contains('flash-shown'))
+        document.body.classList.remove('flash-shown');
+    },
+    {
+      once: true,
+      passive: true,
+    },
+  );
+
+  if (!fadeTransition) flashEl.dispatchEvent(new Event('transitionend'));
+};
+
+const createAction = config => `
+  <a
+    href="${config.href || '#'}"
+    class="flash-action"
+    ${config.href ? '' : 'role="button"'}
+  >
+    ${escape(config.title)}
+  </a>
+`;
+
+const createFlashEl = (message, type) => `
+  <div class="flash-${type}">
+    <div class="flash-text">
+      ${escape(message)}
+      <div class="close-icon-wrapper js-close-icon">
+        ${spriteIcon('close', 'close-icon')}
+      </div>
+    </div>
+  </div>
+`;
+
+const removeFlashClickListener = (flashEl, fadeTransition) => {
+  flashEl
+    .querySelector('.js-close-icon')
+    .addEventListener('click', () => hideFlash(flashEl, fadeTransition));
+};
+
+/*
+ *  Flash banner supports different types of Flash configurations
+ *  along with ability to provide actionConfig which can be used to show
+ *  additional action or link on banner next to message
+ *
+ *  @param {String} message           Flash message text
+ *  @param {String} type              Type of Flash, it can be `notice`, `success`, `warning` or `alert` (default)
+ *  @param {Object} parent            Reference to parent element under which Flash needs to appear
+ *  @param {Object} actonConfig       Map of config to show action on banner
+ *    @param {String} href            URL to which action config should point to (default: '#')
+ *    @param {String} title           Title of action
+ *    @param {Function} clickHandler  Method to call when action is clicked on
+ *  @param {Boolean} fadeTransition   Boolean to determine whether to fade the alert out
+ */
+const deprecatedCreateFlash = function deprecatedCreateFlash(
+  message,
+  type = FLASH_TYPES.ALERT,
+  parent = document,
+  actionConfig = null,
+  fadeTransition = true,
+  addBodyClass = false,
+) {
+  const flashContainer = parent.querySelector('.flash-container');
+
+  if (!flashContainer) return null;
+
+  flashContainer.innerHTML = createFlashEl(message, type);
+
+  const flashEl = flashContainer.querySelector(`.flash-${type}`);
+
+  if (actionConfig) {
+    flashEl.innerHTML += createAction(actionConfig);
+
+    if (actionConfig.clickHandler) {
+      flashEl
+        .querySelector('.flash-action')
+        .addEventListener('click', e => actionConfig.clickHandler(e));
+    }
+  }
+
+  removeFlashClickListener(flashEl, fadeTransition);
+
+  flashContainer.style.display = 'block';
+
+  if (addBodyClass) document.body.classList.add('flash-shown');
+
+  return flashContainer;
+};
+
+/*
+ *  Flash banner supports different types of Flash configurations
+ *  along with ability to provide actionConfig which can be used to show
+ *  additional action or link on banner next to message
+ *
+ *  @param {Object} options                   Options to control the flash message
+ *  @param {String} options.message           Flash message text
+ *  @param {String} options.type              Type of Flash, it can be `notice`, `success`, `warning` or `alert` (default)
+ *  @param {Object} options.parent            Reference to parent element under which Flash needs to appear
+ *  @param {Object} options.actonConfig       Map of config to show action on banner
+ *    @param {String} href                    URL to which action config should point to (default: '#')
+ *    @param {String} title                   Title of action
+ *    @param {Function} clickHandler          Method to call when action is clicked on
+ *  @param {Boolean} options.fadeTransition   Boolean to determine whether to fade the alert out
+ *  @param {Boolean} options.captureError     Boolean to determine whether to send error to sentry
+ *  @param {Object} options.error              Error to be captured in sentry
+ */
+const createFlash = function createFlash({
+  message,
+  type = FLASH_TYPES.ALERT,
+  parent = document,
+  actionConfig = null,
+  fadeTransition = true,
+  addBodyClass = false,
+  captureError = false,
+  error = null,
+}) {
+  const flashContainer = parent.querySelector('.flash-container');
+
+  if (!flashContainer) return null;
+
+  flashContainer.innerHTML = createFlashEl(message, type);
+
+  const flashEl = flashContainer.querySelector(`.flash-${type}`);
+
+  if (actionConfig) {
+    flashEl.insertAdjacentHTML('beforeend', createAction(actionConfig));
+
+    if (actionConfig.clickHandler) {
+      flashEl
+        .querySelector('.flash-action')
+        .addEventListener('click', e => actionConfig.clickHandler(e));
+    }
+  }
+
+  removeFlashClickListener(flashEl, fadeTransition);
+
+  flashContainer.classList.add('gl-display-block');
+
+  if (addBodyClass) document.body.classList.add('flash-shown');
+
+  if (captureError && error) Sentry.captureException(error);
+
+  return flashContainer;
+};
+
+export {
+  createFlash as default,
+  deprecatedCreateFlash,
+  createFlashEl,
+  createAction,
+  hideFlash,
+  removeFlashClickListener,
+  FLASH_TYPES,
+};
+window.Flash = createFlash;

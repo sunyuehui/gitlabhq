@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe StripAttribute do
+RSpec.describe StripAttribute do
   let(:milestone) { create(:milestone) }
 
   describe ".strip_attributes" do

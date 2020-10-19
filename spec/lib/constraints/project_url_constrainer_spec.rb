@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ProjectUrlConstrainer do
+RSpec.describe Constraints::ProjectUrlConstrainer do
   let!(:project) { create(:project) }
   let!(:namespace) { project.namespace }
 
@@ -16,6 +18,10 @@ describe ProjectUrlConstrainer do
         let(:request) { build_request('foo', 'bar') }
 
         it { expect(subject.matches?(request)).to be_falsey }
+
+        context 'existence_check is false' do
+          it { expect(subject.matches?(request, existence_check: false)).to be_truthy }
+        end
       end
 
       context "project id ending with .git" do
@@ -31,11 +37,13 @@ describe ProjectUrlConstrainer do
 
       context 'and is a GET request' do
         let(:request) { build_request(namespace.full_path, old_project_path) }
+
         it { expect(subject.matches?(request)).to be_truthy }
       end
 
       context 'and is NOT a GET request' do
         let(:request) { build_request(namespace.full_path, old_project_path, 'POST') }
+
         it { expect(subject.matches?(request)).to be_falsey }
       end
     end

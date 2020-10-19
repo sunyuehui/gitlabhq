@@ -1,8 +1,12 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Status::SuccessWarning do
+RSpec.describe Gitlab::Ci::Status::SuccessWarning do
+  let(:status) { double('status') }
+
   subject do
-    described_class.new(double('status'))
+    described_class.new(status)
   end
 
   describe '#test' do
@@ -14,11 +18,11 @@ describe Gitlab::Ci::Status::SuccessWarning do
   end
 
   describe '#icon' do
-    it { expect(subject.icon).to eq 'icon_status_warning' }
+    it { expect(subject.icon).to eq 'status_warning' }
   end
 
   describe '#group' do
-    it { expect(subject.group).to eq 'success_with_warnings' }
+    it { expect(subject.group).to eq 'success-with-warnings' }
   end
 
   describe '.matches?' do

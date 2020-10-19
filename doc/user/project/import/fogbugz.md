@@ -1,3 +1,10 @@
+---
+type: reference, howto
+stage: Manage
+group: Import
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see https://about.gitlab.com/handbook/engineering/ux/technical-writing/#designated-technical-writers
+---
+
 # Import your project from FogBugz to GitLab
 
 It only takes a few simple steps to import your project from FogBugz.
@@ -23,6 +30,6 @@ users to GitLab users.
   ![Import Project](img/fogbugz_import_select_project.png)
 
 1. Once the import has finished click the link to take you to the project
-dashboard. Follow the directions to push your existing repository.
+   dashboard. Follow the directions to push your existing repository.
 
   ![Finished](img/fogbugz_import_finished.png)

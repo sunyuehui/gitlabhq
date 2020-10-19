@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Status::Stage::Common do
+RSpec.describe Gitlab::Ci::Status::Stage::Common do
   let(:user) { create(:user) }
   let(:project) { create(:project) }
   let(:pipeline) { create(:ci_empty_pipeline, project: project) }
@@ -27,7 +29,7 @@ describe Gitlab::Ci::Status::Stage::Common do
 
   context 'when user has permission to read pipeline' do
     before do
-      project.team << [user, :master]
+      project.add_maintainer(user)
     end
 
     it 'has details' do

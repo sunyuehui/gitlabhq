@@ -14,7 +14,7 @@ module RuboCop
       # A developer might otherwise mistakenly assume that a value in
       # `ApplicationSetting.defaults` is sufficient.
       #
-      # See https://gitlab.com/gitlab-org/gitlab-ee/issues/2750 for more
+      # See https://gitlab.com/gitlab-org/gitlab/issues/2750 for more
       # information.
       class SaferBooleanColumn < RuboCop::Cop::Cop
         include MigrationHelpers
@@ -23,12 +23,8 @@ module RuboCop
         NULL_OFFENSE = 'Boolean columns on the `%s` table should disallow nulls.'.freeze
         DEFAULT_AND_NULL_OFFENSE = 'Boolean columns on the `%s` table should have a default and should disallow nulls. You may wish to use `add_column_with_default`.'.freeze
 
-        SMALL_TABLES = %i[
-          application_settings
-        ].freeze
-
         def_node_matcher :add_column?, <<~PATTERN
-          (send nil :add_column $...)
+          (send nil? :add_column $...)
         PATTERN
 
         def on_send(node)
@@ -54,14 +50,14 @@ module RuboCop
                       NULL_OFFENSE
                     end
 
-          add_offense(node, :expression, format(offense, table)) if offense
+          add_offense(node, location: :expression, message: format(offense, table)) if offense
         end
 
         def no_default?(opts)
           return true unless opts
 
           each_hash_node_pair(opts) do |key, value|
-            return value == 'nil' if key == :default
+            break value == 'nil' if key == :default
           end
         end
 
@@ -69,7 +65,7 @@ module RuboCop
           return true unless opts
 
           each_hash_node_pair(opts) do |key, value|
-            return value != 'false' if key == :null
+            break value != 'false' if key == :null
           end
         end
 

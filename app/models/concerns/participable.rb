@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # == Participable concern
 #
 # Contains functionality related to objects that can have participants, such as
@@ -5,7 +7,7 @@
 #
 # Usage:
 #
-#     class Issue < ActiveRecord::Base
+#     class Issue < ApplicationRecord
 #       include Participable
 #
 #       # ...
@@ -23,8 +25,7 @@
 #     users = issue.participants
 module Participable
   extend ActiveSupport::Concern
-
-  module ClassMethods
+  class_methods do
     # Adds a list of participant attributes. Attributes can either be symbols or
     # Procs.
     #
@@ -56,14 +57,16 @@ module Participable
   #
   # Returns an Array of User instances.
   def participants(current_user = nil)
-    @participants ||= Hash.new do |hash, user|
-      hash[user] = raw_participants(user)
-    end
-
-    @participants[current_user]
+    all_participants[current_user]
   end
 
   private
+
+  def all_participants
+    @all_participants ||= Hash.new do |hash, user|
+      hash[user] = raw_participants(user)
+    end
+  end
 
   def raw_participants(current_user = nil)
     current_user ||= author
@@ -96,6 +99,10 @@ module Participable
 
     participants.merge(ext.users)
 
+    filter_by_ability(participants)
+  end
+
+  def filter_by_ability(participants)
     case self
     when PersonalSnippet
       Ability.users_that_can_read_personal_snippet(participants.to_a, self)
@@ -104,3 +111,5 @@ module Participable
     end
   end
 end
+
+Participable.prepend_if_ee('EE::Participable')

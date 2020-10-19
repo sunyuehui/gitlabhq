@@ -1,36 +1,33 @@
-- page_title "Notifications"
+- page_title _('Notifications')
 - @content_class = "limit-container-width" unless fluid_layout
-= render 'profiles/head'
 
 %div
   - if @user.errors.any?
-    .alert.alert-danger
+    .gl-alert.gl-alert-danger
       %ul
         - @user.errors.full_messages.each do |msg|
           %li= msg
 
   = hidden_field_tag :notification_type, 'global'
-  .row
+  .row.gl-mt-3
     .col-lg-4.profile-settings-sidebar
-      %h4
+      %h4.gl-mt-0
         = page_title
       %p
-        You can specify notification level per group or per project.
+        = _('You can specify notification level per group or per project.')
       %p
-        By default, all projects and groups will use the global notifications setting.
+        = _('By default, all projects and groups will use the global notifications setting.')
     .col-lg-8
-      %h5
-        Global notification settings
+      %h5.gl-mt-0
+        = _('Global notification settings')
 
-      = form_for @user, url: profile_notifications_path, method: :put, html: { class: 'update-notifications prepend-top-default' } do |f|
-        .form-group
-          = f.label :notification_email, class: "label-light"
-          = f.select :notification_email, @user.all_emails, { include_blank: false }, class: "select2"
+      = form_for @user, url: profile_notifications_path, method: :put, html: { class: 'update-notifications gl-mt-3' } do |f|
+        = render_if_exists 'profiles/notifications/email_settings', form: f
 
-      = label_tag :global_notification_level, "Global notification level", class: "label-light"
+      = label_tag :global_notification_level, "Global notification level", class: "label-bold"
       %br
       .clearfix
-      .form-group.pull-left.global-notification-setting
+      .form-group.float-left.global-notification-setting
         = render 'shared/notifications/button', notification_setting: @global_notification_setting
 
       .clearfix
@@ -38,20 +35,20 @@
       = form_for @user, url: profile_notifications_path, method: :put do |f|
         %label{ for: 'user_notified_of_own_activity' }
           = f.check_box :notified_of_own_activity
-          %span Receive notifications about your own activity
+          %span= _('Receive notifications about your own activity')
 
       %hr
       %h5
-        Groups (#{@group_notifications.count})
+        = _('Groups (%{count})') % { count: @user_groups.total_count }
       %div
-        %ul.bordered-list
-          - @group_notifications.each do |setting|
-            = render 'group_settings', setting: setting, group: setting.source
+        - @group_notifications.each do |setting|
+          = render 'group_settings', setting: setting, group: setting.source
+        = paginate @user_groups, theme: 'gitlab'
       %h5
-        Projects (#{@project_notifications.count})
+        = _('Projects (%{count})') % { count: @project_notifications.size }
       %p.account-well
-        To specify the notification level per project of a group you belong to, you need to visit project page and change notification level there.
-      .append-bottom-default
+        = _('To specify the notification level per project of a group you belong to, you need to visit project page and change notification level there.')
+      .gl-mb-3
         %ul.bordered-list
           - @project_notifications.each do |setting|
             = render 'project_settings', setting: setting, project: setting.source

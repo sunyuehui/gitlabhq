@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Banzai::Filter::BlockquoteFenceFilter do
+require 'spec_helper'
+
+RSpec.describe Banzai::Filter::BlockquoteFenceFilter do
   include FilterSpecHelper
 
   it 'converts blockquote fences to blockquote lines' do
@@ -10,5 +12,9 @@ describe Banzai::Filter::BlockquoteFenceFilter do
     output = filter(content)
 
     expect(output).to eq(expected)
+  end
+
+  it 'allows trailing whitespace on blockquote fence lines' do
+    expect(filter(">>> \ntest\n>>> ")).to eq("\n> test\n")
   end
 end

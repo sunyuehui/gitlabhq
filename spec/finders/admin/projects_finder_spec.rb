@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Admin::ProjectsFinder do
+RSpec.describe Admin::ProjectsFinder do
   describe '#execute' do
     let(:user) { create(:user) }
     let(:group) { create(:group, :public) }
@@ -54,7 +56,7 @@ describe Admin::ProjectsFinder do
 
     context 'filter by visibility_level' do
       before do
-        private_project.add_master(user)
+        private_project.add_maintainer(user)
       end
 
       context 'private' do
@@ -86,7 +88,7 @@ describe Admin::ProjectsFinder do
 
     context 'filter by abandoned' do
       before do
-        private_project.update(last_activity_at: Time.zone.now - 6.months - 1.minute)
+        private_project.update!(last_activity_at: Time.zone.now - 6.months - 1.minute)
       end
 
       let(:params) { { abandoned: true } }
@@ -96,7 +98,7 @@ describe Admin::ProjectsFinder do
 
     context 'filter by last_repository_check_failed' do
       before do
-        private_project.update(last_repository_check_failed: true)
+        private_project.update!(last_repository_check_failed: true)
       end
 
       let(:params) { { last_repository_check_failed: true } }
@@ -118,6 +120,12 @@ describe Admin::ProjectsFinder do
 
         it { is_expected.to match_array([archived_project, shared_project, public_project, internal_project, private_project]) }
       end
+
+      context 'archived=only' do
+        let(:params) { { archived: 'only' } }
+
+        it { is_expected.to eq([archived_project]) }
+      end
     end
 
     context 'filter by personal' do
@@ -130,7 +138,7 @@ describe Admin::ProjectsFinder do
     context 'filter by name' do
       let(:params) { { name: 'C' } }
 
-      it { is_expected.to match_array([shared_project, public_project, private_project]) }
+      it { is_expected.to match_array([public_project]) }
     end
 
     context 'sorting' do

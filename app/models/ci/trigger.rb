@@ -1,8 +1,9 @@
-module Ci
-  class Trigger < ActiveRecord::Base
-    extend Ci::Model
+# frozen_string_literal: true
 
-    acts_as_paranoid
+module Ci
+  class Trigger < ApplicationRecord
+    extend Gitlab::Ci::Model
+    include Presentable
 
     belongs_to :project
     belongs_to :owner, class_name: "User"
@@ -10,6 +11,7 @@ module Ci
     has_many :trigger_requests
 
     validates :token, presence: true, uniqueness: true
+    validates :owner, presence: true
 
     before_validation :set_default_values
 
@@ -26,15 +28,13 @@ module Ci
     end
 
     def short_token
-      token[0...4]
-    end
-
-    def legacy?
-      self.owner_id.blank?
+      token[0...4] if token.present?
     end
 
     def can_access_project?
-      self.owner_id.blank? || Ability.allowed?(self.owner, :create_build, project)
+      Ability.allowed?(self.owner, :create_build, project)
     end
   end
 end
+
+Ci::Trigger.prepend_if_ee('EE::Ci::Trigger')

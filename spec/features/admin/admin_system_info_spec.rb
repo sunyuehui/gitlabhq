@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'Admin System Info' do
+RSpec.describe 'Admin System Info' do
   before do
     sign_in(create(:admin))
   end
@@ -18,8 +20,8 @@ describe 'Admin System Info' do
 
       it 'shows system info page' do
         expect(page).to have_content 'CPU 2 cores'
-        expect(page).to have_content 'Memory 4 GB / 16 GB'
-        expect(page).to have_content 'Disks'
+        expect(page).to have_content 'Memory Usage 4 GB / 16 GB'
+        expect(page).to have_content 'Disk Usage'
         expect(page).to have_content 'Uptime'
       end
     end
@@ -33,8 +35,8 @@ describe 'Admin System Info' do
 
       it 'shows system info page with no CPU info' do
         expect(page).to have_content 'CPU Unable to collect CPU info'
-        expect(page).to have_content 'Memory 4 GB / 16 GB'
-        expect(page).to have_content 'Disks'
+        expect(page).to have_content 'Memory Usage 4 GB / 16 GB'
+        expect(page).to have_content 'Disk Usage'
         expect(page).to have_content 'Uptime'
       end
     end
@@ -48,8 +50,8 @@ describe 'Admin System Info' do
 
       it 'shows system info page with no CPU info' do
         expect(page).to have_content 'CPU 2 cores'
-        expect(page).to have_content 'Memory Unable to collect memory info'
-        expect(page).to have_content 'Disks'
+        expect(page).to have_content 'Memory Usage Unable to collect memory info'
+        expect(page).to have_content 'Disk Usage'
         expect(page).to have_content 'Uptime'
       end
     end

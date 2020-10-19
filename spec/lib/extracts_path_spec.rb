@@ -1,21 +1,21 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ExtractsPath do
+RSpec.describe ExtractsPath do
   include described_class
   include RepoHelpers
   include Gitlab::Routing
 
-  let(:project) { double('project') }
+  let_it_be(:owner) { create(:user) }
+  let_it_be(:container) { create(:project, :repository, creator: owner) }
   let(:request) { double('request') }
 
   before do
-    @project = project
+    @project = container
+    ref_names = ['master', 'foo/bar/baz', 'v1.0.0', 'v2.0.0', 'release/app', 'release/app/v1.0.0']
 
-    repo = double(ref_names: ['master', 'foo/bar/baz', 'v1.0.0', 'v2.0.0',
-                              'release/app', 'release/app/v1.0.0'])
-    allow(project).to receive(:repository).and_return(repo)
-    allow(project).to receive(:full_path)
-      .and_return('gitlab/gitlab-ci')
+    allow(container.repository).to receive(:ref_names).and_return(ref_names)
     allow(request).to receive(:format=)
   end
 
@@ -23,44 +23,21 @@ describe ExtractsPath do
     let(:ref) { sample_commit[:id] }
     let(:params) { { path: sample_commit[:line_code_path], ref: ref } }
 
-    before do
-      @project = create(:project, :repository)
-    end
+    it_behaves_like 'assigns ref vars'
 
-    it "log tree path has no escape sequences" do
+    it 'log tree path has no escape sequences' do
       assign_ref_vars
-      expect(@logs_path).to eq("/#{@project.full_path}/refs/#{ref}/logs_tree/files/ruby/popen.rb")
+
+      expect(@logs_path).to eq("/#{@project.full_path}/-/refs/#{ref}/logs_tree/files/ruby/popen.rb")
     end
 
-    context 'ref contains %20' do
-      let(:ref) { 'foo%20bar' }
+    context 'ref contains space in the middle' do
+      let(:ref) { 'master plan ' }
 
-      it 'is not converted to a space in @id' do
-        @project.repository.add_branch(@project.owner, 'foo%20bar', 'master')
-
-        assign_ref_vars
-
-        expect(@id).to start_with('foo%20bar/')
-      end
-    end
-
-    context 'path contains space' do
-      let(:params) { { path: 'with space', ref: '38008cb17ce1466d8fec2dfa6f6ab8dcfe5cf49e' } }
-
-      it 'is not converted to %20 in @path' do
-        assign_ref_vars
-
-        expect(@path).to eq(params[:path])
-      end
-    end
-
-    context 'subclass overrides get_id' do
-      it 'uses ref returned by get_id' do
-        allow_any_instance_of(self.class).to receive(:get_id) { '38008cb17ce1466d8fec2dfa6f6ab8dcfe5cf49e' }
+      it 'returns 404' do
+        expect(self).to receive(:render_404)
 
         assign_ref_vars
-
-        expect(@id).to eq(get_id)
       end
     end
 
@@ -137,58 +114,7 @@ describe ExtractsPath do
     end
   end
 
-  describe '#extract_ref' do
-    it "returns an empty pair when no @project is set" do
-      @project = nil
-      expect(extract_ref('master/CHANGELOG')).to eq(['', ''])
-    end
-
-    context "without a path" do
-      it "extracts a valid branch" do
-        expect(extract_ref('master')).to eq(['master', ''])
-      end
-
-      it "extracts a valid tag" do
-        expect(extract_ref('v2.0.0')).to eq(['v2.0.0', ''])
-      end
-
-      it "extracts a valid commit ref without a path" do
-        expect(extract_ref('f4b14494ef6abf3d144c28e4af0c20143383e062')).to eq(
-          ['f4b14494ef6abf3d144c28e4af0c20143383e062', '']
-        )
-      end
-
-      it "falls back to a primitive split for an invalid ref" do
-        expect(extract_ref('stable')).to eq(['stable', ''])
-      end
-
-      it "extracts the longest matching ref" do
-        expect(extract_ref('release/app/v1.0.0/README.md')).to eq(
-          ['release/app/v1.0.0', 'README.md'])
-      end
-    end
-
-    context "with a path" do
-      it "extracts a valid branch" do
-        expect(extract_ref('foo/bar/baz/CHANGELOG')).to eq(
-          ['foo/bar/baz', 'CHANGELOG'])
-      end
-
-      it "extracts a valid tag" do
-        expect(extract_ref('v2.0.0/CHANGELOG')).to eq(['v2.0.0', 'CHANGELOG'])
-      end
-
-      it "extracts a valid commit SHA" do
-        expect(extract_ref('f4b14494ef6abf3d144c28e4af0c20143383e062/CHANGELOG')).to eq(
-          %w(f4b14494ef6abf3d144c28e4af0c20143383e062 CHANGELOG)
-        )
-      end
-
-      it "falls back to a primitive split for an invalid ref" do
-        expect(extract_ref('stable/CHANGELOG')).to eq(%w(stable CHANGELOG))
-      end
-    end
-  end
+  it_behaves_like 'extracts refs'
 
   describe '#extract_ref_without_atom' do
     it 'ignores any matching refs suffixed with atom' do
@@ -201,6 +127,22 @@ describe ExtractsPath do
 
     it 'returns nil if there are no matching refs' do
       expect(extract_ref_without_atom('foo.atom')).to eq(nil)
+    end
+  end
+
+  describe '#lfs_blob_ids' do
+    let(:tag) { @project.repository.add_tag(@project.owner, 'my-annotated-tag', 'master', 'test tag') }
+    let(:ref) { tag.target }
+    let(:params) { { ref: ref, path: 'README.md' } }
+
+    before do
+      @project = create(:project, :repository)
+    end
+
+    it 'handles annotated tags' do
+      assign_ref_vars
+
+      expect(lfs_blob_ids).to eq([])
     end
   end
 end

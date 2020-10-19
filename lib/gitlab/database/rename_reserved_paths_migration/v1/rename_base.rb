@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Database
     module RenameReservedPathsMigration
@@ -49,23 +51,19 @@ module Gitlab
             quoted_old_full_path = quote_string(old_full_path)
             quoted_old_wildcard_path = quote_string("#{old_full_path}/%")
 
-            filter = if Database.mysql?
-                       "lower(routes.path) = lower('#{quoted_old_full_path}') "\
-                       "OR routes.path LIKE '#{quoted_old_wildcard_path}'"
-                     else
-                       "routes.id IN "\
-                       "( SELECT routes.id FROM routes WHERE lower(routes.path) = lower('#{quoted_old_full_path}') "\
-                       "UNION SELECT routes.id FROM routes WHERE routes.path ILIKE '#{quoted_old_wildcard_path}' )"
-                     end
+            filter =
+              "routes.id IN "\
+              "( SELECT routes.id FROM routes WHERE lower(routes.path) = lower('#{quoted_old_full_path}') "\
+              "UNION SELECT routes.id FROM routes WHERE routes.path ILIKE '#{quoted_old_wildcard_path}' )"
 
             replace_statement = replace_sql(Route.arel_table[:path],
                                             old_full_path,
                                             new_full_path)
 
-            update = Arel::UpdateManager.new(ActiveRecord::Base)
-                       .table(routes)
-                       .set([[routes[:path], replace_statement]])
-                       .where(Arel::Nodes::SqlLiteral.new(filter))
+            update = Arel::UpdateManager.new
+              .table(routes)
+              .set([[routes[:path], replace_statement]])
+              .where(Arel::Nodes::SqlLiteral.new(filter))
 
             execute(update.to_sql)
           end
@@ -159,7 +157,7 @@ module Gitlab
               failed_reverts = []
 
               while rename_info = redis.lpop(key)
-                path_before_rename, path_after_rename = JSON.parse(rename_info)
+                path_before_rename, path_after_rename = Gitlab::Json.parse(rename_info)
                 say "renaming #{type} from #{path_after_rename} back to #{path_before_rename}"
                 begin
                   yield(path_before_rename, path_after_rename)

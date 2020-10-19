@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe RspecFlaky::Example do
+RSpec.describe RspecFlaky::Example do
   let(:example_attrs) do
     {
       id: 'spec/foo/bar_spec.rb:2',
@@ -13,6 +15,7 @@ describe RspecFlaky::Example do
       attempts: 1
     }
   end
+
   let(:rspec_example) { double(example_attrs) }
 
   describe '#initialize' do

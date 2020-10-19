@@ -1,18 +1,22 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe DeployKeyEntity do
+RSpec.describe DeployKeyEntity do
   include RequestAwareEntity
 
   let(:user) { create(:user) }
   let(:project) { create(:project, :internal)}
   let(:project_private) { create(:project, :private)}
-  let!(:project_pending_delete) { create(:project, :internal, pending_delete: true) }
   let(:deploy_key) { create(:deploy_key) }
-  let!(:deploy_key_internal) { create(:deploy_keys_project, project: project, deploy_key: deploy_key) }
-  let!(:deploy_key_private)  { create(:deploy_keys_project, project: project_private, deploy_key: deploy_key) }
-  let!(:deploy_key_pending_delete) { create(:deploy_keys_project, project: project_pending_delete, deploy_key: deploy_key) }
+  let(:options) { { user: user } }
 
-  let(:entity) { described_class.new(deploy_key, user: user) }
+  let(:entity) { described_class.new(deploy_key, options) }
+
+  before do
+    project.deploy_keys << deploy_key
+    project_private.deploy_keys << deploy_key
+  end
 
   describe 'returns deploy keys with projects a user can read' do
     let(:expected_result) do
@@ -21,18 +25,22 @@ describe DeployKeyEntity do
         user_id: deploy_key.user_id,
         title: deploy_key.title,
         fingerprint: deploy_key.fingerprint,
-        can_push: deploy_key.can_push,
+        fingerprint_sha256: deploy_key.fingerprint_sha256,
         destroyed_when_orphaned: true,
         almost_orphaned: false,
         created_at: deploy_key.created_at,
         updated_at: deploy_key.updated_at,
         can_edit: false,
-        projects: [
+        deploy_keys_projects: [
           {
-            id: project.id,
-            name: project.name,
-            full_path: project_path(project),
-            full_name: project.full_name
+            can_push: false,
+            project:
+            {
+              id: project.id,
+              name: project.name,
+              full_path: project_path(project),
+              full_name: project.full_name
+            }
           }
         ]
       }
@@ -41,17 +49,68 @@ describe DeployKeyEntity do
     it { expect(entity.as_json).to eq(expected_result) }
   end
 
-  describe 'returns can_edit true if user is a master of project' do
-    before do
-      project.add_master(user)
-    end
+  context 'user is an admin' do
+    let(:user) { create(:user, :admin) }
 
     it { expect(entity.as_json).to include(can_edit: true) }
   end
 
-  describe 'returns can_edit true if a user admin' do
-    let(:user) { create(:user, :admin) }
+  context 'user is a project maintainer' do
+    before do
+      project.add_maintainer(user)
+    end
 
-    it { expect(entity.as_json).to include(can_edit: true) }
+    context 'project deploy key' do
+      it { expect(entity.as_json).to include(can_edit: true) }
+    end
+
+    context 'public deploy key' do
+      let(:deploy_key_public) { create(:deploy_key, public: true) }
+      let(:entity_public) { described_class.new(deploy_key_public, { user: user, project: project }) }
+
+      before do
+        project.deploy_keys << deploy_key_public
+      end
+
+      it { expect(entity_public.as_json).to include(can_edit: true) }
+    end
+  end
+
+  describe 'with_owner option' do
+    it 'does not return an owner payload when it is set to false' do
+      options[:with_owner] = false
+
+      payload = entity.as_json
+
+      expect(payload[:owner]).not_to be_present
+    end
+
+    describe 'when with_owner is set to true' do
+      before do
+        options[:with_owner] = true
+      end
+
+      it 'returns an owner payload' do
+        payload = entity.as_json
+
+        expect(payload[:owner]).to be_present
+        expect(payload[:owner].keys).to include(:id, :name, :username, :avatar_url)
+      end
+
+      it 'does not return an owner if current_user cannot read the owner' do
+        allow(Ability).to receive(:allowed?).and_call_original
+        allow(Ability).to receive(:allowed?).with(options[:user], :read_user, deploy_key.user).and_return(false)
+
+        payload = entity.as_json
+
+        expect(payload[:owner]).to be_nil
+      end
+    end
+  end
+
+  it 'does not return an owner payload with_owner option not passed in' do
+    payload = entity.as_json
+
+    expect(payload[:owner]).not_to be_present
   end
 end

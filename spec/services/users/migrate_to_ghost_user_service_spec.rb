@@ -1,12 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Users::MigrateToGhostUserService do
+RSpec.describe Users::MigrateToGhostUserService do
   let!(:user)      { create(:user) }
   let!(:project)   { create(:project, :repository) }
   let(:service)    { described_class.new(user) }
 
   context "migrating a user's associated records to the ghost user" do
-    context 'issues'  do
+    context 'issues' do
       context 'deleted user is present as both author and edited_user' do
         include_examples "migrating a deleted user's associated records to the ghost user", Issue, [:author, :last_edited_by] do
           let(:created_record) do
@@ -76,9 +78,24 @@ describe Users::MigrateToGhostUserService do
       end
     end
 
+    context 'snippets' do
+      include_examples "migrating a deleted user's associated records to the ghost user", Snippet do
+        let(:created_record) { create(:snippet, project: project, author: user) }
+      end
+    end
+
+    context 'reviews' do
+      let!(:user)   { create(:user) }
+      let(:service) { described_class.new(user) }
+
+      include_examples "migrating a deleted user's associated records to the ghost user", Review, [:author] do
+        let(:created_record) { create(:review, author: user) }
+      end
+    end
+
     context "when record migration fails with a rollback exception" do
       before do
-        expect_any_instance_of(MergeRequest::ActiveRecord_Associations_CollectionProxy)
+        expect_any_instance_of(ActiveRecord::Associations::CollectionProxy)
           .to receive(:update_all).and_raise(ActiveRecord::Rollback)
       end
 

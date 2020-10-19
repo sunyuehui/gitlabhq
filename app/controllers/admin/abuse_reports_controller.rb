@@ -1,7 +1,10 @@
+# frozen_string_literal: true
+
 class Admin::AbuseReportsController < Admin::ApplicationController
+  feature_category :users
+
   def index
-    @abuse_reports = AbuseReport.order(id: :desc).page(params[:page])
-    @abuse_reports.includes(:reporter, :user)
+    @abuse_reports = AbuseReportsFinder.new(params).execute
   end
 
   def destroy

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe "Admin::Projects"  do
+RSpec.describe "Admin::Projects" do
   include Select2Helper
 
   let(:user) { create :user }
@@ -28,13 +30,21 @@ describe "Admin::Projects"  do
       expect(page).not_to have_content(archived_project.name)
     end
 
-    it 'renders all projects', js: true do
+    it 'renders all projects', :js do
       find(:css, '#sort-projects-dropdown').click
       click_link 'Show archived projects'
 
       expect(page).to have_content(project.name)
       expect(page).to have_content(archived_project.name)
-      expect(page).to have_xpath("//span[@class='label label-warning']", text: 'archived')
+      expect(page).to have_xpath("//span[@class='badge badge-warning']", text: 'archived')
+    end
+
+    it 'renders only archived projects', :js do
+      find(:css, '#sort-projects-dropdown').click
+      click_link 'Show archived projects only'
+
+      expect(page).to have_content(archived_project.name)
+      expect(page).not_to have_content(project.name)
     end
   end
 
@@ -50,8 +60,9 @@ describe "Admin::Projects"  do
       expect(current_path).to eq admin_project_path(project)
       expect(page).to have_content(project.path)
       expect(page).to have_content(project.name)
-      expect(page).to have_content(project.name_with_namespace)
+      expect(page).to have_content(project.full_name)
       expect(page).to have_content(project.creator.name)
+      expect(page).to have_content(project.id)
     end
   end
 
@@ -62,11 +73,12 @@ describe "Admin::Projects"  do
     before do
       create(:group, name: 'Web')
 
-      allow_any_instance_of(Projects::TransferService)
-        .to receive(:move_uploads_to_new_namespace).and_return(true)
+      allow_next_instance_of(Projects::TransferService) do |instance|
+        allow(instance).to receive(:move_uploads_to_new_namespace).and_return(true)
+      end
     end
 
-    it 'transfers project to group web', js: true do
+    it 'transfers project to group web', :js do
       visit admin_project_path(project)
 
       click_button 'Search for Namespace'
@@ -80,18 +92,18 @@ describe "Admin::Projects"  do
 
   describe 'add admin himself to a project' do
     before do
-      project.team << [user, :master]
+      project.add_maintainer(user)
     end
 
-    it 'adds admin a to a project as developer', js: true do
+    it 'adds admin a to a project as developer', :js do
       visit project_project_members_path(project)
 
-      page.within '.users-project-form' do
+      page.within '.invite-users-form' do
         select2(current_user.id, from: '#user_ids', multiple: true)
         select 'Developer', from: 'access_level'
       end
 
-      click_button 'Add to project'
+      click_button 'Invite'
 
       page.within '.content-list' do
         expect(page).to have_content(current_user.name)
@@ -102,8 +114,8 @@ describe "Admin::Projects"  do
 
   describe 'admin remove himself from a project' do
     before do
-      project.team << [user, :master]
-      project.team << [current_user, :developer]
+      project.add_maintainer(user)
+      project.add_developer(current_user)
     end
 
     it 'removes admin from the project' do
@@ -114,7 +126,7 @@ describe "Admin::Projects"  do
         expect(page).to have_content('Developer')
       end
 
-      find(:css, '.content-list li', text: current_user.name).find(:css, 'a.btn-remove').click
+      find(:css, '.content-list li', text: current_user.name).find(:css, 'a.btn-danger').click
 
       expect(page).not_to have_selector(:css, '.content-list')
     end

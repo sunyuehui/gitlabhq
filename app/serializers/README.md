@@ -47,11 +47,11 @@ representation. It rarely happens that a serialization entity exists without
 a corresponding domain model class. As an example, we have an `Issue` class and
 a corresponding `IssueSerializer`.
 
-Serialization entites are designed to reuse other serialization entities, which
+Serialization entities are designed to reuse other serialization entities, which
 is a convenient way to create a multi-level JSON representation of a piece of
 a domain model you want to serialize.
 
-See [documentation for Grape Entites][grape-entity-readme] for more details.
+See [documentation for Grape Entities][grape-entity-readme] for more details.
 
 ## How to implement a serializer?
 
@@ -64,7 +64,7 @@ A new serializer should inherit from a `BaseSerializer` class. It is necessary
 to specify which serialization entity will be used to serialize a resource.
 
 ```ruby
-class MyResourceSerializer < BaseSerialize
+class MyResourceSerializer < BaseSerializer
   entity MyResourceEntity
 end
 ```
@@ -180,7 +180,7 @@ def index
     render json: MyResourceSerializer
       .new(current_user: @current_user)
       .represent_details(@project.resources)
-  nd
+  end
 end
 ```
 
@@ -196,7 +196,7 @@ def index
         .represent_details(@project.resources),
       count: @project.resources.count
     }
-  nd
+  end
 end
 ```
 
@@ -317,9 +317,9 @@ MyObjectSerializer.new.represent(object.present)
 [grape-entity-readme]: https://github.com/ruby-grape/grape-entity/blob/master/README.md
 [grape-entity-class]: https://github.com/ruby-grape/grape-entity/blob/master/lib/grape_entity/entity.rb
 [grape-entity-only]: https://github.com/ruby-grape/grape-entity/blob/master/README.md#returning-only-the-fields-you-want
-[presenters-readme]: https://gitlab.com/gitlab-org/gitlab-ce/blob/master/app/presenters/README.md
+[presenters-readme]: https://gitlab.com/gitlab-org/gitlab-foss/blob/master/app/presenters/README.md
 [fluent-interface]: https://en.wikipedia.org/wiki/Fluent_interface
 [json-schema-gem]: https://github.com/ruby-json-schema/json-schema
-[issue-20045]: https://gitlab.com/gitlab-org/gitlab-ce/issues/20045
-[issue-30898]: https://gitlab.com/gitlab-org/gitlab-ce/issues/30898
-[issue-27569]: https://gitlab.com/gitlab-org/gitlab-ce/issues/27569
+[issue-20045]: https://gitlab.com/gitlab-org/gitlab-foss/issues/20045
+[issue-30898]: https://gitlab.com/gitlab-org/gitlab-foss/issues/30898
+[issue-27569]: https://gitlab.com/gitlab-org/gitlab-foss/issues/27569

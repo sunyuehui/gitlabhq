@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe GenericCommitStatus do
+RSpec.describe GenericCommitStatus do
   let(:project) { create(:project) }
   let(:pipeline) { create(:ci_pipeline, project: project) }
   let(:external_url) { 'http://example.gitlab.com/status' }
@@ -15,6 +17,74 @@ describe GenericCommitStatus do
     it { is_expected.to allow_value(nil).for(:target_url) }
     it { is_expected.to allow_value('http://gitlab.com/s').for(:target_url) }
     it { is_expected.not_to allow_value('javascript:alert(1)').for(:target_url) }
+  end
+
+  describe '#name_uniqueness_across_types' do
+    let(:attributes) { {} }
+    let(:commit_status) { described_class.new(attributes) }
+    let(:status_name) { 'test-job' }
+
+    subject(:errors) { commit_status.errors[:name] }
+
+    shared_examples 'it does not have uniqueness errors' do
+      it 'does not return errors' do
+        commit_status.valid?
+
+        is_expected.to be_empty
+      end
+    end
+
+    context 'without attributes' do
+      it_behaves_like 'it does not have uniqueness errors'
+    end
+
+    context 'with only a pipeline' do
+      let(:attributes) { { pipeline: pipeline } }
+
+      context 'without name' do
+        it_behaves_like 'it does not have uniqueness errors'
+      end
+    end
+
+    context 'with only a name' do
+      let(:attributes) { { name: status_name } }
+
+      context 'without pipeline' do
+        it_behaves_like 'it does not have uniqueness errors'
+      end
+    end
+
+    context 'with pipeline and name' do
+      let(:attributes) do
+        {
+          pipeline: pipeline,
+          name: status_name
+        }
+      end
+
+      context 'without other statuses' do
+        it_behaves_like 'it does not have uniqueness errors'
+      end
+
+      context 'with generic statuses' do
+        before do
+          create(:generic_commit_status, pipeline: pipeline, name: status_name)
+        end
+
+        it_behaves_like 'it does not have uniqueness errors'
+      end
+
+      context 'with ci_build statuses' do
+        before do
+          create(:ci_build, pipeline: pipeline, name: status_name)
+        end
+
+        it 'returns name error' do
+          expect(commit_status).to be_invalid
+          is_expected.to include('has already been taken')
+        end
+      end
+    end
   end
 
   describe '#context' do
@@ -43,7 +113,7 @@ describe GenericCommitStatus do
 
     context 'when user has ability to see datails' do
       before do
-        project.team << [user, :developer]
+        project.add_developer(user)
       end
 
       it 'details path points to an external URL' do
@@ -77,5 +147,17 @@ describe GenericCommitStatus do
 
       it { is_expected.not_to be_nil }
     end
+
+    describe '#stage_idx' do
+      subject { generic_commit_status.stage_idx }
+
+      it { is_expected.not_to be_nil }
+    end
+  end
+
+  describe '#present' do
+    subject { generic_commit_status.present }
+
+    it { is_expected.to be_a(GenericCommitStatusPresenter) }
   end
 end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Member autocomplete', :js do
+RSpec.describe 'Member autocomplete', :js do
   let(:project) { create(:project, :public) }
   let(:user) { create(:user) }
   let(:author) { create(:user) }
@@ -11,10 +13,14 @@ feature 'Member autocomplete', :js do
     sign_in(user)
   end
 
-  shared_examples "open suggestions when typing @" do
+  shared_examples "open suggestions when typing @" do |resource_name|
     before do
       page.within('.new-note') do
-        find('#note_note').send_keys('@')
+        if resource_name == 'commit'
+          find('#note_note').send_keys('@')
+        else
+          find('#note-body').send_keys('@')
+        end
       end
     end
 
@@ -28,11 +34,35 @@ feature 'Member autocomplete', :js do
 
   context 'adding a new note on a Issue' do
     let(:noteable) { create(:issue, author: author, project: project) }
+
     before do
+      stub_feature_flags(tribute_autocomplete: false)
       visit project_issue_path(project, noteable)
     end
 
-    include_examples "open suggestions when typing @"
+    include_examples "open suggestions when typing @", 'issue'
+  end
+
+  describe 'when tribute_autocomplete feature flag is on' do
+    context 'adding a new note on a Issue' do
+      let(:noteable) { create(:issue, author: author, project: project) }
+
+      before do
+        stub_feature_flags(tribute_autocomplete: true)
+        visit project_issue_path(project, noteable)
+
+        page.within('.new-note') do
+          find('#note-body').send_keys('@')
+        end
+      end
+
+      it 'suggests noteable author and note author' do
+        page.within('.tribute-container', visible: true) do
+          expect(page).to have_content(author.username)
+          expect(page).to have_content(note.author.username)
+        end
+      end
+    end
   end
 
   context 'adding a new note on a Merge Request' do
@@ -41,11 +71,12 @@ feature 'Member autocomplete', :js do
       create(:merge_request, source_project: project,
                              target_project: project, author: author)
     end
+
     before do
       visit project_merge_request_path(project, noteable)
     end
 
-    include_examples "open suggestions when typing @"
+    include_examples "open suggestions when typing @", 'merge_request'
   end
 
   context 'adding a new note on a Commit' do
@@ -55,11 +86,11 @@ feature 'Member autocomplete', :js do
 
     before do
       allow(User).to receive(:find_by_any_email)
-        .with(noteable.author_email.downcase).and_return(author)
+        .with(noteable.author_email.downcase, confirmed: true).and_return(author)
 
       visit project_commit_path(project, noteable)
     end
 
-    include_examples "open suggestions when typing @"
+    include_examples "open suggestions when typing @", 'commit'
   end
 end

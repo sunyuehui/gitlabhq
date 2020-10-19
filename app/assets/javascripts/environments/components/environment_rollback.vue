@@ -5,55 +5,73 @@
  *
  * Makes a post request when the button is clicked.
  */
+import { GlTooltipDirective, GlModalDirective, GlButton } from '@gitlab/ui';
+import { s__ } from '~/locale';
 import eventHub from '../event_hub';
-import loadingIcon from '../../vue_shared/components/loading_icon.vue';
 
 export default {
+  components: {
+    GlButton,
+  },
+  directives: {
+    GlTooltip: GlTooltipDirective,
+    GlModal: GlModalDirective,
+  },
   props: {
-    retryUrl: {
-      type: String,
-      default: '',
-    },
-
     isLastDeployment: {
       type: Boolean,
       default: true,
+      required: false,
+    },
+
+    environment: {
+      type: Object,
+      required: true,
+    },
+
+    retryUrl: {
+      type: String,
+      required: true,
     },
   },
-
-  components: {
-    loadingIcon,
-  },
-
   data() {
     return {
       isLoading: false,
     };
   },
 
+  computed: {
+    title() {
+      return this.isLastDeployment
+        ? s__('Environments|Re-deploy to environment')
+        : s__('Environments|Rollback environment');
+    },
+  },
+
   methods: {
     onClick() {
-      this.isLoading = true;
-
-      eventHub.$emit('postAction', this.retryUrl);
+      eventHub.$emit('requestRollbackEnvironment', {
+        ...this.environment,
+        retryUrl: this.retryUrl,
+        isLastDeployment: this.isLastDeployment,
+      });
+      eventHub.$on('rollbackEnvironment', environment => {
+        if (environment.id === this.environment.id) {
+          this.isLoading = true;
+        }
+      });
     },
   },
 };
 </script>
 <template>
-  <button
-    type="button"
-    class="btn hidden-xs hidden-sm"
+  <gl-button
+    v-gl-tooltip
+    v-gl-modal.confirm-rollback-modal
+    class="gl-display-none gl-display-md-block text-secondary"
+    :loading="isLoading"
+    :title="title"
+    :icon="isLastDeployment ? 'repeat' : 'redo'"
     @click="onClick"
-    :disabled="isLoading">
-
-    <span v-if="isLastDeployment">
-      Re-deploy
-    </span>
-    <span v-else>
-      Rollback
-    </span>
-
-    <loading-icon v-if="isLoading" />
-  </button>
+  />
 </template>

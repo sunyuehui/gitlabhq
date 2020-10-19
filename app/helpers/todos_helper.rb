@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module TodosHelper
   def todos_pending_count
     @todos_pending_count ||= current_user.todos_pending_count
@@ -14,48 +16,103 @@ module TodosHelper
   def todo_action_name(todo)
     case todo.action
     when Todo::ASSIGNED then todo.self_added? ? 'assigned' : 'assigned you'
+    when Todo::REVIEW_REQUESTED then 'requested a review of'
     when Todo::MENTIONED then "mentioned #{todo_action_subject(todo)} on"
     when Todo::BUILD_FAILED then 'The build failed for'
     when Todo::MARKED then 'added a todo for'
     when Todo::APPROVAL_REQUIRED then "set #{todo_action_subject(todo)} as an approver for"
     when Todo::UNMERGEABLE then 'Could not merge'
     when Todo::DIRECTLY_ADDRESSED then "directly addressed #{todo_action_subject(todo)} on"
+    when Todo::MERGE_TRAIN_REMOVED then "Removed from Merge Train:"
+    end
+  end
+
+  def todo_self_addressing(todo)
+    case todo.action
+    when Todo::ASSIGNED then 'to yourself'
+    when Todo::REVIEW_REQUESTED then 'from yourself'
     end
   end
 
   def todo_target_link(todo)
-    text = raw("#{todo.target_type.titleize.downcase} ") +
+    text = raw(todo_target_type_name(todo) + ' ') +
       if todo.for_commit?
         content_tag(:span, todo.target_reference, class: 'commit-sha')
       else
         todo.target_reference
       end
-    link_to text, todo_target_path(todo), class: 'has-tooltip', title: todo.target.title
+
+    link_to text, todo_target_path(todo)
+  end
+
+  def todo_target_title(todo)
+    # Design To Dos' filenames are displayed in `#todo_target_link` (see `Design#to_reference`),
+    # so to avoid displaying duplicate filenames in the To Do list for designs,
+    # we return an empty string here.
+    return "" if todo.target.blank? || todo.for_design?
+
+    "\"#{todo.target.title}\""
+  end
+
+  def todo_parent_path(todo)
+    if todo.resource_parent.is_a?(Group)
+      link_to todo.resource_parent.name, group_path(todo.resource_parent)
+    else
+      link_to_project(todo.project)
+    end
+  end
+
+  def todo_target_type_name(todo)
+    return _('design') if todo.for_design?
+    return _('alert') if todo.for_alert?
+
+    todo.target_type.titleize.downcase
   end
 
   def todo_target_path(todo)
     return unless todo.target.present?
 
-    anchor = dom_id(todo.note) if todo.note.present?
+    path_options = todo_target_path_options(todo)
 
     if todo.for_commit?
-      project_commit_path(todo.project,
-                                    todo.target, anchor: anchor)
+      project_commit_path(todo.project, todo.target, path_options)
+    elsif todo.for_design?
+      todos_design_path(todo, path_options)
+    elsif todo.for_alert?
+      details_project_alert_management_path(todo.project, todo.target)
     else
-      path = [todo.project.namespace.becomes(Namespace), todo.project, todo.target]
+      path = [todo.resource_parent, todo.target]
 
       path.unshift(:pipelines) if todo.build_failed?
 
-      polymorphic_path(path, anchor: anchor)
+      polymorphic_path(path, path_options)
     end
+  end
+
+  def todo_target_path_options(todo)
+    { anchor: todo_target_path_anchor(todo) }
+  end
+
+  def todo_target_path_anchor(todo)
+    dom_id(todo.note) if todo.note.present?
   end
 
   def todo_target_state_pill(todo)
     return unless show_todo_state?(todo)
 
+    type =
+      case todo.target
+      when MergeRequest
+        'mr'
+      when Issue
+        'issue'
+      when AlertManagement::Alert
+        'alert'
+      end
+
     content_tag(:span, nil, class: 'target-status') do
-      content_tag(:span, nil, class: "status-box status-box-#{todo.target.state.dasherize}") do
-        todo.target.state.capitalize
+      content_tag(:span, nil, class: "status-box status-box-#{type}-#{todo.target.state.to_s.dasherize}") do
+        todo.target.state.to_s.capitalize
       end
     end
   end
@@ -85,15 +142,14 @@ module TodosHelper
       end
     end
 
-    path = request.path
-    path << "?#{options.to_param}"
-    path
+    "#{request.path}?#{options.to_param}"
   end
 
   def todo_actions_options
     [
       { id: '', text: 'Any Action' },
       { id: Todo::ASSIGNED, text: 'Assigned' },
+      { id: Todo::REVIEW_REQUESTED, text: 'Review requested' },
       { id: Todo::MENTIONED, text: 'Mentioned' },
       { id: Todo::MARKED, text: 'Added' },
       { id: Todo::BUILD_FAILED, text: 'Pipelines' },
@@ -105,7 +161,7 @@ module TodosHelper
     projects = current_user.authorized_projects.sorted_by_activity.non_archived.with_route
 
     projects = projects.map do |project|
-      { id: project.id, text: project.name_with_namespace }
+      { id: project.id, text: project.full_name }
     end
 
     projects.unshift({ id: '', text: 'Any Project' }).to_json
@@ -115,7 +171,9 @@ module TodosHelper
     [
       { id: '', text: 'Any Type' },
       { id: 'Issue', text: 'Issue' },
-      { id: 'MergeRequest', text: 'Merge Request' }
+      { id: 'MergeRequest', text: 'Merge Request' },
+      { id: 'DesignManagement::Design', text: 'Design' },
+      { id: 'AlertManagement::Alert', text: 'Alert' }
     ]
   end
 
@@ -143,19 +201,53 @@ module TodosHelper
         ''
       end
 
-    html = "&middot; ".html_safe
-    html << content_tag(:span, class: css_class) do
+    content = content_tag(:span, class: css_class) do
       "Due #{is_due_today ? "today" : todo.target.due_date.to_s(:medium)}"
     end
+
+    "&middot; #{content}".html_safe
+  end
+
+  def todo_author_display?(todo)
+    !todo.build_failed? && !todo.unmergeable?
   end
 
   private
+
+  def todos_design_path(todo, path_options)
+    design = todo.target
+
+    designs_project_issue_path(
+      todo.resource_parent,
+      design.issue,
+      path_options.merge(
+        vueroute: design.filename
+      )
+    )
+  end
 
   def todo_action_subject(todo)
     todo.self_added? ? 'yourself' : 'you'
   end
 
   def show_todo_state?(todo)
-    (todo.target.is_a?(MergeRequest) || todo.target.is_a?(Issue)) && %w(closed merged).include?(todo.target.state)
+    case todo.target
+    when MergeRequest, Issue
+      %w(closed merged).include?(todo.target.state)
+    when AlertManagement::Alert
+      %i(resolved).include?(todo.target.state)
+    else
+      false
+    end
+  end
+
+  def todo_group_options
+    groups = current_user.authorized_groups.with_route.map do |group|
+      { id: group.id, text: group.full_name }
+    end
+
+    groups.unshift({ id: '', text: 'Any Group' }).to_json
   end
 end
+
+TodosHelper.prepend_if_ee('EE::TodosHelper')

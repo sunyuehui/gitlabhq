@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Projects::TransferService class
 #
 # Used for transfer project to another namespace
@@ -15,40 +17,54 @@ module Projects
       @new_namespace = new_namespace
 
       if @new_namespace.blank?
-        raise TransferError, 'Please select a new namespace for your project.'
+        raise TransferError, s_('TransferProject|Please select a new namespace for your project.')
       end
 
       unless allowed_transfer?(current_user, project)
-        raise TransferError, 'Transfer failed, please contact an admin.'
+        raise TransferError, s_('TransferProject|Transfer failed, please contact an admin.')
       end
 
       transfer(project)
 
+      current_user.invalidate_personal_projects_count
+
       true
     rescue Projects::TransferService::TransferError => ex
-      project.reload
+      project.reset
       project.errors.add(:new_namespace, ex.message)
       false
     end
 
     private
 
+    attr_reader :old_path, :new_path, :new_namespace
+
+    # rubocop: disable CodeReuse/ActiveRecord
     def transfer(project)
       @old_path = project.full_path
       @old_group = project.group
       @new_path = File.join(@new_namespace.try(:full_path) || '', project.path)
       @old_namespace = project.namespace
 
-      if Project.where(path: project.path, namespace_id: @new_namespace.try(:id)).exists?
-        raise TransferError.new("Project with same path in target namespace already exists")
+      if Project.where(namespace_id: @new_namespace.try(:id)).where('path = ? or name = ?', project.path, project.name).exists?
+        raise TransferError.new(s_("TransferProject|Project with same name or path in target namespace already exists"))
       end
 
       if project.has_container_registry_tags?
         # We currently don't support renaming repository if it contains tags in container registry
-        raise TransferError.new('Project cannot be transferred, because tags are present in its container registry')
+        raise TransferError.new(s_('TransferProject|Project cannot be transferred, because tags are present in its container registry'))
+      end
+
+      if project.has_packages?(:npm) && !new_namespace_has_same_root?(project)
+        raise TransferError.new(s_("TransferProject|Root namespace can't be updated if project has NPM packages"))
       end
 
       attempt_transfer_transaction
+    end
+    # rubocop: enable CodeReuse/ActiveRecord
+
+    def new_namespace_has_same_root?(project)
+      new_namespace.root_ancestor == project.namespace.root_ancestor
     end
 
     def attempt_transfer_transaction
@@ -60,30 +76,30 @@ module Projects
         # Notifications
         project.send_move_instructions(@old_path)
 
-        # Move main repository
-        # TODO: check storage type and NOOP when not using Legacy
-        unless move_repo_folder(@old_path, @new_path)
-          raise TransferError.new('Cannot move project')
-        end
-
-        # Move wiki repo also if present
-        # TODO: check storage type and NOOP when not using Legacy
-        move_repo_folder("#{@old_path}.wiki", "#{@new_path}.wiki")
+        # Directories on disk
+        move_project_folders(project)
 
         # Move missing group labels to project
         Labels::TransferService.new(current_user, @old_group, project).execute
 
-        # Move uploads
-        Gitlab::UploadsTransfer.new.move_project(project.path, @old_namespace.full_path, @new_namespace.full_path)
+        # Move missing group milestones
+        Milestones::TransferService.new(current_user, @old_group, project).execute
 
-        # Move pages
-        Gitlab::PagesTransfer.new.move_project(project.path, @old_namespace.full_path, @new_namespace.full_path)
+        # Move uploads
+        move_project_uploads(project)
+
+        # If a project is being transferred to another group it means it can already
+        # have shared runners enabled but we need to check whether the new group allows that.
+        project.shared_runners_enabled = false if project.group && project.group.shared_runners_setting == 'disabled_and_unoverridable'
 
         project.old_path_with_namespace = @old_path
-        project.expires_full_path_cache
+
+        update_repository_configuration(@new_path)
 
         execute_system_hooks
       end
+
+      move_pages(project)
     rescue Exception # rubocop:disable Lint/RescueException
       rollback_side_effects
       raise
@@ -95,7 +111,7 @@ module Projects
       @new_namespace &&
         can?(current_user, :change_namespace, project) &&
         @new_namespace.id != project.namespace_id &&
-        current_user.can?(:create_projects, @new_namespace)
+        current_user.can?(:transfer_projects, @new_namespace)
     end
 
     def update_namespace_and_visibility(to_namespace)
@@ -103,6 +119,11 @@ module Projects
       project.namespace = to_namespace
       project.visibility_level = to_namespace.visibility_level unless project.visibility_level_allowed_by_group?
       project.save!
+    end
+
+    def update_repository_configuration(full_path)
+      project.write_repository_config(gl_full_path: full_path)
+      project.track_project_repository
     end
 
     def refresh_permissions
@@ -116,20 +137,76 @@ module Projects
 
     def rollback_side_effects
       rollback_folder_move
+      project.reset
       update_namespace_and_visibility(@old_namespace)
+      update_repository_configuration(@old_path)
     end
 
     def rollback_folder_move
+      return if project.hashed_storage?(:repository)
+
       move_repo_folder(@new_path, @old_path)
-      move_repo_folder("#{@new_path}.wiki", "#{@old_path}.wiki")
+      move_repo_folder(new_wiki_repo_path, old_wiki_repo_path)
+      move_repo_folder(new_design_repo_path, old_design_repo_path)
     end
 
     def move_repo_folder(from_name, to_name)
-      gitlab_shell.mv_repository(project.repository_storage_path, from_name, to_name)
+      gitlab_shell.mv_repository(project.repository_storage, from_name, to_name)
     end
 
     def execute_system_hooks
       SystemHooksService.new.execute_hooks_for(project, :transfer)
     end
+
+    def move_project_folders(project)
+      return if project.hashed_storage?(:repository)
+
+      # Move main repository
+      unless move_repo_folder(@old_path, @new_path)
+        raise TransferError.new(s_("TransferProject|Cannot move project"))
+      end
+
+      # Disk path is changed; we need to ensure we reload it
+      project.reload_repository!
+
+      # Move wiki and design repos also if present
+      move_repo_folder(old_wiki_repo_path, new_wiki_repo_path)
+      move_repo_folder(old_design_repo_path, new_design_repo_path)
+    end
+
+    def move_project_uploads(project)
+      return if project.hashed_storage?(:attachments)
+
+      Gitlab::UploadsTransfer.new.move_project(
+        project.path,
+        @old_namespace.full_path,
+        @new_namespace.full_path
+      )
+    end
+
+    def move_pages(project)
+      return unless project.pages_deployed?
+
+      transfer = Gitlab::PagesTransfer.new.async
+      transfer.move_project(project.path, @old_namespace.full_path, @new_namespace.full_path)
+    end
+
+    def old_wiki_repo_path
+      "#{old_path}#{::Gitlab::GlRepository::WIKI.path_suffix}"
+    end
+
+    def new_wiki_repo_path
+      "#{new_path}#{::Gitlab::GlRepository::WIKI.path_suffix}"
+    end
+
+    def old_design_repo_path
+      "#{old_path}#{::Gitlab::GlRepository::DESIGN.path_suffix}"
+    end
+
+    def new_design_repo_path
+      "#{new_path}#{::Gitlab::GlRepository::DESIGN.path_suffix}"
+    end
   end
 end
+
+Projects::TransferService.prepend_if_ee('EE::Projects::TransferService')

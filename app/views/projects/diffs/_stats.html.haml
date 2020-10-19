@@ -2,15 +2,15 @@
 - sum_removed_lines = diff_files.sum(&:removed_lines)
 .commit-stat-summary.dropdown
   Showing
-  %button.diff-stats-summary-toggler.js-diff-stats-dropdown{ type: "button", data: { toggle: "dropdown" } }<
+  %button.diff-stats-summary-toggler.js-diff-stats-dropdown{ type: "button", data: { toggle: "dropdown", display: "static" } }<
     = pluralize(diff_files.size, "changed file")
-    = icon("caret-down", class: "prepend-left-5")
+    = icon("caret-down", class: "gl-ml-2")
   %span.diff-stats-additions-deletions-expanded#diff-stats
     with
-    %strong.cgreen #{sum_added_lines} additions
+    %strong.cgreen= pluralize(sum_added_lines, 'addition')
     and
-    %strong.cred #{sum_removed_lines} deletions
-  .diff-stats-additions-deletions-collapsed.pull-right.hidden-xs.hidden-sm{ "aria-hidden": "true", "aria-describedby": "diff-stats" }
+    %strong.cred= pluralize(sum_removed_lines, 'deletion')
+  .diff-stats-additions-deletions-collapsed.float-right.d-none.d-sm-none{ "aria-hidden": "true", "aria-describedby": "diff-stats" }
     %strong.cgreen<
       +#{sum_added_lines}
     %strong.cred<
@@ -21,14 +21,21 @@
       %ul
         - diff_files.each do |diff_file|
           %li
-            %a{ href: "##{hexdigest(diff_file.file_path)}", title: diff_file.new_path }
-              = icon("#{diff_file_changed_icon(diff_file)} fw", class: "#{diff_file_changed_icon_color(diff_file)} append-right-5")
-              %span.diff-file-changes-path= diff_file.new_path
-              .pull-right
+            %a.diff-changed-file{ href: "##{hexdigest(diff_file.file_path)}", title: diff_file.new_path }
+              = sprite_icon(diff_file_changed_icon(diff_file), css_class: "#{diff_file_changed_icon_color(diff_file)} diff-file-changed-icon gl-mr-3")
+              %span.diff-changed-file-content.gl-mr-3
+                - if diff_file.file_path
+                  %strong.diff-changed-file-name
+                    = diff_file.file_path
+                - else
+                  %strong.diff-changed-blank-file-name
+                    = s_('Diffs|No file name available')
+                %span.diff-changed-file-path.gl-mt-2= diff_file_path_text(diff_file)
+              %span.diff-changed-stats
                 %span.cgreen<
                   +#{diff_file.added_lines}
                 %span.cred<
                   \-#{diff_file.removed_lines}
-        %li.dropdown-menu-empty-link.hidden
-          %a{ href: "#" }
-            No files found.
+        %li.dropdown-menu-empty-item.hidden
+          %a
+            = _("No files found.")

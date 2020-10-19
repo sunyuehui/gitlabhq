@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'zlib'
 require 'json'
 
@@ -7,14 +9,15 @@ module Gitlab
       module Artifacts
         class Metadata
           ParserError = Class.new(StandardError)
+          InvalidStreamError = Class.new(StandardError)
 
-          VERSION_PATTERN = /^[\w\s]+(\d+\.\d+\.\d+)/
-          INVALID_PATH_PATTERN = %r{(^\.?\.?/)|(/\.?\.?/)}
+          VERSION_PATTERN = /^[\w\s]+(\d+\.\d+\.\d+)/.freeze
+          INVALID_PATH_PATTERN = %r{(^\.?\.?/)|(/\.?\.?/)}.freeze
 
-          attr_reader :file, :path, :full_version
+          attr_reader :stream, :path, :full_version
 
-          def initialize(file, path, **opts)
-            @file, @path, @opts = file, path, opts
+          def initialize(stream, path, **opts)
+            @stream, @path, @opts = stream, path, opts
             @full_version = read_version
           end
 
@@ -29,7 +32,7 @@ module Gitlab
               raise ParserError, 'Errors field not found!' unless errors
 
               begin
-                JSON.parse(errors)
+                Gitlab::Json.parse(errors)
               rescue JSON::ParserError
                 raise ParserError, 'Invalid errors field!'
               end
@@ -58,14 +61,17 @@ module Gitlab
 
             until gz.eof?
               begin
-                path = read_string(gz).force_encoding('UTF-8')
-                meta = read_string(gz).force_encoding('UTF-8')
+                path = read_string(gz)&.force_encoding('UTF-8')
+                meta = read_string(gz)&.force_encoding('UTF-8')
 
+                # We might hit an EOF while reading either value, so we should
+                # abort if we don't get any data.
+                next unless path && meta
                 next unless path.valid_encoding? && meta.valid_encoding?
                 next unless path =~ match_pattern
                 next if path =~ INVALID_PATH_PATTERN
 
-                entries[path] = JSON.parse(meta, symbolize_names: true)
+                entries[path] = Gitlab::Json.parse(meta, symbolize_names: true)
               rescue JSON::ParserError, Encoding::CompatibilityError
                 next
               end
@@ -92,17 +98,28 @@ module Gitlab
 
           def read_uint32(gz)
             binary = gz.read(4)
-            binary.unpack('L>')[0] if binary
+            binary.unpack1('L>') if binary
           end
 
           def read_string(gz)
             string_size = read_uint32(gz)
-            return nil unless string_size
+            return unless string_size
+
             gz.read(string_size)
           end
 
           def gzip(&block)
-            Zlib::GzipReader.open(@file, &block)
+            raise InvalidStreamError, "Invalid stream" unless @stream
+
+            # restart gzip reading
+            @stream.seek(0)
+
+            gz = Zlib::GzipReader.new(@stream)
+            yield(gz)
+          rescue Zlib::Error => e
+            raise InvalidStreamError, e.message
+          ensure
+            gz&.finish
           end
         end
       end

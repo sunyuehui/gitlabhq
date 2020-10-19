@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+# frozen_string_literal: true
 #
 # # generate-seed-repo-rb
 #
@@ -8,22 +9,23 @@
 #
 # Usage:
 #
-#   ./spec/support/generate-seed-repo-rb > spec/support/seed_repo.rb
+#   ./spec/support/generate-seed-repo-rb > spec/support/helpers/seed_repo.rb
 #
 #
 
 require 'erb'
 require 'tempfile'
 
-SOURCE = File.expand_path('../gitlab-git-test.git', __FILE__).freeze
-SCRIPT_NAME = 'generate-seed-repo-rb'.freeze
-REPO_NAME = 'gitlab-git-test.git'.freeze
+SOURCE = File.expand_path('gitlab-git-test.git', __dir__)
+SCRIPT_NAME = 'generate-seed-repo-rb'
+REPO_NAME = 'gitlab-git-test.git'
 
 def main
   Dir.mktmpdir do |dir|
     unless system(*%W[git clone --bare #{SOURCE} #{REPO_NAME}], chdir: dir)
       abort "git clone failed"
     end
+
     repo = File.join(dir, REPO_NAME)
     erb = ERB.new(DATA.read)
     erb.run(binding)
@@ -33,6 +35,7 @@ end
 def capture!(cmd, dir)
   output = IO.popen(cmd, 'r', chdir: dir) { |io| io.read }
   raise "command failed with #{$?}: #{cmd.join(' ')}" unless $?.success?
+
   output.chomp
 end
 

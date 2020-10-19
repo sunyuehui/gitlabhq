@@ -1,4 +1,4 @@
-- page_title "Spam Logs"
+- page_title _("Spam Logs")
 %h3.page-title Spam Logs
 %hr
 - if @spam_logs.present?
@@ -17,6 +17,6 @@
           %th Primary Action
           %th
       = render @spam_logs
-  = paginate @spam_logs
+  = paginate @spam_logs, theme: 'gitlab'
 - else
   %h4 There are no Spam Logs

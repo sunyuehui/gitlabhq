@@ -1,16 +1,17 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'User views files page' do
-  let(:user) { create(:user) }
+RSpec.describe 'Projects > Files > User views files page' do
   let(:project) { create(:forked_project_with_submodules) }
+  let(:user) { project.owner }
 
   before do
-    project.team << [user, :master]
     sign_in user
     visit project_tree_path(project, project.repository.root_ref)
   end
 
-  scenario 'user sees folders and submodules sorted together, followed by files' do
+  it 'user sees folders and submodules sorted together, followed by files', :js do
     rows = all('td.tree-item-file-name').map(&:text)
     tree = project.repository.tree
 

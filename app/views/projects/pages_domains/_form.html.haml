@@ -1,34 +1,28 @@
-= form_for [@project.namespace.becomes(Namespace), @project, @domain], html: { class: 'form-horizontal fieldset-form' } do |f|
-  - if @domain.errors.any?
-    #error_explanation
-      .alert.alert-danger
-        - @domain.errors.full_messages.each do |msg|
-          %p= msg
+- if domain_presenter.errors.any?
+  .gl-alert.gl-alert-danger
+    = sprite_icon('error', size: 16, css_class: 'gl-icon gl-alert-icon gl-alert-icon-no-title')
+    - domain_presenter.errors.full_messages.each do |msg|
+      = msg
 
-  .form-group
-    = f.label :domain, class: 'control-label' do
-      Domain
-    .col-sm-10
-      = f.text_field :domain, required: true, autocomplete: 'off', class: 'form-control'
-
-  - if Gitlab.config.pages.external_https
-    .form-group
-      = f.label :certificate, class: 'control-label' do
-        Certificate (PEM)
+.form-group.border-section
+  .row
+    - if domain_presenter.persisted?
+      .col-sm-2
+        = _("Domain")
       .col-sm-10
-        = f.text_area :certificate, rows: 5, class: 'form-control'
-        %span.help-inline Upload a certificate for your domain with all intermediates
-
-    .form-group
-      = f.label :key, class: 'control-label' do
-        Key (PEM)
+        = external_link(domain_presenter.url, domain_presenter.url)
+    - else
+      .col-sm-2
+        = f.label :domain, _("Domain")
       .col-sm-10
-        = f.text_area :key, rows: 5, class: 'form-control'
-        %span.help-inline Upload a private key for your certificate
-  - else
-    .nothing-here-block
-      Support for custom certificates is disabled.
-      Ask your system's administrator to enable it.
+        .input-group
+          = f.text_field :domain, required: true, autocomplete: "off", class: "form-control"
 
-  .form-actions
-    = f.submit 'Create New Domain', class: "btn btn-save"
+- if domain_presenter.persisted?
+  = render 'dns'
+
+- if Gitlab.config.pages.external_https
+  = render 'certificate', f: f
+- else
+  .border-section.nothing-here-block
+    = _("Support for custom certificates is disabled. Ask your system's administrator to enable it.")

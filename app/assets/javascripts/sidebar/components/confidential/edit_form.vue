@@ -1,46 +1,63 @@
 <script>
+import { GlSprintf } from '@gitlab/ui';
 import editFormButtons from './edit_form_buttons.vue';
+import { __ } from '../../../locale';
 
 export default {
   components: {
     editFormButtons,
+    GlSprintf,
   },
   props: {
-    isConfidential: {
+    confidential: {
       required: true,
       type: Boolean,
     },
-    toggleForm: {
+    fullPath: {
       required: true,
-      type: Function,
+      type: String,
     },
-    updateConfidentialAttribute: {
+    issuableType: {
       required: true,
-      type: Function,
+      type: String,
+    },
+  },
+  computed: {
+    confidentialityOnWarning() {
+      return __(
+        'You are going to turn on the confidentiality. This means that only team members with %{strongStart}at least Reporter access%{strongEnd} are able to see and leave comments on the %{issuableType}.',
+      );
+    },
+    confidentialityOffWarning() {
+      return __(
+        'You are going to turn off the confidentiality. This means %{strongStart}everyone%{strongEnd} will be able to see and leave a comment on this %{issuableType}.',
+      );
     },
   },
 };
 </script>
 
 <template>
-  <div class="dropdown open">
-    <div class="dropdown-menu confidential-warning-message">
+  <div class="dropdown show">
+    <div class="dropdown-menu sidebar-item-warning-message">
       <div>
-        <p v-if="!isConfidential">
-          You are going to turn on the confidentiality. This means that only team members with
-          <strong>at least Reporter access</strong>
-          are able to see and leave comments on the issue.
+        <p v-if="!confidential">
+          <gl-sprintf :message="confidentialityOnWarning">
+            <template #strong="{ content }">
+              <strong>{{ content }}</strong>
+            </template>
+            <template #issuableType>{{ issuableType }}</template>
+          </gl-sprintf>
         </p>
         <p v-else>
-          You are going to turn off the confidentiality. This means
-          <strong>everyone</strong>
-          will be able to see and leave a comment on this issue.
+          <gl-sprintf :message="confidentialityOffWarning">
+            <template #strong="{ content }">
+              <strong>{{ content }}</strong>
+            </template>
+            <template #issuableType>{{ issuableType }}</template>
+          </gl-sprintf>
         </p>
-        <edit-form-buttons
-          :is-confidential="isConfidential"
-          :toggle-form="toggleForm"
-          :update-confidential-attribute="updateConfidentialAttribute"
-        />
+        <edit-form-buttons :full-path="fullPath" :confidential="confidential" />
       </div>
     </div>
   </div>

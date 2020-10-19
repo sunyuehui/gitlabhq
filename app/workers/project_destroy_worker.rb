@@ -1,6 +1,11 @@
-class ProjectDestroyWorker
-  include Sidekiq::Worker
-  include DedicatedSidekiqQueue
+# frozen_string_literal: true
+
+class ProjectDestroyWorker # rubocop:disable Scalability/IdempotentWorker
+  include ApplicationWorker
+  include ExceptionBacktrace
+
+  feature_category :source_code_management
+  tags :requires_disk_io
 
   def perform(project_id, user_id, params)
     project = Project.find(project_id)

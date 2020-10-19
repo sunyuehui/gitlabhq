@@ -1,85 +1,92 @@
 @keyframes fade-out-status {
-  0%, 50% { opacity: 1; }
-  100% { opacity: 0; }
-}
-
-@keyframes blinking-dots {
-  0% {
-    background-color: rgba($white-light, 1);
-    box-shadow: 12px 0 0 0 rgba($white-light, 0.2),
-                24px 0 0 0 rgba($white-light, 0.2);
-  }
-
-  25% {
-    background-color: rgba($white-light, 0.4);
-    box-shadow: 12px 0 0 0 rgba($white-light, 2),
-                24px 0 0 0 rgba($white-light, 0.2);
-  }
-
-  75% {
-    background-color: rgba($white-light, 0.4);
-    box-shadow: 12px 0 0 0 rgba($white-light, 0.2),
-                24px 0 0 0 rgba($white-light, 1);
+  0%,
+  50% {
+    opacity: 1;
   }
 
   100% {
-    background-color: rgba($white-light, 1);
-    box-shadow: 12px 0 0 0 rgba($white-light, 0.2),
-                24px 0 0 0 rgba($white-light, 0.2);
+    opacity: 0;
+  }
+}
+
+@keyframes blinking-dot {
+  0% {
+    opacity: 1;
+  }
+
+  25% {
+    opacity: 0.4;
+  }
+
+  75% {
+    opacity: 0.4;
+  }
+
+  100% {
+    opacity: 1;
   }
 }
 
 @keyframes blinking-scroll-button {
-  0% { opacity: 0.2; }
-  25% { opacity: 0.5; }
-  50% { opacity: 0.7; }
-  100% { opacity: 1; }
+  0% {
+    opacity: 0.2;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.2;
+  }
 }
 
 .build-page {
-  .build-trace-container {
-    position: relative;
+  .build-trace {
+    @include build-trace();
   }
 
-  .build-trace {
-    background: $black;
-    color: $gray-darkest;
-    white-space: pre;
-    overflow-x: auto;
-    font-size: 12px;
-    border-radius: 0;
-    border: none;
+  .archived-job {
+    top: $header-height;
+    border-radius: 2px 2px 0 0;
+    color: $orange-600;
+    background-color: $orange-50;
+    border: 1px solid $border-gray-normal;
+    padding: 3px 12px;
+    margin: auto;
+    align-items: center;
+    z-index: 1;
 
-    .bash {
-      display: block;
+    .with-performance-bar & {
+      top: $header-height + $performance-bar-height;
     }
   }
 
   .top-bar {
-    height: 35px;
-    display: flex;
-    justify-content: flex-end;
-    background: $gray-light;
-    border: 1px solid $border-color;
-    color: $gl-text-color;
-    position: sticky;
-    position: -webkit-sticky;
-    top: $header-height;
+    @include build-trace-top-bar(50px);
+
+    &.has-archived-block {
+      top: $header-height + 28px;
+
+      .with-performance-bar & {
+        top: $header-height + $performance-bar-height + 28px;
+      }
+    }
 
     &.affix {
       top: $header-height;
-    }
 
-    // with sidebar
-    &.affix.sidebar-expanded {
-      right: 306px;
-      left: 16px;
-    }
+      // with sidebar
+      &.sidebar-expanded {
+        right: 306px;
+        left: 16px;
+      }
 
-    // without sidebar
-    &.affix.sidebar-collapsed {
-      right: 16px;
-      left: 16px;
+      // without sidebar
+      &.sidebar-collapsed {
+        right: 16px;
+        left: 16px;
+      }
     }
 
     &.affix-top {
@@ -89,62 +96,8 @@
       top: 0;
     }
 
-    .truncated-info {
-      margin: 0 auto;
-      align-self: center;
-
-      .truncated-info-size {
-        margin: 0 5px;
-      }
-
-      .raw-link {
-        color: $gl-text-color;
-        margin-left: 5px;
-        text-decoration: underline;
-      }
-    }
-
     .controllers {
-      display: flex;
-      font-size: 15px;
-      justify-content: center;
-      align-items: center;
-
-      svg {
-        height: 15px;
-        display: block;
-        fill: $gl-text-color;
-      }
-
-      .controllers-buttons {
-        color: $gl-text-color;
-        margin: 0 10px;
-      }
-
-      .btn-scroll.animate {
-        .first-triangle {
-          animation: blinking-scroll-button 1s ease infinite;
-          animation-delay: .3s;
-        }
-
-        .second-triangle {
-          animation: blinking-scroll-button 1s ease infinite;
-          animation-delay: .2s;
-        }
-
-        .third-triangle {
-          animation: blinking-scroll-button 1s ease infinite;
-        }
-
-        &:disabled {
-          opacity: 1;
-        }
-      }
-
-      .btn-scroll:disabled {
-        opacity: 0.35;
-        cursor: not-allowed;
-      }
+      @include build-controllers(15px, center, false, 0, inline, 0);
     }
   }
 
@@ -155,7 +108,7 @@
 
     svg {
       position: relative;
-      top: 5px;
+      top: 3px;
       margin-right: 5px;
       width: 22px;
       height: 22px;
@@ -163,41 +116,21 @@
   }
 
   .build-loader-animation {
-    position: relative;
-    width: 6px;
-    height: 6px;
-    margin: auto auto 12px 2px;
-    border-radius: 50%;
-    animation: blinking-dots 1s linear infinite;
-  }
-}
-
-.with-performance-bar .build-page {
-  .top-bar {
-    top: $header-height + $performance-bar-height;
-
-    &.affix {
-      top: $header-height + $performance-bar-height;
-    }
+    @include build-loader-animation;
+    float: left;
+    padding-left: $gl-padding-8;
   }
 }
 
 .build-header {
-  .ci-header-container,
-  .header-action-buttons {
-    display: flex;
-  }
-
-  .ci-header-container {
-    min-height: 54px;
-  }
-
   .page-content-header {
     padding: 10px 0 9px;
   }
 
   .header-action-buttons {
-    @media (max-width: $screen-xs-max) {
+    display: flex;
+
+    @include media-breakpoint-down(xs) {
       .sidebar-toggle-btn {
         margin-top: 0;
         margin-left: 10px;
@@ -211,7 +144,7 @@
       color: $gl-text-color;
 
       &:hover {
-        color: $gl-link-color;
+        color: $blue-600;
         text-decoration: none;
       }
     }
@@ -236,7 +169,6 @@
   }
 
   .sidebar-container {
-    width: calc(100% + 100px);
     padding-right: 100px;
     height: 100%;
     overflow-y: scroll;
@@ -251,6 +183,7 @@
 
   .block {
     width: 100%;
+    word-break: break-word;
 
     &:last-child {
       border-bottom: 1px solid $border-gray-normal;
@@ -259,56 +192,61 @@
     &.coverage {
       padding: 0 16px 11px;
     }
-
-    .btn-group-justified {
-      margin-top: 5px;
-    }
   }
 
   .block-last {
     padding: 16px 0;
   }
 
+  .trigger-variables-btn-container {
+    justify-content: space-between;
+    align-items: center;
+
+    .trigger-variables-btn {
+      margin-top: -5px;
+      margin-bottom: -5px;
+    }
+  }
+
   .trigger-build-variables {
     margin: 0;
     overflow-x: auto;
+    width: 100%;
     -ms-overflow-style: scrollbar;
     -webkit-overflow-scrolling: touch;
   }
 
   .trigger-build-variable {
-    font-weight: normal;
+    font-weight: $gl-font-weight-normal;
     color: $code-color;
   }
 
   .trigger-build-value {
     padding: 2px 4px;
     color: $black;
-    background-color: $white-light;
   }
 
-  .label {
+  .trigger-variables-table-cell {
+    font-size: $gl-font-size-small;
+    line-height: $gl-line-height;
+    border: 1px solid $gray-100;
+    padding: $gl-padding-4 6px;
+    width: 50%;
+    vertical-align: top;
+  }
+
+  .badge.badge-pill {
     margin-left: 2px;
   }
 
   .retry-link {
-    display: none;
+    display: block;
 
     .btn-inverted-secondary {
       color: $blue-500;
 
       &:hover {
-        color: $white-light;
-      }
-    }
-
-    @media (max-width: $screen-sm-max) {
-      display: block;
-
-      .btn {
-        i {
-          margin-left: 5px;
-        }
+        color: $white;
       }
     }
   }
@@ -321,26 +259,8 @@
     }
   }
 
-  .build-dropdown {
-    padding: $gl-padding 0;
-
-    .dropdown-menu-toggle {
-      margin-top: 8px;
-    }
-
-    .dropdown-menu {
-      margin-top: -$gl-padding;
-    }
-
-    svg {
-      position: relative;
-      top: 2px;
-      margin-right: 3px;
-    }
-  }
-
   .builds-container {
-    background-color: $white-light;
+    background-color: $white;
     border-top: 1px solid $border-color;
     border-bottom: 1px solid $border-color;
     max-height: 300px;
@@ -348,41 +268,28 @@
     overflow: auto;
 
     svg {
-      position: relative;
-      top: 2px;
       margin-right: 3px;
-      height: 13px;
+      height: 14px;
+      width: 14px;
     }
 
     a {
-      display: block;
       padding: $gl-padding 10px $gl-padding 40px;
       width: 270px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
 
       &:hover {
         color: $gl-text-color;
       }
     }
 
+    .icon-arrow-right {
+      left: 15px;
+      top: 20px;
+    }
+
     .build-job {
-      position: relative;
-
-      .fa-arrow-right {
-        position: absolute;
-        left: 15px;
-        top: 20px;
-        display: none;
-      }
-
       &.active {
-        font-weight: bold;
-
-        .fa-arrow-right {
-          display: block;
-        }
+        font-weight: $gl-font-weight-bold;
       }
 
       &.retried {
@@ -390,12 +297,7 @@
       }
 
       &:hover {
-        background-color: $row-hover;
-      }
-
-      .fa-refresh {
-        font-size: 13px;
-        margin-left: 3px;
+        background-color: $gray-darker;
       }
     }
   }
@@ -433,4 +335,15 @@
   top: 50%;
   right: 0;
   margin-top: -17px;
+}
+
+@include media-breakpoint-down(sm) {
+  .top-bar {
+    .truncated-info {
+      white-space: nowrap;
+      overflow: hidden;
+      max-width: 220px;
+      text-overflow: ellipsis;
+    }
+  }
 }

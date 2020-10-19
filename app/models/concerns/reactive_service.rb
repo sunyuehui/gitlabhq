@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ReactiveService
   extend ActiveSupport::Concern
 
@@ -6,5 +8,6 @@ module ReactiveService
 
     # Default cache key: class name + project_id
     self.reactive_cache_key = ->(service) { [service.class.model_name.singular, service.project_id] }
+    self.reactive_cache_work_type = :external_dependency
   end
 end

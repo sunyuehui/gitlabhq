@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::ContributionsCalendar do
+RSpec.describe Gitlab::ContributionsCalendar do
   let(:contributor) { create(:user) }
   let(:user) { create(:user) }
 
@@ -11,7 +13,7 @@ describe Gitlab::ContributionsCalendar do
   end
 
   let(:public_project) do
-    create(:project, :public) do |project|
+    create(:project, :public, :repository) do |project|
       create(:project_member, user: contributor, project: project)
     end
   end
@@ -40,13 +42,13 @@ describe Gitlab::ContributionsCalendar do
     described_class.new(contributor, current_user)
   end
 
-  def create_event(project, day, hour = 0)
+  def create_event(project, day, hour = 0, action = :created, target_symbol = :issue)
     @targets ||= {}
-    @targets[project] ||= create(:issue, project: project, author: contributor)
+    @targets[project] ||= create(target_symbol, project: project, author: contributor)
 
     Event.create!(
       project: project,
-      action: Event::CREATED,
+      action: action,
       target: @targets[project],
       author: contributor,
       created_at: DateTime.new(day.year, day.month, day.day, hour)
@@ -62,12 +64,28 @@ describe Gitlab::ContributionsCalendar do
       expect(calendar.activity_dates).to eq(last_week => 2, today => 1)
     end
 
-    it "only shows private events to authorized users" do
-      create_event(private_project, today)
-      create_event(feature_project, today)
+    context "when the user has opted-in for private contributions" do
+      it "shows private and public events to all users" do
+        user.update_column(:include_private_contributions, true)
+        create_event(private_project, today)
+        create_event(public_project, today)
 
-      expect(calendar.activity_dates[today]).to eq(0)
-      expect(calendar(user).activity_dates[today]).to eq(0)
+        expect(calendar.activity_dates[today]).to eq(1)
+        expect(calendar(user).activity_dates[today]).to eq(1)
+        expect(calendar(contributor).activity_dates[today]).to eq(2)
+      end
+    end
+
+    it "counts the diff notes on merge request" do
+      create_event(public_project, today, 0, :commented, :diff_note_on_merge_request)
+
+      expect(calendar(contributor).activity_dates[today]).to eq(1)
+    end
+
+    it "counts the discussions on merge requests and issues" do
+      create_event(public_project, today, 0, :commented, :discussion_note_on_merge_request)
+      create_event(public_project, today, 2, :commented, :discussion_note_on_issue)
+
       expect(calendar(contributor).activity_dates[today]).to eq(2)
     end
 
@@ -115,19 +133,32 @@ describe Gitlab::ContributionsCalendar do
       e3 = create_event(feature_project, today)
       create_event(public_project, last_week)
 
-      expect(calendar.events_by_date(today)).to contain_exactly(e1)
+      expect(calendar.events_by_date(today)).to contain_exactly(e1, e3)
       expect(calendar(contributor).events_by_date(today)).to contain_exactly(e1, e2, e3)
+    end
+
+    context 'when the user cannot read cross project' do
+      before do
+        allow(Ability).to receive(:allowed?).and_call_original
+        expect(Ability).to receive(:allowed?).with(user, :read_cross_project) { false }
+      end
+
+      it 'does not return any events' do
+        create_event(public_project, today)
+
+        expect(calendar(user).events_by_date(today)).to be_empty
+      end
     end
   end
 
   describe '#starting_year' do
-    it "should be the start of last year" do
+    it "is the start of last year" do
       expect(calendar.starting_year).to eq(last_year.year)
     end
   end
 
   describe '#starting_month' do
-    it "should be the start of this month" do
+    it "is the start of this month" do
       expect(calendar.starting_month).to eq(today.month)
     end
   end

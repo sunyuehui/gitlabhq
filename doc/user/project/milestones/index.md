@@ -1,60 +1,180 @@
+---
+type: index, reference
+stage: Plan
+group: Project Management
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see https://about.gitlab.com/handbook/engineering/ux/technical-writing/#designated-technical-writers
+---
+
 # Milestones
 
-Milestones allow you to organize issues and merge requests into a cohesive group,
-optionally setting a due date. A common use is keeping track of an upcoming
-software version. Milestones can be created per-project or per-group.
+Milestones in GitLab are a way to track issues and merge requests created to achieve a broader goal in a certain period of time.
 
-## Creating a project milestone
+Milestones allow you to organize issues and merge requests into a cohesive group, with an optional start date and an optional due date.
 
->**Note:**
-You need [Master permissions](../../permissions.md) in order to create a milestone.
+## Milestones as Agile sprints
 
-You can find the milestones page under your project's **Issues ➔ Milestones**.
-To create a new milestone, simply click the **New milestone** button when in the
-milestones page. A milestone can have a title, a description and start/due dates.
-Once you fill in all the details, hit the **Create milestone** button.
+Milestones can be used as Agile sprints so that you can track all issues and merge requests related to a particular sprint. To do so:
 
-![Creating a milestone](img/milestone_create.png)
+1. Set the milestone start date and due date to represent the start and end of your Agile sprint.
+1. Set the milestone title to the name of your Agile sprint, such as `November 2018 sprint`.
+1. Add an issue to your Agile sprint by associating the desired milestone from the issue's right-hand sidebar.
 
-## Creating a group milestone
+## Milestones as releases
 
->**Note:**
-You need [Master permissions](../../permissions.md) in order to create a milestone.
+Similarly, milestones can be used as releases. To do so:
 
-You can create a milestone for a group that will be shared across group projects.
-On the group's **Issues ➔ Milestones** page, you will be able to see the state
-of that milestone and the issues/merge requests count that it shares across the group projects. To create a new milestone click the **New milestone** button. The form is the same as when creating a milestone for a specific project which you can find in the previous item.
+1. Set the milestone due date to represent the release date of your release and leave the milestone start date blank.
+1. Set the milestone title to the version of your release, such as `Version 9.4`.
+1. Add an issue to your release by associating the desired milestone from the issue's right-hand sidebar.
 
-In addition to that you will be able to filter issues or merge requests by group milestones in all projects that belongs to the milestone group.
+Additionally, you can integrate milestones with GitLab's [Releases feature](../releases/index.md#associate-milestones-with-a-release).
 
-## Milestone promotion
+## Project milestones and group milestones
 
-You will be able to promote a project milestone to a group milestone [in the future](https://gitlab.com/gitlab-org/gitlab-ce/issues/35833).
+You can assign **project milestones** to issues or merge requests in that project only.
+To view the project milestone list, in a project, go to **{issues}** **Issues > Milestones**.
 
-## Special milestone filters
+You can assign **group milestones** to any issue or merge request of any project in that group.
+To view the group milestone list, in a group, go to **{issues}** **Issues > Milestones**.
 
-In addition to the milestones that exist in the project or group, there are some
-special options available when filtering by milestone:
+You can also view all milestones you have access to in the dashboard milestones list.
+To view both project milestones and group milestones you have access to, click **More > Milestones**
+on the top navigation bar.
 
-* **No Milestone** - only show issues or merge requests without a milestone.
-* **Upcoming** - show issues or merge request that belong to the next open
-  milestone with a due date, by project. (For example: if project A has
-  milestone v1 due in three days, and project B has milestone v2 due in a week,
-  then this will show issues or merge requests from milestone v1 in project A
-  and milestone v2 in project B.)
-* **Started** - show issues or merge requests from any milestone with a start
-  date less than today. Note that this can return results from several
-  milestones in the same project.
+For information about project and group milestones API, see:
 
-## Milestone progress statistics
+- [Project Milestones API](../../../api/milestones.md)
+- [Group Milestones API](../../../api/group_milestones.md)
 
-Milestone statistics can be viewed in the milestone sidebar. The milestone percentage statistic
-is calculated as; closed and merged merge requests plus all closed issues divided by
-total merge requests and issues.
+NOTE: **Note:**
+If you're in a group and click **Issues > Milestones**, you'll see group milestones and the milestones
+of projects in this group.
+If you're in a project and click **Issues > Milestones**, you'll only see this project's milestones.
 
-![Milestone statistics](img/progress.png)
+## Creating milestones
 
-## Quick actions
+NOTE: **Note:**
+A permission level of [Developer or higher](../../permissions.md) is required to create milestones.
 
-[Quick actions](../quick_actions.md) are available for assigning and removing
-project and group milestones.
+### New project milestone
+
+To create a **project milestone**:
+
+1. In a project, go to **{issues}** **Issues > Milestones**.
+1. Click **New milestone**.
+1. Enter the title, an optional description, an optional start date, and an optional due date.
+1. Click **New milestone**.
+
+![New project milestone](img/milestones_new_project_milestone.png)
+
+### New group milestone
+
+To create a **group milestone**:
+
+1. In a group, go to **{issues}** **Issues > Milestones**.
+1. Click **New milestone**.
+1. Enter the title, an optional description, an optional start date, and an optional due date.
+1. Click **New milestone**.
+
+![New group milestone](img/milestones_new_group_milestone.png)
+
+## Editing milestones
+
+NOTE: **Note:**
+A permission level of [Developer or higher](../../permissions.md) is required to edit milestones.
+
+To edit a milestone:
+
+1. In a project or group, go to **{issues}** **Issues > Milestones**.
+1. Click a milestone's title.
+1. Click **Edit**.
+
+You can delete a milestone by clicking the **Delete** button.
+
+### Promoting project milestones to group milestones
+
+If you are expanding from a few projects to a larger number of projects within the same group, you may want to share the same milestone among multiple projects in the same group. If you previously created a project milestone and now want to make it available for other projects within the same group, you can promote it to a group milestone.
+
+From the project milestone list page, you can promote a project milestone to a group milestone. This will merge all project milestones across all projects in this group with the same name into a single group milestones. All issues and merge requests that previously were assigned one of these project milestones will now be assigned the new group milestones. This action cannot be reversed and the changes are permanent.
+
+CAUTION: **Caution:**
+From GitLab 12.4 and earlier, some information is lost when you promote a project milestone to a group milestone. Not all features on the project milestone view are available on the group milestone view. If you promote a project milestone to a group milestone, you will lose these features. See [Milestone view](#milestone-view) to see which features are missing from the group milestone view.
+
+![Promote milestone](img/milestones_promote_milestone.png)
+
+## Assigning milestones from the sidebar
+
+Every issue and merge request can be assigned a milestone. The milestones are visible on every issue and merge request page, in the sidebar. They are also visible in the issue board. From the sidebar, you can assign or unassign a milestones to the object. You can also perform this as a [quick action](../quick_actions.md) in a comment. [As mentioned](#project-milestones-and-group-milestones), for a given issue or merge request, both project milestones and group milestones can be selected and assigned to the object.
+
+## Filtering issues and merge requests by milestone
+
+### Filtering in list pages
+
+From the project issue/merge request list pages and the group issue/merge request list pages, you can [filter](../../search/index.md#issues-and-merge-requests) by both group milestones and project milestones.
+
+### Filtering in issue boards
+
+- From [project issue boards](../issue_board.md), you can filter by both group milestones and project milestones in the [search and filter bar](../../search/index.md#issue-boards).
+- From [group issue boards](../issue_board.md#group-issue-boards), you can filter by only group milestones in the [search and filter bar](../../search/index.md#issue-boards). **(PREMIUM)**
+- From [project issue boards](../issue_board.md), you can filter by both group milestones and project milestones in the [issue board configuration](../issue_board.md#configurable-issue-boards). **(STARTER)**
+- From [group issue boards](../issue_board.md#group-issue-boards) you can filter by only group milestones in the [issue board configuration](../issue_board.md#configurable-issue-boards). **(STARTER)**
+
+### Special milestone filters
+
+When filtering by milestone, in addition to choosing a specific project milestone or group milestone, you can choose a special milestone filter.
+
+- **None**: Show issues or merge requests with no assigned milestone.
+- **Any**: Show issues or merge requests that have an assigned milestone.
+- **Upcoming**: Show issues or merge requests that have been assigned the open milestone that has the next upcoming due date (i.e. nearest due date in the future).
+- **Started**: Show issues or merge requests that have an open assigned milestone with a start date that is before today.
+
+## Milestone view
+
+The milestone view shows the title and description.
+
+There are also tabs below these that show the following:
+
+- **Issues**: Shows all issues assigned to the milestone. These are displayed in three columns named:
+  - Unstarted Issues (open and unassigned)
+  - Ongoing Issues (open and assigned)
+  - Completed Issues (closed)
+- **Merge Requests**: Shows all merge requests assigned to the milestone. These are displayed in four columns named:
+  - Work in progress (open and unassigned)
+  - Waiting for merge (open and unassigned)
+  - Rejected (closed)
+  - Merged
+- **Participants**: Shows all assignees of issues assigned to the milestone.
+- **Labels**: Shows all labels that are used in issues assigned to the milestone.
+
+### Project Burndown Charts **(STARTER)**
+
+For project milestones in [GitLab Starter](https://about.gitlab.com/pricing/), a [burndown chart](burndown_charts.md) is in the milestone view, showing the progress of completing a milestone.
+
+![burndown chart](img/burndown_chart_v13_5.png)
+
+### Group Burndown Charts **(STARTER)**
+
+For group milestones in [GitLab Starter](https://about.gitlab.com/pricing/), a [burndown chart](burndown_charts.md) is in the milestone view, showing the progress of completing a milestone.
+
+### Milestone sidebar
+
+The milestone sidebar on the milestone view shows the following:
+
+- Percentage complete, which is calculated as number of closed issues divided by total number of issues.
+- The start date and due date.
+- The total time spent on all issues and merge requests assigned to the milestone.
+- The total issue weight of all issues assigned to the milestone.
+
+![Project milestone page](img/milestones_project_milestone_page.png)
+
+<!-- ## Troubleshooting
+
+Include any troubleshooting steps that you can foresee. If you know beforehand what issues
+one might have when setting this up, or when something is changed, or on upgrading, it's
+important to describe those, too. Think of things that may go wrong and include them here.
+This is important to minimize requests for support, and to avoid doc comments with
+questions that you know someone might ask.
+
+Each scenario can be a third-level heading, e.g. `### Getting error message X`.
+If you have none to add when creating a doc, leave this section in place
+but commented out to help encourage others to add to it in the future. -->

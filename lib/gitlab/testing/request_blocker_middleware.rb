@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # rubocop:disable Style/ClassVars
 
 # This is inspired by http://www.salsify.com/blog/engineering/tearing-capybara-ajax-tests
@@ -7,6 +9,7 @@ module Gitlab
     class RequestBlockerMiddleware
       @@num_active_requests = Concurrent::AtomicFixnum.new(0)
       @@block_requests = Concurrent::AtomicBoolean.new(false)
+      @@slow_requests = Concurrent::AtomicBoolean.new(false)
 
       # Returns the number of requests the server is currently processing.
       def self.num_active_requests
@@ -19,9 +22,15 @@ module Gitlab
         @@block_requests.value = true
       end
 
+      # Slows down incoming requests (useful for race conditions).
+      def self.slow_requests!
+        @@slow_requests.value = true
+      end
+
       # Allows the server to accept requests again.
       def self.allow_requests!
         @@block_requests.value = false
+        @@slow_requests.value = false
       end
 
       def initialize(app)
@@ -30,11 +39,14 @@ module Gitlab
 
       def call(env)
         increment_active_requests
+
         if block_requests?
           block_request(env)
         else
+          sleep 0.2 if slow_requests?
           @app.call(env)
         end
+
       ensure
         decrement_active_requests
       end
@@ -43,6 +55,10 @@ module Gitlab
 
       def block_requests?
         @@block_requests.true?
+      end
+
+      def slow_requests?
+        @@slow_requests.true?
       end
 
       def block_request(env)

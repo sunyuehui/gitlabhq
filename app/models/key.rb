@@ -1,9 +1,14 @@
+# frozen_string_literal: true
+
 require 'digest/md5'
 
-class Key < ActiveRecord::Base
+class Key < ApplicationRecord
+  include AfterCommitQueue
   include Sortable
+  include Sha256Attribute
+  include Expirable
 
-  LAST_USED_AT_REFRESH_TIME = 1.day.to_i
+  sha256_attribute :fingerprint_sha256
 
   belongs_to :user
 
@@ -12,26 +17,41 @@ class Key < ActiveRecord::Base
   validates :title,
     presence: true,
     length: { maximum: 255 }
+
   validates :key,
     presence: true,
     length: { maximum: 5000 },
     format: { with: /\A(ssh|ecdsa)-.*\Z/ }
+
   validates :fingerprint,
     uniqueness: true,
     presence: { message: 'cannot be generated' }
 
+  validate :key_meets_restrictions
+
   delegate :name, :email, to: :user, prefix: true
 
-  after_commit :add_to_shell, on: :create
-  after_commit :notify_user, on: :create
+  after_commit :add_to_authorized_keys, on: :create
   after_create :post_create_hook
-  after_commit :remove_from_shell, on: :destroy
+  after_create :refresh_user_cache
+  after_commit :remove_from_authorized_keys, on: :destroy
   after_destroy :post_destroy_hook
+  after_destroy :refresh_user_cache
+
+  alias_attribute :fingerprint_md5, :fingerprint
+
+  scope :preload_users, -> { preload(:user) }
+  scope :for_user, -> (user) { where(user: user) }
+  scope :order_last_used_at_desc, -> { reorder(::Gitlab::Database.nulls_last_order('last_used_at', 'DESC')) }
+
+  def self.regular_keys
+    where(type: ['Key', nil])
+  end
 
   def key=(value)
-    value&.delete!("\n\r")
-    value.strip! unless value.blank?
-    write_attribute(:key, value)
+    write_attribute(:key, value.present? ? Gitlab::SSHPublicKey.sanitize(value) : nil)
+
+    @public_key = nil
   end
 
   def publishable_key
@@ -49,48 +69,80 @@ class Key < ActiveRecord::Base
     "key-#{id}"
   end
 
+  # EE overrides this
+  def can_delete?
+    true
+  end
+
+  # rubocop: disable CodeReuse/ServiceClass
   def update_last_used_at
-    lease = Gitlab::ExclusiveLease.new("key_update_last_used_at:#{id}", timeout: LAST_USED_AT_REFRESH_TIME)
-    return unless lease.try_obtain
+    Keys::LastUsedService.new(self).execute
+  end
+  # rubocop: enable CodeReuse/ServiceClass
 
-    UseKeyWorker.perform_async(id)
+  def add_to_authorized_keys
+    return unless Gitlab::CurrentSettings.authorized_keys_enabled?
+
+    AuthorizedKeysWorker.perform_async(:add_key, shell_id, key)
   end
 
-  def add_to_shell
-    GitlabShellWorker.perform_async(
-      :add_key,
-      shell_id,
-      key
-    )
-  end
-
+  # rubocop: disable CodeReuse/ServiceClass
   def post_create_hook
     SystemHooksService.new.execute_hooks_for(self, :create)
   end
+  # rubocop: enable CodeReuse/ServiceClass
 
-  def remove_from_shell
-    GitlabShellWorker.perform_async(
-      :remove_key,
-      shell_id,
-      key
-    )
+  def remove_from_authorized_keys
+    return unless Gitlab::CurrentSettings.authorized_keys_enabled?
+
+    AuthorizedKeysWorker.perform_async(:remove_key, shell_id)
   end
 
+  # rubocop: disable CodeReuse/ServiceClass
+  def refresh_user_cache
+    return unless user
+
+    Users::KeysCountService.new(user).refresh_cache
+  end
+  # rubocop: enable CodeReuse/ServiceClass
+
+  # rubocop: disable CodeReuse/ServiceClass
   def post_destroy_hook
     SystemHooksService.new.execute_hooks_for(self, :destroy)
+  end
+  # rubocop: enable CodeReuse/ServiceClass
+
+  def public_key
+    @public_key ||= Gitlab::SSHPublicKey.new(key)
   end
 
   private
 
   def generate_fingerprint
     self.fingerprint = nil
+    self.fingerprint_sha256 = nil
 
-    return unless self.key.present?
+    return unless public_key.valid?
 
-    self.fingerprint = Gitlab::KeyFingerprint.new(self.key).fingerprint
+    self.fingerprint_md5 = public_key.fingerprint
+    self.fingerprint_sha256 = public_key.fingerprint("SHA256").gsub("SHA256:", "")
   end
 
-  def notify_user
-    NotificationService.new.new_key(self)
+  def key_meets_restrictions
+    restriction = Gitlab::CurrentSettings.key_restriction_for(public_key.type)
+
+    if restriction == ApplicationSetting::FORBIDDEN_KEY_VALUE
+      errors.add(:key, forbidden_key_type_message)
+    elsif public_key.bits < restriction
+      errors.add(:key, "must be at least #{restriction} bits")
+    end
+  end
+
+  def forbidden_key_type_message
+    allowed_types = Gitlab::CurrentSettings.allowed_key_types.map(&:upcase)
+
+    "type is forbidden. Must be #{Gitlab::Utils.to_exclusive_sentence(allowed_types)}"
   end
 end
+
+Key.prepend_if_ee('EE::Key')

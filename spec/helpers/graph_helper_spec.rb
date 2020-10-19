@@ -1,16 +1,18 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe GraphHelper do
+RSpec.describe GraphHelper do
   describe '#get_refs' do
     let(:project) { create(:project, :repository) }
     let(:commit)  { project.commit("master") }
     let(:graph) { Network::Graph.new(project, 'master', commit, '') }
 
     it 'filters our refs used by GitLab' do
-      allow(commit).to receive(:ref_names).and_return(['refs/merge-requests/abc', 'master', 'refs/tmp/xyz'])
       self.instance_variable_set(:@graph, graph)
-      refs = get_refs(project.repository, commit)
-      expect(refs).to eq('master')
+      refs = refs(project.repository, commit)
+
+      expect(refs).to match('master')
     end
   end
 end

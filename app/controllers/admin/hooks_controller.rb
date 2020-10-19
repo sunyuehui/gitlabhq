@@ -1,7 +1,11 @@
+# frozen_string_literal: true
+
 class Admin::HooksController < Admin::ApplicationController
   include HooksExecution
 
   before_action :hook_logs, only: :edit
+
+  feature_category :integrations
 
   def index
     @hooks = SystemHook.all
@@ -9,10 +13,10 @@ class Admin::HooksController < Admin::ApplicationController
   end
 
   def create
-    @hook = SystemHook.new(hook_params)
+    @hook = SystemHook.new(hook_params.to_h)
 
     if @hook.save
-      redirect_to admin_hooks_path, notice: 'Hook was successfully created.'
+      redirect_to admin_hooks_path, notice: _('Hook was successfully created.')
     else
       @hooks = SystemHook.all
       render :index
@@ -23,8 +27,8 @@ class Admin::HooksController < Admin::ApplicationController
   end
 
   def update
-    if hook.update_attributes(hook_params)
-      flash[:notice] = 'System hook was successfully updated.'
+    if hook.update(hook_params)
+      flash[:notice] = _('System hook was successfully updated.')
       redirect_to admin_hooks_path
     else
       render 'edit'
@@ -32,9 +36,9 @@ class Admin::HooksController < Admin::ApplicationController
   end
 
   def destroy
-    hook.destroy
+    destroy_hook(hook)
 
-    redirect_to admin_hooks_path, status: 302
+    redirect_to admin_hooks_path, status: :found
   end
 
   def test
@@ -52,18 +56,15 @@ class Admin::HooksController < Admin::ApplicationController
   end
 
   def hook_logs
-    @hook_logs ||=
-      Kaminari.paginate_array(hook.web_hook_logs.order(created_at: :desc)).page(params[:page])
+    @hook_logs ||= hook.web_hook_logs.recent.page(params[:page])
   end
 
   def hook_params
     params.require(:hook).permit(
       :enable_ssl_verification,
-      :push_events,
-      :tag_push_events,
-      :repository_update_events,
       :token,
-      :url
+      :url,
+      *SystemHook.triggers.values
     )
   end
 end

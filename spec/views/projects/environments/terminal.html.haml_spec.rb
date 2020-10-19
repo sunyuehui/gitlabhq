@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'projects/environments/terminal' do
+RSpec.describe 'projects/environments/terminal' do
   let!(:environment) { create(:environment, :with_review_app) }
 
   before do

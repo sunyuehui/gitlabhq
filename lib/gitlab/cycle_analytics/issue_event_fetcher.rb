@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 module Gitlab
   module CycleAnalytics
     class IssueEventFetcher < BaseEventFetcher
-      include IssueAllowed
+      include IssueHelper
 
       def initialize(*args)
         @projections = [issue_table[:title],
@@ -16,7 +18,11 @@ module Gitlab
       private
 
       def serialize(event)
-        AnalyticsIssueSerializer.new(project: @project).represent(event)
+        AnalyticsIssueSerializer.new(serialization_context).represent(event)
+      end
+
+      def allowed_ids_finder_class
+        IssuesFinder
       end
     end
   end

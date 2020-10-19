@@ -1,16 +1,14 @@
+# frozen_string_literal: true
+
 module Projects
   module Settings
     class IntegrationsController < Projects::ApplicationController
-      include ServiceParams
-
       before_action :authorize_admin_project!
       layout "project_settings"
 
-      def show
-        @hooks = @project.hooks
-        @hook = ProjectHook.new
+      feature_category :integrations
 
-        # Services
+      def show
         @services = @project.find_or_initialize_services
       end
     end

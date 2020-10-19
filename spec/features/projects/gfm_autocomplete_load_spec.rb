@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'GFM autocomplete loading', js: true do
+RSpec.describe 'GFM autocomplete loading', :js do
   let(:project) { create(:project) }
 
   before do

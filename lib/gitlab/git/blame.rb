@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Git
     class Blame
@@ -15,36 +17,16 @@ module Gitlab
 
       def each
         @blames.each do |blame|
-          yield(
-            Gitlab::Git::Commit.new(@repo, blame.commit),
-            blame.line
-          )
+          yield(blame.commit, blame.line)
         end
       end
 
       private
 
       def load_blame
-        raw_output = @repo.gitaly_migrate(:blame) do |is_enabled|
-          if is_enabled
-            load_blame_by_gitaly
-          else
-            load_blame_by_shelling_out
-          end
-        end
+        output = encode_utf8(@repo.gitaly_commit_client.raw_blame(@sha, @path))
 
-        output = encode_utf8(raw_output)
-        process_raw_blame output
-      end
-
-      def load_blame_by_gitaly
-        @repo.gitaly_commit_client.raw_blame(@sha, @path)
-      end
-
-      def load_blame_by_shelling_out
-        cmd = %W(#{Gitlab.config.git.bin_path} --git-dir=#{@repo.path} blame -p #{@sha} -- #{@path})
-        # Read in binary mode to ensure ASCII-8BIT
-        IO.popen(cmd, 'rb') {|io| io.read }
+        process_raw_blame(output)
       end
 
       def process_raw_blame(output)
@@ -62,9 +44,8 @@ module Gitlab
           end
         end
 
-        # load all commits in single call
-        commits.keys.each do |key|
-          commits[key] = @repo.lookup(key)
+        Gitlab::Git::Commit.batch_by_oid(@repo, commits.keys).each do |commit|
+          commits[commit.sha] = commit
         end
 
         # get it together

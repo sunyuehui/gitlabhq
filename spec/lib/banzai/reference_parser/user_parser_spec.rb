@@ -1,12 +1,15 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::ReferenceParser::UserParser do
+RSpec.describe Banzai::ReferenceParser::UserParser do
   include ReferenceParserHelpers
 
   let(:group) { create(:group) }
   let(:user) { create(:user) }
   let(:project) { create(:project, :public, group: group, creator: user) }
-  subject { described_class.new(project, user) }
+  subject { described_class.new(Banzai::RenderContext.new(project, user)) }
+
   let(:link) { empty_html_link }
 
   describe '#referenced_by' do
@@ -16,14 +19,22 @@ describe Banzai::ReferenceParser::UserParser do
           link['data-group'] = project.group.id.to_s
         end
 
-        it 'returns the users of the group' do
-          create(:group_member, group: group, user: user)
-
-          expect(subject.referenced_by([link])).to eq([user])
-        end
-
         it 'returns an empty Array when the group has no users' do
           expect(subject.referenced_by([link])).to eq([])
+        end
+
+        context 'when group has members' do
+          let!(:group_member) { create(:group_member, group: group, user: user) }
+
+          it 'returns the users of the group' do
+            expect(subject.referenced_by([link])).to eq([user])
+          end
+
+          it 'returns an empty Array when the group has mentions disabled' do
+            group.update!(mentions_disabled: true)
+
+            expect(subject.referenced_by([link])).to eq([])
+          end
         end
       end
 
@@ -63,8 +74,8 @@ describe Banzai::ReferenceParser::UserParser do
         let(:contributor) { create(:user) }
 
         before do
-          project.team << [user, :developer]
-          project.team << [contributor, :developer]
+          project.add_developer(user)
+          project.add_developer(contributor)
         end
 
         it 'returns the members of a project' do
@@ -162,7 +173,7 @@ describe Banzai::ReferenceParser::UserParser do
     context 'when the link has a data-author attribute' do
       it 'returns the nodes when the user is a member of the project' do
         other_project = create(:project)
-        other_project.team << [user, :developer]
+        other_project.add_developer(user)
 
         link['data-project'] = other_project.id.to_s
         link['data-author'] = user.id.to_s

@@ -1,13 +1,14 @@
-require 'spec_helper'
-require_relative '../../config/initializers/secret_token'
+# frozen_string_literal: true
 
-describe 'create_tokens' do
+require 'spec_helper'
+require_relative '../../config/initializers/01_secret_token'
+
+RSpec.describe 'create_tokens' do
   include StubENV
 
   let(:secrets) { ActiveSupport::OrderedOptions.new }
-
-  HEX_KEY = /\h{128}/
-  RSA_KEY = /\A-----BEGIN RSA PRIVATE KEY-----\n.+\n-----END RSA PRIVATE KEY-----\n\Z/m
+  let(:hex_key) { /\h{128}/.freeze }
+  let(:rsa_key) { /\A-----BEGIN RSA PRIVATE KEY-----\n.+\n-----END RSA PRIVATE KEY-----\n\Z/m.freeze }
 
   before do
     allow(File).to receive(:write)
@@ -16,6 +17,30 @@ describe 'create_tokens' do
     allow(Rails).to receive_message_chain(:root, :join) { |string| string }
     allow(self).to receive(:warn)
     allow(self).to receive(:exit)
+  end
+
+  describe 'ensure acknowledged secrets in any installations' do
+    let(:acknowledged_secrets) do
+      %w[secret_key_base otp_key_base db_key_base openid_connect_signing_key]
+    end
+
+    it 'does not allow to add a new secret without a proper handling' do
+      create_tokens
+
+      secrets_hash = YAML.load_file(Rails.root.join('config/secrets.yml'))
+
+      secrets_hash.each do |environment, secrets|
+        new_secrets = secrets.keys - acknowledged_secrets
+
+        expect(new_secrets).to be_empty,
+         <<~EOS
+           CAUTION:
+           It looks like you have just added new secret(s) #{new_secrets.inspect} to the secrets.yml.
+           Please read the development guide for GitLab secrets at doc/development/application_secrets.md before you proceed this change.
+           If you're absolutely sure that the change is safe, please add the new secrets to the 'acknowledged_secrets' in order to silence this warning.
+         EOS
+      end
+    end
   end
 
   context 'setting secret keys' do
@@ -33,23 +58,23 @@ describe 'create_tokens' do
         keys = secrets.values_at(:secret_key_base, :otp_key_base, :db_key_base)
 
         expect(keys.uniq).to eq(keys)
-        expect(keys).to all(match(HEX_KEY))
+        expect(keys).to all(match(hex_key))
       end
 
-      it 'generates an RSA key for jws_private_key' do
+      it 'generates an RSA key for openid_connect_signing_key' do
         create_tokens
 
-        keys = secrets.values_at(:jws_private_key)
+        keys = secrets.values_at(:openid_connect_signing_key)
 
         expect(keys.uniq).to eq(keys)
-        expect(keys).to all(match(RSA_KEY))
+        expect(keys).to all(match(rsa_key))
       end
 
       it 'warns about the secrets to add to secrets.yml' do
         expect(self).to receive(:warn_missing_secret).with('secret_key_base')
         expect(self).to receive(:warn_missing_secret).with('otp_key_base')
         expect(self).to receive(:warn_missing_secret).with('db_key_base')
-        expect(self).to receive(:warn_missing_secret).with('jws_private_key')
+        expect(self).to receive(:warn_missing_secret).with('openid_connect_signing_key')
 
         create_tokens
       end
@@ -61,7 +86,7 @@ describe 'create_tokens' do
           expect(new_secrets['secret_key_base']).to eq(secrets.secret_key_base)
           expect(new_secrets['otp_key_base']).to eq(secrets.otp_key_base)
           expect(new_secrets['db_key_base']).to eq(secrets.db_key_base)
-          expect(new_secrets['jws_private_key']).to eq(secrets.jws_private_key)
+          expect(new_secrets['openid_connect_signing_key']).to eq(secrets.openid_connect_signing_key)
         end
 
         create_tokens
@@ -77,7 +102,7 @@ describe 'create_tokens' do
     context 'when the other secrets all exist' do
       before do
         secrets.db_key_base = 'db_key_base'
-        secrets.jws_private_key = 'jws_private_key'
+        secrets.openid_connect_signing_key = 'openid_connect_signing_key'
 
         allow(File).to receive(:exist?).with('.secret').and_return(true)
         allow(File).to receive(:read).with('.secret').and_return('file_key')
@@ -88,7 +113,7 @@ describe 'create_tokens' do
           stub_env('SECRET_KEY_BASE', 'env_key')
           secrets.secret_key_base = 'secret_key_base'
           secrets.otp_key_base = 'otp_key_base'
-          secrets.jws_private_key = 'jws_private_key'
+          secrets.openid_connect_signing_key = 'openid_connect_signing_key'
         end
 
         it 'does not issue a warning' do
@@ -114,7 +139,7 @@ describe 'create_tokens' do
         before do
           secrets.secret_key_base = 'secret_key_base'
           secrets.otp_key_base = 'otp_key_base'
-          secrets.jws_private_key = 'jws_private_key'
+          secrets.openid_connect_signing_key = 'openid_connect_signing_key'
         end
 
         it 'does not write any files' do
@@ -123,13 +148,13 @@ describe 'create_tokens' do
           create_tokens
         end
 
-        it 'sets the the keys to the values from the environment and secrets.yml' do
+        it 'sets the keys to the values from the environment and secrets.yml' do
           create_tokens
 
           expect(secrets.secret_key_base).to eq('secret_key_base')
           expect(secrets.otp_key_base).to eq('otp_key_base')
           expect(secrets.db_key_base).to eq('db_key_base')
-          expect(secrets.jws_private_key).to eq('jws_private_key')
+          expect(secrets.openid_connect_signing_key).to eq('openid_connect_signing_key')
         end
 
         it 'deletes the .secret file' do
@@ -153,7 +178,7 @@ describe 'create_tokens' do
             expect(new_secrets['secret_key_base']).to eq('file_key')
             expect(new_secrets['otp_key_base']).to eq('file_key')
             expect(new_secrets['db_key_base']).to eq('db_key_base')
-            expect(new_secrets['jws_private_key']).to eq('jws_private_key')
+            expect(new_secrets['openid_connect_signing_key']).to eq('openid_connect_signing_key')
           end
 
           create_tokens

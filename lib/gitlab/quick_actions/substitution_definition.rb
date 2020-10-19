@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module QuickActions
     class SubstitutionDefinition < CommandDefinition
@@ -7,16 +9,13 @@ module Gitlab
         true
       end
 
-      def match(content)
-        content.match %r{^/#{all_names.join('|')} ?(.*)$}
-      end
-
       def perform_substitution(context, content)
         return unless content
 
         all_names.each do |a_name|
-          content.gsub!(%r{/#{a_name} ?(.*)$}, execute_block(action_block, context, '\1'))
+          content = content.sub(%r{/#{a_name}(?![\S]) ?(.*)$}i, execute_block(action_block, context, '\1'))
         end
+
         content
       end
     end

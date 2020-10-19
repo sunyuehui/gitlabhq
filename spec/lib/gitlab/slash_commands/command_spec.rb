@@ -1,12 +1,15 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::SlashCommands::Command do
-  let(:project) { create(:project) }
+RSpec.describe Gitlab::SlashCommands::Command do
+  let(:project) { create(:project, :repository) }
   let(:user) { create(:user) }
+  let(:chat_name) { double(:chat_name, user: user) }
 
   describe '#execute' do
     subject do
-      described_class.new(project, user, params).execute
+      described_class.new(project, chat_name, params).execute
     end
 
     context 'when no command is available' do
@@ -24,7 +27,7 @@ describe Gitlab::SlashCommands::Command do
 
       it 'displays the help message' do
         expect(subject[:response_type]).to be(:ephemeral)
-        expect(subject[:text]).to start_with('Unknown command')
+        expect(subject[:text]).to start_with('The specified command is not valid')
         expect(subject[:text]).to match('/gitlab issue show')
       end
     end
@@ -34,7 +37,7 @@ describe Gitlab::SlashCommands::Command do
 
       it 'rejects the actions' do
         expect(subject[:response_type]).to be(:ephemeral)
-        expect(subject[:text]).to start_with('Whoops! This action is not allowed')
+        expect(subject[:text]).to start_with('You are not allowed')
       end
     end
 
@@ -43,7 +46,7 @@ describe Gitlab::SlashCommands::Command do
       let!(:build) { create(:ci_build, pipeline: pipeline) }
       let!(:pipeline) { create(:ci_pipeline, project: project) }
       let!(:staging) { create(:environment, name: 'staging', project: project) }
-      let!(:deployment) { create(:deployment, environment: staging, deployable: build) }
+      let!(:deployment) { create(:deployment, :success, environment: staging, deployable: build) }
 
       let!(:manual) do
         create(:ci_build, :manual, pipeline: pipeline,
@@ -54,7 +57,7 @@ describe Gitlab::SlashCommands::Command do
       context 'and user can not create deployment' do
         it 'returns action' do
           expect(subject[:response_type]).to be(:ephemeral)
-          expect(subject[:text]).to start_with('Whoops! This action is not allowed')
+          expect(subject[:text]).to start_with('You are not allowed')
         end
       end
 
@@ -88,7 +91,7 @@ describe Gitlab::SlashCommands::Command do
   end
 
   describe '#match_command' do
-    subject { described_class.new(project, user, params).match_command.first }
+    subject { described_class.new(project, chat_name, params).match_command.first }
 
     context 'IssueShow is triggered' do
       let(:params) { { text: 'issue show 123' } }
@@ -106,6 +109,18 @@ describe Gitlab::SlashCommands::Command do
       let(:params) { { text: 'issue search my query' } }
 
       it { is_expected.to eq(Gitlab::SlashCommands::IssueSearch) }
+    end
+
+    context 'IssueMove is triggered' do
+      let(:params) { { text: 'issue move #78291 to gitlab/gitlab-ci' } }
+
+      it { is_expected.to eq(Gitlab::SlashCommands::IssueMove) }
+    end
+
+    context 'IssueComment is triggered' do
+      let(:params) { { text: "issue comment #503\ncomment body" } }
+
+      it { is_expected.to eq(Gitlab::SlashCommands::IssueComment) }
     end
   end
 end

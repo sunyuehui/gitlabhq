@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module API
   module MilestoneResponses
     extend ActiveSupport::Concern
@@ -12,9 +14,12 @@ module API
 
         params :list_params do
           optional :state, type: String, values: %w[active closed all], default: 'all',
-                           desc: 'Return "active", "closed", or "all" milestones'
-          optional :iids, type: Array[Integer], desc: 'The IIDs of the milestones'
+                         desc: 'Return "active", "closed", or "all" milestones'
+          optional :iids, type: Array[Integer], coerce_with: ::API::Validations::Types::CommaSeparatedToIntegerArray.coerce, desc: 'The IIDs of the milestones'
+          optional :title, type: String, desc: 'The title of the milestones'
           optional :search, type: String, desc: 'The search criteria for the title or description of the milestone'
+          optional :include_parent_milestones, type: Grape::API::Boolean, default: false,
+                    desc: 'Include group milestones from parent and its ancestors'
           use :pagination
         end
 
@@ -22,15 +27,19 @@ module API
           requires :milestone_id, type: Integer, desc: 'The milestone ID number'
           optional :title, type: String, desc: 'The title of the milestone'
           optional :state_event, type: String, values: %w[close activate],
-                                 desc: 'The state event of the milestone '
+                               desc: 'The state event of the milestone '
           use :optional_params
-          at_least_one_of :title, :description, :due_date, :state_event
+          at_least_one_of :title, :description, :start_date, :due_date, :state_event
         end
 
         def list_milestones_for(parent)
-          milestones = parent.milestones
+          milestones = init_milestones_collection(parent)
           milestones = Milestone.filter_by_state(milestones, params[:state])
-          milestones = filter_by_iid(milestones, params[:iids]) if params[:iids].present?
+          if params[:iids].present? && !params[:include_parent_milestones]
+            milestones = filter_by_iid(milestones, params[:iids])
+          end
+
+          milestones = filter_by_title(milestones, params[:title]) if params[:title]
           milestones = filter_by_search(milestones, params[:search]) if params[:search]
 
           present paginate(milestones), with: Entities::Milestone
@@ -91,6 +100,41 @@ module API
           else
             [MergeRequestsFinder, Entities::MergeRequestBasic]
           end
+        end
+
+        def init_milestones_collection(parent)
+          milestones = if params[:include_parent_milestones].present?
+                         parent_and_ancestors_milestones(parent)
+                       else
+                         parent.milestones
+                       end
+
+          milestones.order_id_desc
+        end
+
+        def parent_and_ancestors_milestones(parent)
+          project_id, group_ids = if parent.is_a?(Project)
+                                    [parent.id, project_group_ids(parent)]
+                                  else
+                                    [nil, parent_group_ids(parent)]
+                                  end
+
+          Milestone.for_projects_and_groups(project_id, group_ids)
+        end
+
+        def project_group_ids(parent)
+          group = parent.group
+          return unless group.present?
+
+          group.self_and_ancestors.select(:id)
+        end
+
+        def parent_group_ids(group)
+          return unless group.present?
+
+          group.self_and_ancestors
+            .public_or_visible_to_user(current_user)
+            .select(:id)
         end
       end
     end

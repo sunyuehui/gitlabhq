@@ -1,4 +1,11 @@
+# frozen_string_literal: true
+
 class Import::GitlabController < Import::BaseController
+  extend ::Gitlab::Utils::Override
+
+  MAX_PROJECT_PAGES = 15
+  PER_PAGE_PROJECTS = 100
+
   before_action :verify_gitlab_import_enabled
   before_action :gitlab_auth, except: :callback
 
@@ -10,30 +17,52 @@ class Import::GitlabController < Import::BaseController
   end
 
   def status
-    @repos = client.projects
-
-    @already_added_projects = current_user.created_projects.where(import_type: "gitlab")
-    already_added_projects_names = @already_added_projects.pluck(:import_source)
-
-    @repos = @repos.to_a.reject { |repo| already_added_projects_names.include? repo["path_with_namespace"] }
-  end
-
-  def jobs
-    jobs = current_user.created_projects.where(import_type: "gitlab").to_json(only: [:id, :import_status])
-    render json: jobs
+    super
   end
 
   def create
-    @repo_id = params[:repo_id].to_i
-    repo = client.project(@repo_id)
-    @project_name = repo['name']
-    @target_namespace = find_or_create_namespace(repo['namespace']['path'], client.user['username'])
+    repo = client.project(params[:repo_id].to_i)
+    target_namespace = find_or_create_namespace(repo['namespace']['path'], client.user['username'])
 
-    if current_user.can?(:create_projects, @target_namespace)
-      @project = Gitlab::GitlabImport::ProjectCreator.new(repo, @target_namespace, current_user, access_params).execute
+    if current_user.can?(:create_projects, target_namespace)
+      project = Gitlab::GitlabImport::ProjectCreator.new(repo, target_namespace, current_user, access_params).execute
+
+      if project.persisted?
+        render json: ProjectSerializer.new.represent(project, serializer: :import)
+      else
+        render json: { errors: project_save_error(project) }, status: :unprocessable_entity
+      end
     else
-      render 'unauthorized'
+      render json: { errors: _('This namespace has already been taken! Please choose another one.') }, status: :unprocessable_entity
     end
+  end
+
+  protected
+
+  # rubocop: disable CodeReuse/ActiveRecord
+  override :importable_repos
+  def importable_repos
+    repos = client.projects(starting_page: 1, page_limit: MAX_PROJECT_PAGES, per_page: PER_PAGE_PROJECTS)
+
+    already_added_projects_names = already_added_projects.map(&:import_source)
+
+    repos.reject { |repo| already_added_projects_names.include? repo["path_with_namespace"] }
+  end
+  # rubocop: enable CodeReuse/ActiveRecord
+
+  override :incompatible_repos
+  def incompatible_repos
+    []
+  end
+
+  override :provider_name
+  def provider_name
+    :gitlab
+  end
+
+  override :provider_url
+  def provider_url
+    'https://gitlab.com'
   end
 
   private

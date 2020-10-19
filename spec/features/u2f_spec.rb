@@ -1,25 +1,15 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
+RSpec.describe 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
+  include Spec::Support::Helpers::Features::TwoFactorHelpers
+
   before do
-    allow_any_instance_of(U2fHelper).to receive(:inject_u2f_api?).and_return(true)
+    stub_feature_flags(webauthn: false)
   end
 
-  def manage_two_factor_authentication
-    click_on 'Manage two-factor authentication'
-    expect(page).to have_content("Setup new U2F device")
-    wait_for_requests
-  end
-
-  def register_u2f_device(u2f_device = nil, name: 'My device')
-    u2f_device ||= FakeU2fDevice.new(page, name)
-    u2f_device.respond_to_u2f_registration
-    click_on 'Setup new U2F device'
-    expect(page).to have_content('Your device was successfully set up')
-    fill_in "Pick a name", with: name
-    click_on 'Register U2F device'
-    u2f_device
-  end
+  it_behaves_like 'hardware device for 2fa', 'U2F'
 
   describe "registration" do
     let(:user) { create(:user) }
@@ -29,31 +19,7 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
       user.update_attribute(:otp_required_for_login, true)
     end
 
-    describe 'when 2FA via OTP is disabled' do
-      before do
-        user.update_attribute(:otp_required_for_login, false)
-      end
-
-      it 'does not allow registering a new device' do
-        visit profile_account_path
-        click_on 'Enable two-factor authentication'
-
-        expect(page).to have_button('Setup new U2F device', disabled: true)
-      end
-    end
-
     describe 'when 2FA via OTP is enabled' do
-      it 'allows registering a new device with a name' do
-        visit profile_account_path
-        manage_two_factor_authentication
-        expect(page).to have_content("You've already enabled two-factor authentication using mobile")
-
-        u2f_device = register_u2f_device
-
-        expect(page).to have_content(u2f_device.name)
-        expect(page).to have_content('Your U2F device was registered')
-      end
-
       it 'allows registering more than one device' do
         visit profile_account_path
 
@@ -69,21 +35,6 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
         expect(page).to have_content(first_device.name)
         expect(page).to have_content(second_device.name)
         expect(U2fRegistration.count).to eq(2)
-      end
-
-      it 'allows deleting a device' do
-        visit profile_account_path
-        manage_two_factor_authentication
-        expect(page).to have_content("You've already enabled two-factor authentication using mobile")
-
-        first_u2f_device = register_u2f_device
-        second_u2f_device = register_u2f_device(name: 'My other device')
-
-        click_on "Delete", match: :first
-
-        expect(page).to have_content('Successfully deleted')
-        expect(page.body).not_to match(first_u2f_device.name)
-        expect(page).to have_content(second_u2f_device.name)
       end
     end
 
@@ -113,9 +64,9 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
 
         # Have the "u2f device" respond with bad data
         page.execute_script("u2f.register = function(_,_,_,callback) { callback('bad response'); };")
-        click_on 'Setup new U2F device'
+        click_on 'Set up new device'
         expect(page).to have_content('Your device was successfully set up')
-        click_on 'Register U2F device'
+        click_on 'Register device'
 
         expect(U2fRegistration.count).to eq(0)
         expect(page).to have_content("The form contains the following error")
@@ -128,9 +79,9 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
 
         # Failed registration
         page.execute_script("u2f.register = function(_,_,_,callback) { callback('bad response'); };")
-        click_on 'Setup new U2F device'
+        click_on 'Set up new device'
         expect(page).to have_content('Your device was successfully set up')
-        click_on 'Register U2F device'
+        click_on 'Register device'
         expect(page).to have_content("The form contains the following error")
 
         # Successful registration
@@ -162,7 +113,6 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
 
         @u2f_device.respond_to_u2f_authentication
 
-        expect(page).to have_content('We heard back from your U2F device')
         expect(page).to have_css('.sign-out-link', visible: false)
       end
     end
@@ -174,20 +124,7 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
 
         @u2f_device.respond_to_u2f_authentication
 
-        expect(page).to have_content('We heard back from your U2F device')
         expect(page).to have_css('.sign-out-link', visible: false)
-      end
-    end
-
-    it 'persists remember_me value via hidden field' do
-      gitlab_sign_in(user, remember: true)
-
-      @u2f_device.respond_to_u2f_authentication
-      expect(page).to have_content('We heard back from your U2F device')
-
-      within 'div#js-authenticate-u2f' do
-        field = first('input#user_remember_me', visible: false)
-        expect(field.value).to eq '1'
       end
     end
 
@@ -205,7 +142,6 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
           # Try authenticating user with the old U2F device
           gitlab_sign_in(current_user)
           @u2f_device.respond_to_u2f_authentication
-          expect(page).to have_content('We heard back from your U2F device')
           expect(page).to have_content('Authentication via U2F device failed')
         end
       end
@@ -223,7 +159,6 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
           # Try authenticating user with the same U2F device
           gitlab_sign_in(current_user)
           @u2f_device.respond_to_u2f_authentication
-          expect(page).to have_content('We heard back from your U2F device')
 
           expect(page).to have_css('.sign-out-link', visible: false)
         end
@@ -235,7 +170,6 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
         unregistered_device = FakeU2fDevice.new(page, 'My device')
         gitlab_sign_in(user)
         unregistered_device.respond_to_u2f_authentication
-        expect(page).to have_content('We heard back from your U2F device')
 
         expect(page).to have_content('Authentication via U2F device failed')
       end
@@ -247,12 +181,12 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
         user = gitlab_sign_in(:user)
         user.update_attribute(:otp_required_for_login, true)
         visit profile_two_factor_auth_path
-        expect(page).to have_content("Your U2F device needs to be set up.")
+        expect(page).to have_content("Your device needs to be set up.")
         first_device = register_u2f_device
 
         # Register second device
         visit profile_two_factor_auth_path
-        expect(page).to have_content("Your U2F device needs to be set up.")
+        expect(page).to have_content("Your device needs to be set up.")
         second_device = register_u2f_device(name: 'My other device')
         gitlab_sign_out
 
@@ -260,76 +194,11 @@ feature 'Using U2F (Universal 2nd Factor) Devices for Authentication', :js do
         [first_device, second_device].each do |device|
           gitlab_sign_in(user)
           device.respond_to_u2f_authentication
-          expect(page).to have_content('We heard back from your U2F device')
 
           expect(page).to have_css('.sign-out-link', visible: false)
 
           gitlab_sign_out
         end
-      end
-    end
-
-    describe "when two-factor authentication is disabled" do
-      let(:user) { create(:user) }
-
-      before do
-        user = gitlab_sign_in(:user)
-        user.update_attribute(:otp_required_for_login, true)
-        visit profile_account_path
-        manage_two_factor_authentication
-        expect(page).to have_content("Your U2F device needs to be set up.")
-        register_u2f_device
-      end
-
-      it "deletes u2f registrations" do
-        visit profile_account_path
-        expect { click_on "Disable" }.to change { U2fRegistration.count }.by(-1)
-      end
-    end
-  end
-
-  describe 'fallback code authentication' do
-    let(:user) { create(:user) }
-
-    def assert_fallback_ui(page)
-      expect(page).to have_button('Verify code')
-      expect(page).to have_css('#user_otp_attempt')
-      expect(page).not_to have_link('Sign in via 2FA code')
-      expect(page).not_to have_css('#js-authenticate-u2f')
-    end
-
-    before do
-      # Register and logout
-      gitlab_sign_in(user)
-      user.update_attribute(:otp_required_for_login, true)
-      visit profile_account_path
-    end
-
-    describe 'when no u2f device is registered' do
-      before do
-        gitlab_sign_out
-        gitlab_sign_in(user)
-      end
-
-      it 'shows the fallback otp code UI' do
-        assert_fallback_ui(page)
-      end
-    end
-
-    describe 'when a u2f device is registered' do
-      before do
-        manage_two_factor_authentication
-        @u2f_device = register_u2f_device
-        gitlab_sign_out
-        gitlab_sign_in(user)
-      end
-
-      it 'provides a button that shows the fallback otp code UI' do
-        expect(page).to have_link('Sign in via 2FA code')
-
-        click_link('Sign in via 2FA code')
-
-        assert_fallback_ui(page)
       end
     end
   end

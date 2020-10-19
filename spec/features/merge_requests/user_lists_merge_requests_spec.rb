@@ -1,27 +1,35 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'Projects > Merge requests > User lists merge requests' do
+RSpec.describe 'Merge requests > User lists merge requests' do
   include MergeRequestHelpers
   include SortingHelper
 
   let(:project) { create(:project, :public, :repository) }
   let(:user) { create(:user) }
+  let(:user2) { create(:user) }
+  let(:user3) { create(:user) }
+  let(:user4) { create(:user) }
+  let(:user5) { create(:user) }
 
   before do
     @fix = create(:merge_request,
                   title: 'fix',
                   source_project: project,
                   source_branch: 'fix',
-                  assignee: user,
-                  milestone: create(:milestone, due_date: '2013-12-11'),
+                  assignees: [user],
+                  reviewers: [user, user2, user3, user4, user5],
+                  milestone: create(:milestone, project: project, due_date: '2013-12-11'),
                   created_at: 1.minute.ago,
                   updated_at: 1.minute.ago)
     create(:merge_request,
            title: 'markdown',
            source_project: project,
            source_branch: 'markdown',
-           assignee: user,
-           milestone: create(:milestone, due_date: '2013-12-12'),
+           assignees: [user],
+           reviewers: [user, user2, user3, user4],
+           milestone: create(:milestone, project: project, due_date: '2013-12-12'),
            created_at: 2.minutes.ago,
            updated_at: 2.minutes.ago)
     create(:merge_request,
@@ -32,8 +40,39 @@ describe 'Projects > Merge requests > User lists merge requests' do
            updated_at: 10.seconds.ago)
   end
 
+  context 'when merge_request_reviewers is turned on' do
+    before do
+      stub_feature_flags(merge_request_reviewers: true)
+      visit_merge_requests(project, reviewer_id: user.id)
+    end
+
+    it 'has reviewers in MR list' do
+      expect(page).to have_css('.issuable-reviewers')
+    end
+
+    it 'shows reviewers avatar count badge if more_reviewers_count > 4' do
+      first_issuable_reviewers = first('.issuable-reviewers')
+
+      expect(first_issuable_reviewers).to have_content('2')
+      expect(first_issuable_reviewers).to have_css('.avatar-counter')
+    end
+
+    it 'does not show reviewers avatar count badge if more_reviewers_count <= 4' do
+      expect(page.all('.issuable-reviewers')[1]).not_to have_css('.avatar-counter')
+    end
+  end
+
+  context 'when merge_request_reviewers is turned false' do
+    it 'has no reviewers in MR list' do
+      stub_feature_flags(merge_request_reviewers: false)
+      visit_merge_requests(project, reviewer_id: user.id)
+
+      expect(page).not_to have_css('.issuable-reviewers')
+    end
+  end
+
   it 'filters on no assignee' do
-    visit_merge_requests(project, assignee_id: IssuableFinder::NONE)
+    visit_merge_requests(project, assignee_id: IssuableFinder::Params::FILTER_NONE)
 
     expect(current_path).to eq(project_merge_requests_path(project))
     expect(page).to have_content 'merge-test'
@@ -52,18 +91,10 @@ describe 'Projects > Merge requests > User lists merge requests' do
   end
 
   it 'sorts by newest' do
-    visit_merge_requests(project, sort: sort_value_recently_created)
+    visit_merge_requests(project, sort: sort_value_created_date)
 
     expect(first_merge_request).to include('fix')
     expect(last_merge_request).to include('merge-test')
-    expect(count_merge_requests).to eq(3)
-  end
-
-  it 'sorts by oldest' do
-    visit_merge_requests(project, sort: sort_value_oldest_created)
-
-    expect(first_merge_request).to include('merge-test')
-    expect(last_merge_request).to include('fix')
     expect(count_merge_requests).to eq(3)
   end
 
@@ -74,33 +105,19 @@ describe 'Projects > Merge requests > User lists merge requests' do
     expect(count_merge_requests).to eq(3)
   end
 
-  it 'sorts by oldest updated' do
-    visit_merge_requests(project, sort: sort_value_oldest_updated)
-
-    expect(first_merge_request).to include('markdown')
-    expect(count_merge_requests).to eq(3)
-  end
-
-  it 'sorts by milestone due soon' do
-    visit_merge_requests(project, sort: sort_value_milestone_soon)
+  it 'sorts by milestone' do
+    visit_merge_requests(project, sort: sort_value_milestone)
 
     expect(first_merge_request).to include('fix')
     expect(count_merge_requests).to eq(3)
   end
 
-  it 'sorts by milestone due later' do
-    visit_merge_requests(project, sort: sort_value_milestone_later)
-
-    expect(first_merge_request).to include('markdown')
-    expect(count_merge_requests).to eq(3)
-  end
-
-  it 'filters on one label and sorts by due soon' do
+  it 'filters on one label and sorts by due date' do
     label = create(:label, project: project)
     create(:label_link, label: label, target: @fix)
 
     visit_merge_requests(project, label_name: [label.name],
-                                  sort: sort_value_due_date_soon)
+                                  sort: sort_value_due_date)
 
     expect(first_merge_request).to include('fix')
     expect(count_merge_requests).to eq(1)
@@ -115,9 +132,9 @@ describe 'Projects > Merge requests > User lists merge requests' do
       create(:label_link, label: label2, target: @fix)
     end
 
-    it 'sorts by due soon' do
+    it 'sorts by due date' do
       visit_merge_requests(project, label_name: [label.name, label2.name],
-                                    sort: sort_value_due_date_soon)
+                                    sort: sort_value_due_date)
 
       expect(first_merge_request).to include('fix')
       expect(count_merge_requests).to eq(1)
@@ -127,7 +144,7 @@ describe 'Projects > Merge requests > User lists merge requests' do
       it 'sorts by due soon' do
         visit_merge_requests(project, label_name: [label.name, label2.name],
                                       assignee_id: user.id,
-                                      sort: sort_value_due_date_soon)
+                                      sort: sort_value_due_date)
 
         expect(first_merge_request).to include('fix')
         expect(count_merge_requests).to eq(1)
@@ -137,7 +154,7 @@ describe 'Projects > Merge requests > User lists merge requests' do
         visit project_merge_requests_path(project,
           label_name: [label.name, label2.name],
           assignee_id: user.id,
-          sort: sort_value_milestone_soon)
+          sort: sort_value_milestone)
 
         expect(first_merge_request).to include('fix')
       end

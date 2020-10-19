@@ -1,11 +1,16 @@
+# frozen_string_literal: true
+
+# for secondary email confirmations - uses the same confirmation controller as :users
+devise_for :emails, path: 'profile/emails', controllers: { confirmations: :confirmations }
+
 resource :profile, only: [:show, :update] do
   member do
     get :audit_log
     get :applications, to: 'oauth/applications#index'
 
-    put :reset_private_token
     put :reset_incoming_email_token
-    put :reset_rss_token
+    put :reset_feed_token
+    put :reset_static_object_token
     put :update_username
   end
 
@@ -15,7 +20,11 @@ resource :profile, only: [:show, :update] do
         delete :unlink
       end
     end
-    resource :notifications, only: [:show, :update]
+
+    resource :notifications, only: [:show, :update] do
+      resources :groups, only: :update, constraints: { id: Gitlab::PathRegex.full_namespace_route_regex }
+    end
+
     resource :password, only: [:new, :create, :edit, :update] do
       member do
         put :reset
@@ -28,7 +37,13 @@ resource :profile, only: [:show, :update] do
         put :revoke
       end
     end
-    resources :emails, only: [:index, :create, :destroy]
+    resources :active_sessions, only: [:index, :destroy]
+    resources :emails, only: [:index, :create, :destroy] do
+      member do
+        put :resend_confirmation_instructions
+      end
+    end
+
     resources :chat_names, only: [:index, :new, :create, :destroy] do
       collection do
         delete :deny
@@ -48,9 +63,11 @@ resource :profile, only: [:show, :update] do
         post :create_u2f
         post :codes
         patch :skip
+        post :create_webauthn
       end
     end
 
     resources :u2f_registrations, only: [:destroy]
+    resources :webauthn_registrations, only: [:destroy]
   end
 end

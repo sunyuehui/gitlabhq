@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-feature 'User uploads file to note' do
+require 'spec_helper'
+
+RSpec.describe 'User uploads file to note' do
   include DropzoneHelper
 
   let(:user) { create(:user) }
@@ -10,46 +12,47 @@ feature 'User uploads file to note' do
   before do
     sign_in(user)
     visit project_issue_path(project, issue)
+    wait_for_requests
   end
 
   context 'before uploading' do
-    it 'shows "Attach a file" button', js: true do
+    it 'shows "Attach a file" button', :js do
       expect(page).to have_button('Attach a file')
       expect(page).not_to have_selector('.uploading-progress-container', visible: true)
     end
   end
 
-  context 'uploading is in progress' do
-    it 'shows "Cancel" button on uploading', js: true do
-      dropzone_file([Rails.root.join('spec', 'fixtures', 'dk.png')], 0, false)
+  context 'uploading is in progress', :capybara_ignore_server_errors do
+    it 'cancels uploading on clicking to "Cancel" button', :js do
+      slow_requests do
+        dropzone_file([Rails.root.join('spec', 'fixtures', 'dk.png')], 0, false)
 
-      expect(page).to have_button('Cancel')
-    end
-
-    it 'cancels uploading on clicking to "Cancel" button', js: true do
-      dropzone_file([Rails.root.join('spec', 'fixtures', 'dk.png')], 0, false)
-
-      click_button 'Cancel'
+        click_button 'Cancel'
+      end
 
       expect(page).to have_button('Attach a file')
       expect(page).not_to have_button('Cancel')
       expect(page).not_to have_selector('.uploading-progress-container', visible: true)
     end
 
-    it 'shows "Attaching a file" message on uploading 1 file', js: true do
-      dropzone_file([Rails.root.join('spec', 'fixtures', 'dk.png')], 0, false)
+    it 'shows "Attaching a file" message on uploading 1 file', :js do
+      slow_requests do
+        dropzone_file([Rails.root.join('spec', 'fixtures', 'dk.png')], 0, false)
 
-      expect(page).to have_selector('.attaching-file-message', visible: true, text: 'Attaching a file -')
+        expect(page).to have_selector('.attaching-file-message', visible: true, text: 'Attaching a file -')
+      end
     end
 
-    it 'shows "Attaching 2 files" message on uploading 2 file', js: true do
-      dropzone_file([Rails.root.join('spec', 'fixtures', 'video_sample.mp4'),
-                     Rails.root.join('spec', 'fixtures', 'dk.png')], 0, false)
+    it 'shows "Attaching 2 files" message on uploading 2 file', :js do
+      slow_requests do
+        dropzone_file([Rails.root.join('spec', 'fixtures', 'video_sample.mp4'),
+                       Rails.root.join('spec', 'fixtures', 'dk.png')], 0, false)
 
-      expect(page).to have_selector('.attaching-file-message', visible: true, text: 'Attaching 2 files -')
+        expect(page).to have_selector('.attaching-file-message', visible: true, text: 'Attaching 2 files -')
+      end
     end
 
-    it 'shows error message, "retry" and "attach a new file" link a if file is too big', js: true do
+    it 'shows error message, "retry" and "attach a new file" link a if file is too big', :js do
       dropzone_file([Rails.root.join('spec', 'fixtures', 'video_sample.mp4')], 0.01)
 
       error_text = 'File is too big (0.06MiB). Max filesize: 0.01MiB.'
@@ -62,7 +65,7 @@ feature 'User uploads file to note' do
   end
 
   context 'uploading is complete' do
-    it 'shows "Attach a file" button on uploading complete', js: true do
+    it 'shows "Attach a file" button on uploading complete', :js do
       dropzone_file([Rails.root.join('spec', 'fixtures', 'dk.png')])
       wait_for_requests
 
@@ -70,7 +73,7 @@ feature 'User uploads file to note' do
       expect(page).not_to have_selector('.uploading-progress-container', visible: true)
     end
 
-    scenario 'they see the attached file', js: true do
+    it 'they see the attached file', :js do
       dropzone_file([Rails.root.join('spec', 'fixtures', 'dk.png')])
       click_button 'Comment'
       wait_for_requests

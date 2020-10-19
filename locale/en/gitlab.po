@@ -52,9 +52,6 @@ msgid_plural "%d pipelines"
 msgstr[0] ""
 msgstr[1] ""
 
-msgid "A collection of graphs regarding Continuous Integration"
-msgstr ""
-
 msgid "About auto deploy"
 msgstr ""
 
@@ -882,9 +879,6 @@ msgstr ""
 msgid "Set up CI"
 msgstr ""
 
-msgid "Set up Koding"
-msgstr ""
-
 msgid "Set up auto deploy"
 msgstr ""
 
@@ -1057,7 +1051,7 @@ msgstr ""
 msgid "Timeago|a week ago"
 msgstr ""
 
-msgid "Timeago|a while"
+msgid "Timeago|in a while"
 msgstr ""
 
 msgid "Timeago|a year ago"

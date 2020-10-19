@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Admin::IdentitiesController do
+RSpec.describe Admin::IdentitiesController do
   let(:admin) { create(:admin) }
 
   before do
@@ -11,9 +13,11 @@ describe Admin::IdentitiesController do
     let(:user) { create(:omniauth_user, provider: 'ldapmain', extern_uid: 'uid=myuser,ou=people,dc=example,dc=com') }
 
     it 'repairs ldap blocks' do
-      expect_any_instance_of(RepairLdapBlockedUserService).to receive(:execute)
+      expect_next_instance_of(::Users::RepairLdapBlockedService) do |instance|
+        expect(instance).to receive(:execute)
+      end
 
-      put :update, user_id: user.username, id: user.ldap_identity.id, identity: { provider: 'twitter' }
+      put :update, params: { user_id: user.username, id: user.ldap_identity.id, identity: { provider: 'twitter' } }
     end
   end
 
@@ -21,9 +25,11 @@ describe Admin::IdentitiesController do
     let(:user) { create(:omniauth_user, provider: 'ldapmain', extern_uid: 'uid=myuser,ou=people,dc=example,dc=com') }
 
     it 'repairs ldap blocks' do
-      expect_any_instance_of(RepairLdapBlockedUserService).to receive(:execute)
+      expect_next_instance_of(::Users::RepairLdapBlockedService) do |instance|
+        expect(instance).to receive(:execute)
+      end
 
-      delete :destroy, user_id: user.username, id: user.ldap_identity.id
+      delete :destroy, params: { user_id: user.username, id: user.ldap_identity.id }
     end
   end
 end

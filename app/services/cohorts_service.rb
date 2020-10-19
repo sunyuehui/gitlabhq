@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class CohortsService
   MONTHS_INCLUDED = 12
 
@@ -36,7 +38,7 @@ class CohortsService
 
       {
         registration_month: registration_month,
-        activity_months: activity_months,
+        activity_months: activity_months[1..-1],
         total: activity_months.first[:total],
         inactive: inactive
       }
@@ -61,7 +63,7 @@ class CohortsService
     overall_total = month_totals.first
 
     month_totals.map do |total|
-      { total: total, percentage: total.zero? ? 0 : 100 * total / overall_total }
+      { total: total, percentage: total == 0 ? 0 : 100 * total / overall_total }
     end
   end
 
@@ -76,6 +78,7 @@ class CohortsService
   # created_at_month can never be nil, but last_activity_on_month can (when a
   # user has never logged in, just been created). This covers the last
   # MONTHS_INCLUDED months.
+  # rubocop: disable CodeReuse/ActiveRecord
   def counts_by_month
     @counts_by_month ||=
       begin
@@ -85,16 +88,13 @@ class CohortsService
         User
           .where('created_at > ?', MONTHS_INCLUDED.months.ago.end_of_month)
           .group(created_at_month, last_activity_on_month)
-          .reorder("#{created_at_month} ASC", "#{last_activity_on_month} ASC")
+          .reorder(Arel.sql("#{created_at_month} ASC, #{last_activity_on_month} ASC"))
           .count
       end
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def column_to_date(column)
-    if Gitlab::Database.postgresql?
-      "CAST(DATE_TRUNC('month', #{column}) AS date)"
-    else
-      "STR_TO_DATE(DATE_FORMAT(#{column}, '%Y-%m-01'), '%Y-%m-%d')"
-    end
+    "CAST(DATE_TRUNC('month', #{column}) AS date)"
   end
 end

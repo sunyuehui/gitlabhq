@@ -1,19 +1,22 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Project members list' do
+RSpec.describe 'Project members list' do
   include Select2Helper
+  include Spec::Support::Helpers::Features::ListRowsHelpers
 
   let(:user1) { create(:user, name: 'John Doe') }
   let(:user2) { create(:user, name: 'Mary Jane') }
   let(:group) { create(:group) }
   let(:project) { create(:project, namespace: group) }
 
-  background do
+  before do
     sign_in(user1)
     group.add_owner(user1)
   end
 
-  scenario 'show members from project and group' do
+  it 'show members from project and group' do
     project.add_developer(user2)
 
     visit_members_page
@@ -22,7 +25,7 @@ feature 'Project members list' do
     expect(second_row.text).to include(user2.name)
   end
 
-  scenario 'show user once if member of both group and project' do
+  it 'show user once if member of both group and project' do
     project.add_developer(user1)
 
     visit_members_page
@@ -31,7 +34,7 @@ feature 'Project members list' do
     expect(second_row).to be_blank
   end
 
-  scenario 'update user acess level', :js do
+  it 'update user access level', :js do
     project.add_developer(user2)
 
     visit_members_page
@@ -44,7 +47,7 @@ feature 'Project members list' do
     end
   end
 
-  scenario 'add user to project', :js do
+  it 'add user to project', :js do
     visit_members_page
 
     add_user(user2.id, 'Reporter')
@@ -55,7 +58,26 @@ feature 'Project members list' do
     end
   end
 
-  scenario 'invite user to project', :js do
+  it 'remove user from project', :js do
+    other_user = create(:user)
+    project.add_developer(other_user)
+
+    visit_members_page
+
+    # Open modal
+    find(:css, 'li.project_member', text: other_user.name).find(:css, 'button.btn-danger').click
+
+    expect(page).to have_unchecked_field 'Also unassign this user from related issues and merge requests'
+
+    click_on('Remove member')
+
+    wait_for_requests
+
+    expect(page).not_to have_content(other_user.name)
+    expect(project.users).not_to include(other_user)
+  end
+
+  it 'invite user to project', :js do
     visit_members_page
 
     add_user('test@example.com', 'Reporter')
@@ -67,24 +89,33 @@ feature 'Project members list' do
     end
   end
 
-  def first_row
-    page.all('ul.content-list > li')[0]
-  end
+  context 'project bots' do
+    let(:project_bot) { create(:user, :project_bot, name: 'project_bot') }
 
-  def second_row
-    page.all('ul.content-list > li')[1]
+    before do
+      project.add_maintainer(project_bot)
+    end
+
+    it 'does not show form used to change roles and "Expiration date" or the remove user button' do
+      project_member = project.project_members.find_by(user_id: project_bot.id)
+
+      visit_members_page
+
+      expect(page).not_to have_selector("#edit_project_member_#{project_member.id}")
+      expect(page).to have_no_selector("#project_member_#{project_member.id} .btn-danger")
+    end
   end
 
   def add_user(id, role)
-    page.within ".users-project-form" do
+    page.within ".invite-users-form" do
       select2(id, from: "#user_ids", multiple: true)
       select(role, from: "access_level")
     end
 
-    click_button "Add to project"
+    click_button "Invite"
   end
 
   def visit_members_page
-    visit project_settings_members_path(project)
+    visit project_project_members_path(project)
   end
 end

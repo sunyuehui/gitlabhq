@@ -1,4 +1,6 @@
-# LDAP Rake Tasks
+# LDAP Rake tasks **(CORE ONLY)**
+
+The following are LDAP-related Rake tasks.
 
 ## Check
 
@@ -9,23 +11,46 @@ using the command below.
 
 **Omnibus Installation**
 
-```
+```shell
 sudo gitlab-rake gitlab:ldap:check
 ```
 
 **Source Installation**
 
-```bash
+```shell
 sudo -u git -H bundle exec rake gitlab:ldap:check RAILS_ENV=production
 ```
-
-------
 
 By default, the task will return a sample of 100 LDAP users. Change this
 limit by passing a number to the check task:
 
-```bash
+```shell
 rake gitlab:ldap:check[50]
+```
+
+## Run a group sync **(STARTER ONLY)**
+
+> [Introduced](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/14735) in [GitLab Starter](https://about.gitlab.com/pricing/) 12.2.
+
+The following task will run a [group sync](../auth/ldap/index.md#group-sync) immediately. This is valuable
+when you'd like to update all configured group memberships against LDAP without
+waiting for the next scheduled group sync to be run.
+
+NOTE: **Note:**
+If you'd like to change the frequency at which a group sync is performed,
+[adjust the cron schedule](../auth/ldap/index.md#adjusting-ldap-group-sync-schedule)
+instead.
+
+**Omnibus Installation**
+
+```shell
+sudo gitlab-rake gitlab:ldap:group_sync
+```
+
+**Source Installation**
+
+```shell
+bundle exec rake gitlab:ldap:group_sync
 ```
 
 ## Rename a provider
@@ -56,13 +81,13 @@ as the `old_provider` and the correct provider as the `new_provider`.
 
 **Omnibus Installation**
 
-```bash
+```shell
 sudo gitlab-rake gitlab:ldap:rename_provider[old_provider,new_provider]
 ```
 
 **Source Installation**
 
-```bash
+```shell
 bundle exec rake gitlab:ldap:rename_provider[old_provider,new_provider] RAILS_ENV=production
 ```
 
@@ -72,13 +97,13 @@ Consider beginning with the default server ID `main` (full provider `ldapmain`).
 If we change `main` to `mycompany`, the `new_provider` is `ldapmycompany`.
 To rename all user identities run the following command:
 
-```bash
+```shell
 sudo gitlab-rake gitlab:ldap:rename_provider[ldapmain,ldapmycompany]
 ```
 
 Example output:
 
-```
+```plaintext
 100 users with provider 'ldapmain' will be updated to 'ldapmycompany'.
 If the new provider is incorrect, users will be unable to sign in.
 Do you want to continue (yes/no)? yes
@@ -93,28 +118,26 @@ for them:
 
 **Omnibus Installation**
 
-```bash
+```shell
 sudo gitlab-rake gitlab:ldap:rename_provider
 ```
 
 **Source Installation**
 
-```bash
+```shell
 bundle exec rake gitlab:ldap:rename_provider RAILS_ENV=production
 ```
 
 **Example output:**
 
-```
+```plaintext
 What is the old provider? Ex. 'ldapmain': ldapmain
 What is the new provider? Ex. 'ldapcustom': ldapmycompany
 ```
 
-------
-
 This tasks also accepts the `force` environment variable which will skip the
 confirmation dialog:
 
-```bash
+```shell
 sudo gitlab-rake gitlab:ldap:rename_provider[old_provider,new_provider] force=yes
 ```

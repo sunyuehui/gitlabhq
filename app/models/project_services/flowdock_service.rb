@@ -1,4 +1,4 @@
-require "flowdock-git-hook"
+# frozen_string_literal: true
 
 class FlowdockService < Service
   prop_accessor :token
@@ -9,7 +9,7 @@ class FlowdockService < Service
   end
 
   def description
-    'Flowdock is a collaboration web app for technical teams.'
+    s_('FlowdockService|Flowdock is a collaboration web app for technical teams.')
   end
 
   def self.to_param
@@ -18,7 +18,7 @@ class FlowdockService < Service
 
   def fields
     [
-      { type: 'text', name: 'token', placeholder: 'Flowdock Git source token', required: true }
+      { type: 'text', name: 'token', placeholder: s_('FlowdockService|Flowdock Git source token'), required: true }
     ]
   end
 
@@ -34,9 +34,9 @@ class FlowdockService < Service
       data[:before],
       data[:after],
       token: token,
-      repo: project.repository.path_to_repo,
+      repo: project.repository,
       repo_url: "#{Gitlab.config.gitlab.url}/#{project.full_path}",
-      commit_url: "#{Gitlab.config.gitlab.url}/#{project.full_path}/commit/%s",
+      commit_url: "#{Gitlab.config.gitlab.url}/#{project.full_path}/-/commit/%s",
       diff_url: "#{Gitlab.config.gitlab.url}/#{project.full_path}/compare/%s...%s"
     )
   end

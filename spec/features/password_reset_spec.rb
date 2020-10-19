@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Password reset' do
+RSpec.describe 'Password reset' do
   describe 'throttling' do
     it 'sends reset instructions when not previously sent' do
       user = create(:user)
@@ -29,6 +31,25 @@ feature 'Password reset' do
 
       expect { forgot_password(user) }.not_to change { user.reset_password_sent_at }
       expect(page).to have_content(I18n.t('devise.passwords.send_paranoid_instructions'))
+      expect(current_path).to eq new_user_session_path
+    end
+  end
+
+  describe 'Changing password while logged in' do
+    it 'updates the password' do
+      user = create(:user)
+      token = user.send_reset_password_instructions
+
+      sign_in(user)
+
+      visit(edit_user_password_path(reset_password_token: token))
+
+      fill_in 'New password', with: 'hello1234'
+      fill_in 'Confirm new password', with: 'hello1234'
+
+      click_button 'Change your password'
+
+      expect(page).to have_content(I18n.t('devise.passwords.updated_not_active'))
       expect(current_path).to eq new_user_session_path
     end
   end

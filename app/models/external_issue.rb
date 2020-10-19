@@ -1,5 +1,9 @@
+# frozen_string_literal: true
+
 class ExternalIssue
   include Referable
+
+  attr_reader :project
 
   def initialize(issue_identifier, project)
     @issue_identifier, @project = issue_identifier, project
@@ -30,21 +34,21 @@ class ExternalIssue
     [self.class, to_s].hash
   end
 
-  def project
-    @project
-  end
-
   def project_id
-    @project.id
+    project.id
   end
 
-  def to_reference(_from_project = nil, full: nil)
-    id
+  def to_reference(_from = nil, full: nil)
+    reference_link_text
   end
 
-  def reference_link_text(from_project = nil)
+  def reference_link_text(from = nil)
     return "##{id}" if id =~ /^\d+$/
 
     id
+  end
+
+  def notes
+    Note.none
   end
 end

@@ -1,14 +1,19 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::IssueReferenceFilter do
+RSpec.describe Banzai::Filter::IssueReferenceFilter do
   include FilterSpecHelper
+  include DesignManagementTestHelpers
 
   def helper
     IssuesHelper
   end
 
   let(:project) { create(:project, :public) }
-  let(:issue)  { create(:issue, project: project) }
+  let(:issue) { create(:issue, project: project) }
+  let(:issue_path) { "/#{issue.project.namespace.path}/#{issue.project.path}/-/issues/#{issue.iid}" }
+  let(:issue_url) { "http://#{Gitlab.config.gitlab.host}#{issue_path}" }
 
   it 'requires project context' do
     expect { described_class.call('') }.to raise_error(ArgumentError, /:project/)
@@ -35,15 +40,15 @@ describe Banzai::Filter::IssueReferenceFilter do
   end
 
   context 'internal reference' do
-    it_behaves_like 'a reference containing an element node'
-
     let(:reference) { "##{issue.iid}" }
+
+    it_behaves_like 'a reference containing an element node'
 
     it 'links to a valid reference' do
       doc = reference_filter("Fixed #{reference}")
 
       expect(doc.css('a').first.attr('href'))
-        .to eq helper.url_for_issue(issue.iid, project)
+        .to eq issue_url
     end
 
     it 'links with adjacent text' do
@@ -68,6 +73,12 @@ describe Banzai::Filter::IssueReferenceFilter do
 
       doc = reference_filter("Issue #{reference}")
       expect(doc.text).to eq "Issue #{reference}"
+    end
+
+    it 'renders non-HTML tooltips' do
+      doc = reference_filter("Issue #{reference}")
+
+      expect(doc.at_css('a')).not_to have_attribute('data-html')
     end
 
     it 'includes default classes' do
@@ -110,7 +121,7 @@ describe Banzai::Filter::IssueReferenceFilter do
       link = doc.css('a').first.attr('href')
 
       expect(link).not_to match %r(https?://)
-      expect(link).to eq helper.url_for_issue(issue.iid, project, only_path: true)
+      expect(link).to eq issue_path
     end
 
     it 'does not process links containing issue numbers followed by text' do
@@ -123,11 +134,11 @@ describe Banzai::Filter::IssueReferenceFilter do
   end
 
   context 'cross-project / cross-namespace complete reference' do
-    it_behaves_like 'a reference containing an element node'
-
-    let(:project2)  { create(:project, :public) }
-    let(:issue)     { create(:issue, project: project2) }
     let(:reference) { "#{project2.full_path}##{issue.iid}" }
+    let(:issue)     { create(:issue, project: project2) }
+    let(:project2)  { create(:project, :public) }
+
+    it_behaves_like 'a reference containing an element node'
 
     it 'ignores valid references when cross-reference project uses external tracker' do
       expect_any_instance_of(described_class).to receive(:find_object)
@@ -142,7 +153,7 @@ describe Banzai::Filter::IssueReferenceFilter do
       doc = reference_filter("See #{reference}")
 
       expect(doc.css('a').first.attr('href'))
-        .to eq helper.url_for_issue(issue.iid, project2)
+        .to eq issue_url
     end
 
     it 'link has valid text' do
@@ -157,6 +168,12 @@ describe Banzai::Filter::IssueReferenceFilter do
       expect(doc.text).to eq("Fixed (#{project2.full_path}##{issue.iid}.)")
     end
 
+    it 'includes default classes' do
+      doc = reference_filter("Fixed (#{reference}.)")
+
+      expect(doc.css('a').first.attr('class')).to eq 'gfm gfm-issue has-tooltip'
+    end
+
     it 'ignores invalid issue IDs on the referenced project' do
       exp = act = "Fixed #{invalidate_reference(reference)}"
 
@@ -165,13 +182,13 @@ describe Banzai::Filter::IssueReferenceFilter do
   end
 
   context 'cross-project / same-namespace complete reference' do
-    it_behaves_like 'a reference containing an element node'
-
-    let(:namespace) { create(:namespace) }
-    let(:project)   { create(:project, :public, namespace: namespace) }
-    let(:project2)  { create(:project, :public, namespace: namespace) }
-    let(:issue)     { create(:issue, project: project2) }
     let(:reference) { "#{project2.full_path}##{issue.iid}" }
+    let(:issue)     { create(:issue, project: project2) }
+    let(:project2)  { create(:project, :public, namespace: namespace) }
+    let(:project)   { create(:project, :public, namespace: namespace) }
+    let(:namespace) { create(:namespace) }
+
+    it_behaves_like 'a reference containing an element node'
 
     it 'ignores valid references when cross-reference project uses external tracker' do
       expect_any_instance_of(described_class).to receive(:find_object)
@@ -186,7 +203,7 @@ describe Banzai::Filter::IssueReferenceFilter do
       doc = reference_filter("See #{reference}")
 
       expect(doc.css('a').first.attr('href'))
-        .to eq helper.url_for_issue(issue.iid, project2)
+        .to eq issue_url
     end
 
     it 'link has valid text' do
@@ -199,6 +216,12 @@ describe Banzai::Filter::IssueReferenceFilter do
       doc = reference_filter("Fixed (#{reference}.)")
 
       expect(doc.text).to eq("Fixed (#{project2.path}##{issue.iid}.)")
+    end
+
+    it 'includes default classes' do
+      doc = reference_filter("Fixed (#{reference}.)")
+
+      expect(doc.css('a').first.attr('class')).to eq 'gfm gfm-issue has-tooltip'
     end
 
     it 'ignores invalid issue IDs on the referenced project' do
@@ -209,13 +232,13 @@ describe Banzai::Filter::IssueReferenceFilter do
   end
 
   context 'cross-project shorthand reference' do
-    it_behaves_like 'a reference containing an element node'
-
-    let(:namespace) { create(:namespace) }
-    let(:project)   { create(:project, :public, namespace: namespace) }
-    let(:project2)  { create(:project, :public, namespace: namespace) }
-    let(:issue)     { create(:issue, project: project2) }
     let(:reference) { "#{project2.path}##{issue.iid}" }
+    let(:issue)     { create(:issue, project: project2) }
+    let(:project2)  { create(:project, :public, namespace: namespace) }
+    let(:project)   { create(:project, :public, namespace: namespace) }
+    let(:namespace) { create(:namespace) }
+
+    it_behaves_like 'a reference containing an element node'
 
     it 'ignores valid references when cross-reference project uses external tracker' do
       expect_any_instance_of(described_class).to receive(:find_object)
@@ -230,7 +253,7 @@ describe Banzai::Filter::IssueReferenceFilter do
       doc = reference_filter("See #{reference}")
 
       expect(doc.css('a').first.attr('href'))
-        .to eq helper.url_for_issue(issue.iid, project2)
+        .to eq issue_url
     end
 
     it 'link has valid text' do
@@ -245,6 +268,12 @@ describe Banzai::Filter::IssueReferenceFilter do
       expect(doc.text).to eq("Fixed (#{project2.path}##{issue.iid}.)")
     end
 
+    it 'includes default classes' do
+      doc = reference_filter("Fixed (#{reference}.)")
+
+      expect(doc.css('a').first.attr('class')).to eq 'gfm gfm-issue has-tooltip'
+    end
+
     it 'ignores invalid issue IDs on the referenced project' do
       exp = act = "Fixed #{invalidate_reference(reference)}"
 
@@ -253,12 +282,12 @@ describe Banzai::Filter::IssueReferenceFilter do
   end
 
   context 'cross-project URL reference' do
-    it_behaves_like 'a reference containing an element node'
-
-    let(:namespace) { create(:namespace, name: 'cross-reference') }
-    let(:project2)  { create(:project, :public, namespace: namespace) }
+    let(:reference) { issue_url + "#note_123" }
     let(:issue)     { create(:issue, project: project2) }
-    let(:reference) { helper.url_for_issue(issue.iid, project2) + "#note_123" }
+    let(:project2)  { create(:project, :public, namespace: namespace) }
+    let(:namespace) { create(:namespace, name: 'cross-reference') }
+
+    it_behaves_like 'a reference containing an element node'
 
     it 'links to a valid reference' do
       doc = reference_filter("See #{reference}")
@@ -267,76 +296,200 @@ describe Banzai::Filter::IssueReferenceFilter do
         .to eq reference
     end
 
+    it 'link with trailing slash' do
+      doc = reference_filter("Fixed (#{issue_url + "/"}.)")
+
+      expect(doc.to_html).to match(%r{\(<a.+>#{Regexp.escape(issue.to_reference(project))}</a>\.\)})
+    end
+
     it 'links with adjacent text' do
       doc = reference_filter("Fixed (#{reference}.)")
-      expect(doc.to_html).to match(/\(<a.+>#{Regexp.escape(issue.to_reference(project))} \(comment 123\)<\/a>\.\)/)
+
+      expect(doc.to_html).to match(%r{\(<a.+>#{Regexp.escape(issue.to_reference(project))} \(comment 123\)</a>\.\)})
+    end
+
+    it 'includes default classes' do
+      doc = reference_filter("Fixed (#{reference}.)")
+
+      expect(doc.css('a').first.attr('class')).to eq 'gfm gfm-issue has-tooltip'
     end
   end
 
   context 'cross-project reference in link href' do
-    it_behaves_like 'a reference containing an element node'
-
-    let(:namespace) { create(:namespace, name: 'cross-reference') }
-    let(:project2)  { create(:project, :public, namespace: namespace) }
-    let(:issue)     { create(:issue, project: project2) }
-    let(:reference) { issue.to_reference(project) }
     let(:reference_link) { %{<a href="#{reference}">Reference</a>} }
+    let(:reference) { issue.to_reference(project) }
+    let(:issue)     { create(:issue, project: project2) }
+    let(:project2)  { create(:project, :public, namespace: namespace) }
+    let(:namespace) { create(:namespace, name: 'cross-reference') }
+
+    it_behaves_like 'a reference containing an element node'
 
     it 'links to a valid reference' do
       doc = reference_filter("See #{reference_link}")
 
       expect(doc.css('a').first.attr('href'))
-        .to eq helper.url_for_issue(issue.iid, project2)
+        .to eq issue_url
     end
 
     it 'links with adjacent text' do
       doc = reference_filter("Fixed (#{reference_link}.)")
-      expect(doc.to_html).to match(/\(<a.+>Reference<\/a>\.\)/)
+
+      expect(doc.to_html).to match(%r{\(<a.+>Reference</a>\.\)})
+    end
+
+    it 'includes default classes' do
+      doc = reference_filter("Fixed (#{reference_link}.)")
+
+      expect(doc.css('a').first.attr('class')).to eq 'gfm gfm-issue has-tooltip'
     end
   end
 
   context 'cross-project URL in link href' do
-    it_behaves_like 'a reference containing an element node'
-
-    let(:namespace) { create(:namespace, name: 'cross-reference') }
-    let(:project2)  { create(:project, :public, namespace: namespace) }
-    let(:issue)     { create(:issue, project: project2) }
-    let(:reference) { "#{helper.url_for_issue(issue.iid, project2) + "#note_123"}" }
     let(:reference_link) { %{<a href="#{reference}">Reference</a>} }
+    let(:reference) { "#{issue_url + "#note_123"}" }
+    let(:issue)     { create(:issue, project: project2) }
+    let(:project2)  { create(:project, :public, namespace: namespace) }
+    let(:namespace) { create(:namespace, name: 'cross-reference') }
+
+    it_behaves_like 'a reference containing an element node'
 
     it 'links to a valid reference' do
       doc = reference_filter("See #{reference_link}")
 
       expect(doc.css('a').first.attr('href'))
-        .to eq helper.url_for_issue(issue.iid, project2) + "#note_123"
+        .to eq issue_url + "#note_123"
     end
 
     it 'links with adjacent text' do
       doc = reference_filter("Fixed (#{reference_link}.)")
-      expect(doc.to_html).to match(/\(<a.+>Reference<\/a>\.\)/)
+
+      expect(doc.to_html).to match(%r{\(<a.+>Reference</a>\.\)})
+    end
+
+    it 'includes default classes' do
+      doc = reference_filter("Fixed (#{reference_link}.)")
+
+      expect(doc.css('a').first.attr('class')).to eq 'gfm gfm-issue has-tooltip'
     end
   end
 
-  describe '#issues_per_project' do
+  context 'when processing a link to the designs tab' do
+    let(:designs_tab_url) { url_for_designs(issue) }
+    let(:input_text) { "See #{designs_tab_url}" }
+
+    subject(:link) { reference_filter(input_text).css('a').first }
+
+    before do
+      enable_design_management
+    end
+
+    it 'includes the word "designs" after the reference in the text content', :aggregate_failures do
+      expect(link.attr('title')).to eq(issue.title)
+      expect(link.attr('href')).to eq(designs_tab_url)
+      expect(link.text).to eq("#{issue.to_reference} (designs)")
+    end
+
+    context 'design management is not available' do
+      before do
+        enable_design_management(false)
+      end
+
+      it 'links to the issue, but not to the designs tab' do
+        expect(link.text).to eq(issue.to_reference)
+      end
+    end
+  end
+
+  context 'group context' do
+    let(:group) { create(:group) }
+    let(:context) { { project: nil, group: group } }
+
+    it 'ignores shorthanded issue reference' do
+      reference = "##{issue.iid}"
+      text = "Fixed #{reference}"
+
+      expect(reference_filter(text, context).to_html).to eq(text)
+    end
+
+    it 'ignores valid references when cross-reference project uses external tracker' do
+      expect_any_instance_of(described_class).to receive(:find_object)
+        .with(project, issue.iid)
+        .and_return(nil)
+
+      reference = "#{project.full_path}##{issue.iid}"
+      text = "Issue #{reference}"
+
+      expect(reference_filter(text, context).to_html).to eq(text)
+    end
+
+    it 'links to a valid reference for complete cross-reference' do
+      reference = "#{project.full_path}##{issue.iid}"
+      doc = reference_filter("See #{reference}", context)
+
+      link = doc.css('a').first
+      expect(link.attr('href')).to eq(issue_url)
+      expect(link.text).to include("#{project.full_path}##{issue.iid}")
+    end
+
+    it 'ignores reference for shorthand cross-reference' do
+      reference = "#{project.path}##{issue.iid}"
+      text = "See #{reference}"
+
+      expect(reference_filter(text, context).to_html).to eq(text)
+    end
+
+    it 'links to a valid reference for url cross-reference' do
+      reference = issue_url + "#note_123"
+
+      doc = reference_filter("See #{reference}", context)
+
+      link = doc.css('a').first
+      expect(link.attr('href')).to eq(issue_url + "#note_123")
+      expect(link.text).to include("#{project.full_path}##{issue.iid}")
+    end
+
+    it 'links to a valid reference for cross-reference in link href' do
+      reference = "#{issue_url + "#note_123"}"
+      reference_link = %{<a href="#{reference}">Reference</a>}
+
+      doc = reference_filter("See #{reference_link}", context)
+
+      link = doc.css('a').first
+      expect(link.attr('href')).to eq(issue_url + "#note_123")
+      expect(link.text).to include('Reference')
+    end
+
+    it 'links to a valid reference for issue reference in the link href' do
+      reference = issue.to_reference(group)
+      reference_link = %{<a href="#{reference}">Reference</a>}
+      doc = reference_filter("See #{reference_link}", context)
+
+      link = doc.css('a').first
+      expect(link.attr('href')).to eq(issue_url)
+      expect(link.text).to include('Reference')
+    end
+  end
+
+  describe '#records_per_parent' do
     context 'using an internal issue tracker' do
       it 'returns a Hash containing the issues per project' do
         doc = Nokogiri::HTML.fragment('')
         filter = described_class.new(doc, project: project)
 
-        expect(filter).to receive(:projects_per_reference)
+        expect(filter).to receive(:parent_per_reference)
           .and_return({ project.full_path => project })
 
-        expect(filter).to receive(:references_per_project)
+        expect(filter).to receive(:references_per_parent)
           .and_return({ project.full_path => Set.new([issue.iid]) })
 
-        expect(filter.issues_per_project)
+        expect(filter.records_per_parent)
           .to eq({ project => { issue.iid => issue } })
       end
     end
   end
 
   describe '.references_in' do
-    let(:merge_request)  { create(:merge_request) }
+    let(:merge_request) { create(:merge_request) }
 
     it 'yields valid references' do
       expect do |b|
@@ -354,6 +507,43 @@ describe Banzai::Filter::IssueReferenceFilter do
       expect do |b|
         described_class.references_in(merge_request.to_reference, &b)
       end.not_to yield_control
+    end
+  end
+
+  describe '#object_link_text_extras' do
+    before do
+      enable_design_management(enabled)
+    end
+
+    let(:current_user) { project.owner }
+    let(:enabled) { true }
+    let(:matches) { Issue.link_reference_pattern.match(input_text) }
+    let(:extras) { subject.object_link_text_extras(issue, matches) }
+
+    subject { filter_instance }
+
+    context 'the link does not go to the designs tab' do
+      let(:input_text) { Gitlab::Routing.url_helpers.project_issue_url(issue.project, issue) }
+
+      it 'does not include designs' do
+        expect(extras).not_to include('designs')
+      end
+    end
+
+    context 'the link goes to the designs tab' do
+      let(:input_text) { url_for_designs(issue) }
+
+      it 'includes designs' do
+        expect(extras).to include('designs')
+      end
+
+      context 'design management is disabled' do
+        let(:enabled) { false }
+
+        it 'does not include designs in the extras' do
+          expect(extras).not_to include('designs')
+        end
+      end
     end
   end
 end

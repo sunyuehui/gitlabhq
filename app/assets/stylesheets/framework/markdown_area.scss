@@ -50,17 +50,14 @@
   transition: opacity 200ms ease-in-out;
 }
 
-.md-area {
-  position: relative;
-}
-
 .md-header {
   .nav-links {
     a {
+      width: 100%;
       padding-top: 0;
       line-height: 19px;
 
-      &.btn.btn-xs {
+      &.btn.btn-sm {
         padding: 2px 5px;
       }
 
@@ -72,9 +69,49 @@
   }
 }
 
+.md-header-tab {
+  @include media-breakpoint-down(xs) {
+    flex: 1;
+    flex-direction: column;
+    width: 100%;
+    border-bottom: 1px solid $border-color;
+    text-align: center;
+  }
+}
+
+.nav-links {
+  li.md-header-toolbar {
+    margin-left: auto;
+    display: none;
+
+    &.active {
+      display: block;
+
+      @include media-breakpoint-down(xs) {
+        flex: none;
+        display: flex;
+        justify-content: center;
+        width: 100%;
+        padding-top: $gl-padding-top;
+        padding-bottom: $gl-padding-top;
+      }
+    }
+  }
+}
+
 .referenced-users {
   color: $gl-text-color;
   padding-top: 10px;
+}
+
+.referenced-commands {
+  background: $blue-50;
+  padding: $gl-padding-8 $gl-padding;
+  border-radius: $border-radius-default;
+
+  p {
+    margin: 0;
+  }
 }
 
 .md-preview-holder {
@@ -85,8 +122,8 @@
 
 .markdown-area {
   border-radius: 0;
-  background: $white-light;
-  border: 1px solid $md-area-border;
+  background: $white;
+  border: 1px solid $gray-50;
   min-height: 140px;
   max-height: 500px;
   padding: 5px;
@@ -94,129 +131,61 @@
   width: 100%;
 }
 
-.md {
-  &.md-preview-holder {
-    // Reset ul style types since we're nested inside a ul already
-    @include bulleted-list;
-  }
-
-  // On diffs code should wrap nicely and not overflow
-  code {
-    white-space: pre-wrap;
-    word-break: keep-all;
-  }
-
-  hr {
-    // Darken 'whitesmoke' a bit to make it more visible in note bodies
-    border-color: darken($gray-normal, 8%);
-    margin: 10px 0;
-  }
-
-  // Border around images in issue and MR comments.
-  img:not(.emoji) {
-    border: 1px solid $white-normal;
-    padding: 5px;
-    margin: 5px 0;
-    // Ensure that image does not exceed viewport
-    max-height: calc(100vh - 100px);
-  }
-
-  table {
-    @include markdown-table;
-  }
-}
-
-.toolbar-group {
-  float: left;
-  margin-right: -5px;
-  margin-left: $gl-padding;
-
-  &:first-child {
-    margin-left: 0;
-  }
-}
-
 .toolbar-btn {
   float: left;
-  padding: 0 5px;
-  color: $gl-text-color-secondary;
+  padding: 0 7px;
   background: transparent;
   border: 0;
   outline: 0;
 
+  svg {
+    width: 14px;
+    height: 14px;
+    vertical-align: middle;
+    fill: $gl-text-color-secondary;
+  }
+
   &:hover,
   &:focus {
-    color: $gl-link-color;
-  }
-}
-
-.atwho-view {
-  overflow-y: auto;
-  overflow-x: hidden;
-
-  small.description {
-    float: right;
-    padding: 3px 5px;
-  }
-
-  .avatar-inline {
-    margin-bottom: 0;
-  }
-
-  .cur {
-    .avatar {
-      @include disableAllAnimation;
-      border: 1px solid $white-light;
+    svg {
+      fill: $blue-600;
     }
   }
+}
 
-  ul > li {
-    white-space: nowrap;
+.toolbar-fullscreen-btn {
+  margin-right: -5px;
+
+  @include media-breakpoint-down(xs) {
+    margin-right: 0;
   }
 }
 
-@media(max-width: $screen-xs-max) {
-  .atwho-view-ul {
-    width: 350px;
-  }
+.md-suggestion-diff {
+  display: table !important;
+  border: 1px solid $border-color !important;
+  width: 100% !important;
+  font-family: $monospace-font !important;
+}
 
-  .atwho-view ul li {
-    overflow: hidden;
-    text-overflow: ellipsis;
+.md-suggestion-header {
+  height: $suggestion-header-height;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: $gray-light;
+  border: 1px solid $border-color;
+  padding: $gl-padding;
+  border-radius: $border-radius-default $border-radius-default 0 0;
+
+  svg {
+    vertical-align: middle;
+    margin-bottom: 3px;
   }
 }
 
-// TODO: fallback to global style
-.atwho-view {
-  .atwho-view-ul {
-    padding: 8px 1px;
-
-    li {
-      padding: 8px 16px;
-      border: 0;
-
-      &.cur {
-        background-color: $gray-darker;
-        color: $gl-text-color;
-
-        small {
-          color: inherit;
-        }
-      }
-
-      div.avatar {
-        display: inline-flex;
-        justify-content: center;
-        align-items: center;
-
-        .center {
-          line-height: 14px;
-        }
-      }
-
-      strong {
-        color: $gl-text-color;
-      }
-    }
+@include media-breakpoint-down(xs) {
+  .referenced-users {
+    margin-right: 0;
   }
 }

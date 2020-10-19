@@ -1,4 +1,6 @@
-describe QA::Scenario::Actable do
+# frozen_string_literal: true
+
+RSpec.describe QA::Scenario::Actable do
   subject do
     Class.new do
       include QA::Scenario::Actable

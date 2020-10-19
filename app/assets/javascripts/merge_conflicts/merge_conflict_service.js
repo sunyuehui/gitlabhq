@@ -1,31 +1,16 @@
-/* eslint-disable no-param-reassign, comma-dangle */
+import axios from '../lib/utils/axios_utils';
 
-((global) => {
-  global.mergeConflicts = global.mergeConflicts || {};
-
-  class mergeConflictsService {
-    constructor(options) {
-      this.conflictsPath = options.conflictsPath;
-      this.resolveConflictsPath = options.resolveConflictsPath;
-    }
-
-    fetchConflictsData() {
-      return $.ajax({
-        dataType: 'json',
-        url: this.conflictsPath
-      });
-    }
-
-    submitResolveConflicts(data) {
-      return $.ajax({
-        url: this.resolveConflictsPath,
-        data: JSON.stringify(data),
-        contentType: 'application/json',
-        dataType: 'json',
-        method: 'POST'
-      });
-    }
+export default class MergeConflictsService {
+  constructor(options) {
+    this.conflictsPath = options.conflictsPath;
+    this.resolveConflictsPath = options.resolveConflictsPath;
   }
 
-  global.mergeConflicts.mergeConflictsService = mergeConflictsService;
-})(window.gl || (window.gl = {}));
+  fetchConflictsData() {
+    return axios.get(this.conflictsPath);
+  }
+
+  submitResolveConflicts(data) {
+    return axios.post(this.resolveConflictsPath, data);
+  }
+}

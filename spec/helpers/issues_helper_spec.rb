@@ -1,72 +1,11 @@
+# frozen_string_literal: true
+
 require "spec_helper"
 
-describe IssuesHelper do
+RSpec.describe IssuesHelper do
   let(:project) { create(:project) }
   let(:issue) { create :issue, project: project }
   let(:ext_project) { create :redmine_project }
-
-  describe "url_for_issue" do
-    let(:issues_url) { ext_project.external_issue_tracker.issues_url}
-    let(:ext_expected) { issues_url.gsub(':id', issue.iid.to_s).gsub(':project_id', ext_project.id.to_s) }
-    let(:int_expected) { polymorphic_path([@project.namespace, @project, issue]) }
-
-    it "returns internal path if used internal tracker" do
-      @project = project
-
-      expect(url_for_issue(issue.iid)).to match(int_expected)
-    end
-
-    it "returns path to external tracker" do
-      @project = ext_project
-
-      expect(url_for_issue(issue.iid)).to match(ext_expected)
-    end
-
-    it "returns path to internal issue when internal option passed" do
-      @project = ext_project
-
-      expect(url_for_issue(issue.iid, ext_project, internal: true)).to match(int_expected)
-    end
-
-    it "returns empty string if project nil" do
-      @project = nil
-
-      expect(url_for_issue(issue.iid)).to eq ""
-    end
-
-    it 'returns an empty string if issue_url is invalid' do
-      expect(project).to receive_message_chain('issues_tracker.issue_url') { 'javascript:alert("foo");' }
-
-      expect(url_for_issue(issue.iid, project)).to eq ''
-    end
-
-    it 'returns an empty string if issue_path is invalid' do
-      expect(project).to receive_message_chain('issues_tracker.issue_path') { 'javascript:alert("foo");' }
-
-      expect(url_for_issue(issue.iid, project, only_path: true)).to eq ''
-    end
-
-    describe "when external tracker was enabled and then config removed" do
-      before do
-        @project = ext_project
-        allow(Gitlab.config).to receive(:issues_tracker).and_return(nil)
-      end
-
-      it "returns external path" do
-        expect(url_for_issue(issue.iid)).to match(ext_expected)
-      end
-    end
-  end
-
-  describe "merge_requests_sentence" do
-    subject { merge_requests_sentence(merge_requests)}
-    let(:merge_requests) do
-      [build(:merge_request, iid: 1), build(:merge_request, iid: 2),
-       build(:merge_request, iid: 3)]
-    end
-
-    it { is_expected.to eq("!1, !2, or !3") }
-  end
 
   describe '#award_user_list' do
     it "returns a comma-separated list of the first X users" do
@@ -106,13 +45,32 @@ describe IssuesHelper do
 
   describe '#award_state_class' do
     let!(:upvote) { create(:award_emoji) }
+    let(:awardable) { upvote.awardable }
+    let(:user) { upvote.user }
+
+    before do
+      allow(helper).to receive(:can?) do |*args|
+        Ability.allowed?(*args)
+      end
+    end
 
     it "returns disabled string for unauthenticated user" do
-      expect(award_state_class(AwardEmoji.all, nil)).to eq("disabled")
+      expect(helper.award_state_class(awardable, AwardEmoji.all, nil)).to eq("disabled")
+    end
+
+    it "returns disabled for a user that does not have access to the awardable" do
+      expect(helper.award_state_class(awardable, AwardEmoji.all, build(:user))).to eq("disabled")
     end
 
     it "returns active string for author" do
-      expect(award_state_class(AwardEmoji.all, upvote.user)).to eq("active")
+      expect(helper.award_state_class(awardable, AwardEmoji.all, upvote.user)).to eq("active")
+    end
+
+    it "is blank for a user that has access to the awardable" do
+      user = build(:user)
+      expect(helper).to receive(:can?).with(user, :award_emoji, awardable).and_return(true)
+
+      expect(helper.award_state_class(awardable, AwardEmoji.all, user)).to be_blank
     end
   end
 
@@ -120,21 +78,6 @@ describe IssuesHelper do
     it "sorts a hash so thumbsup and thumbsdown are always on top" do
       data = { "thumbsdown" => "some value", "lifter" => "some value", "thumbsup" => "some value" }
       expect(awards_sort(data).keys).to eq(%w(thumbsup thumbsdown lifter))
-    end
-  end
-
-  describe "milestone_options" do
-    it "gets closed milestone from current issue" do
-      closed_milestone = create(:closed_milestone, project: project)
-      milestone1       = create(:milestone, project: project)
-      milestone2       = create(:milestone, project: project)
-      issue.update_attributes(milestone_id: closed_milestone.id)
-
-      options = milestone_options(issue)
-
-      expect(options).to have_selector('option[selected]', text: closed_milestone.title)
-      expect(options).to have_selector('option', text: milestone1.title)
-      expect(options).to have_selector('option', text: milestone2.title)
     end
   end
 
@@ -148,13 +91,13 @@ describe IssuesHelper do
         expect(link_to_discussions_to_resolve(merge_request, nil)).to include(expected_path)
       end
 
-      it "containst the reference to the merge request" do
+      it "contains the reference to the merge request" do
         expect(link_to_discussions_to_resolve(merge_request, nil)).to include(merge_request.to_reference)
       end
     end
 
     describe "when passing a discussion" do
-      let(:diff_note) {  create(:diff_note_on_merge_request) }
+      let(:diff_note) { create(:diff_note_on_merge_request) }
       let(:merge_request) { diff_note.noteable }
       let(:discussion) { diff_note.to_discussion }
 
@@ -167,6 +110,148 @@ describe IssuesHelper do
       it "contains both the reference to the merge request and a mention of the discussion" do
         expect(link_to_discussions_to_resolve(merge_request, discussion)).to include("#{merge_request.to_reference} (discussion #{diff_note.id})")
       end
+    end
+  end
+
+  describe '#show_new_issue_link?' do
+    before do
+      allow(helper).to receive(:current_user)
+    end
+
+    it 'is false when no project there is no project' do
+      expect(helper.show_new_issue_link?(nil)).to be_falsey
+    end
+
+    it 'is true when there is a project and no logged in user' do
+      expect(helper.show_new_issue_link?(build(:project))).to be_truthy
+    end
+
+    it 'is true when the current user does not have access to the project' do
+      project = build(:project)
+      allow(helper).to receive(:current_user).and_return(project.owner)
+
+      expect(helper).to receive(:can?).with(project.owner, :create_issue, project).and_return(true)
+      expect(helper.show_new_issue_link?(project)).to be_truthy
+    end
+  end
+
+  describe '#issue_closed_link' do
+    let(:new_issue) { create(:issue, project: project) }
+    let(:guest)     { create(:user) }
+
+    before do
+      allow(helper).to receive(:can?) do |*args|
+        Ability.allowed?(*args)
+      end
+    end
+
+    shared_examples 'successfully displays link to issue and with css class' do |action|
+      it 'returns link' do
+        link = "<a class=\"#{css_class}\" href=\"/#{new_issue.project.full_path}/-/issues/#{new_issue.iid}\">(#{action})</a>"
+
+        expect(helper.issue_closed_link(issue, user, css_class: css_class)).to match(link)
+      end
+    end
+
+    shared_examples 'does not display link' do
+      it 'returns nil' do
+        expect(helper.issue_closed_link(issue, user)).to be_nil
+      end
+    end
+
+    context 'with linked issue' do
+      context 'with moved issue' do
+        before do
+          issue.update!(moved_to: new_issue)
+        end
+
+        context 'when user has permission to see new issue' do
+          let(:user)      { project.owner }
+          let(:css_class) { 'text-white text-underline' }
+
+          it_behaves_like 'successfully displays link to issue and with css class', 'moved'
+        end
+
+        context 'when user has no permission to see new issue' do
+          let(:user) { guest }
+
+          it_behaves_like 'does not display link'
+        end
+      end
+
+      context 'with duplicated issue' do
+        before do
+          issue.update!(duplicated_to: new_issue)
+        end
+
+        context 'when user has permission to see new issue' do
+          let(:user)      { project.owner }
+          let(:css_class) { 'text-white text-underline' }
+
+          it_behaves_like 'successfully displays link to issue and with css class', 'duplicated'
+        end
+
+        context 'when user has no permission to see new issue' do
+          let(:user) { guest }
+
+          it_behaves_like 'does not display link'
+        end
+      end
+    end
+
+    context 'without linked issue' do
+      let(:user) { project.owner }
+
+      before do
+        issue.update!(moved_to: nil, duplicated_to: nil)
+      end
+
+      it_behaves_like 'does not display link'
+    end
+  end
+
+  describe '#show_moved_service_desk_issue_warning?' do
+    let(:project1) { create(:project, service_desk_enabled: true) }
+    let(:project2) { create(:project, service_desk_enabled: true) }
+    let!(:old_issue) { create(:issue, author: User.support_bot, project: project1) }
+    let!(:new_issue) { create(:issue, author: User.support_bot, project: project2) }
+
+    before do
+      allow(Gitlab::IncomingEmail).to receive(:enabled?) { true }
+      allow(Gitlab::IncomingEmail).to receive(:supports_wildcard?) { true }
+
+      old_issue.update!(moved_to: new_issue)
+    end
+
+    it 'is true when moved issue project has service desk disabled' do
+      project2.update!(service_desk_enabled: false)
+
+      expect(helper.show_moved_service_desk_issue_warning?(new_issue)).to be(true)
+    end
+
+    it 'is false when moved issue project has service desk enabled' do
+      expect(helper.show_moved_service_desk_issue_warning?(new_issue)).to be(false)
+    end
+  end
+
+  describe '#use_startup_call' do
+    it "returns false when a query param is present" do
+      allow(controller.request).to receive(:query_parameters).and_return({ foo: 'bar' })
+
+      expect(helper.use_startup_call?).to eq(false)
+    end
+
+    it "returns false when user has stored sort preference" do
+      controller.instance_variable_set(:@sort, 'updated_asc')
+
+      expect(helper.use_startup_call?).to eq(false)
+    end
+
+    it 'returns true when request.query_parameters is empty with default sorting preference' do
+      controller.instance_variable_set(:@sort, 'created_date')
+      allow(controller.request).to receive(:query_parameters).and_return({})
+
+      expect(helper.use_startup_call?).to eq(true)
     end
   end
 end

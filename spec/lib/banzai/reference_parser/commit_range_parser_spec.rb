@@ -1,11 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::ReferenceParser::CommitRangeParser do
+RSpec.describe Banzai::ReferenceParser::CommitRangeParser do
   include ReferenceParserHelpers
 
   let(:project) { create(:project, :public) }
   let(:user) { create(:user) }
-  subject { described_class.new(project, user) }
+  subject { described_class.new(Banzai::RenderContext.new(project, user)) }
+
   let(:link) { empty_html_link }
 
   describe '#nodes_visible_to_user' do
@@ -107,12 +110,9 @@ describe Banzai::ReferenceParser::CommitRangeParser do
   describe '#find_object' do
     let(:range) { double(:range) }
 
-    before do
-      expect(CommitRange).to receive(:new).and_return(range)
-    end
-
     context 'when the range has valid commits' do
       it 'returns the commit range' do
+        expect(CommitRange).to receive(:new).and_return(range)
         expect(range).to receive(:valid_commits?).and_return(true)
 
         expect(subject.find_object(project, '123..456')).to eq(range)
@@ -121,9 +121,18 @@ describe Banzai::ReferenceParser::CommitRangeParser do
 
     context 'when the range does not have any valid commits' do
       it 'returns nil' do
+        expect(CommitRange).to receive(:new).and_return(range)
         expect(range).to receive(:valid_commits?).and_return(false)
 
         expect(subject.find_object(project, '123..456')).to be_nil
+      end
+    end
+
+    context 'group context' do
+      it 'returns nil' do
+        group = create(:group)
+
+        expect(subject.find_object(group, '123..456')).to be_nil
       end
     end
   end

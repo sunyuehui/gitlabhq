@@ -5,9 +5,9 @@ These guidelines are meant to make your code more reliable _and_ secure.
 
 ## References
 
-- [Google Ruby Security Reviewer's Guide](https://code.google.com/p/ruby-security/wiki/Guide)
-- [OWASP Command Injection](https://www.owasp.org/index.php/Command_Injection)
-- [Ruby on Rails Security Guide Command Line Injection](http://guides.rubyonrails.org/security.html#command-line-injection)
+- [Google Ruby Security Reviewer's Guide](https://code.google.com/archive/p/ruby-security/wikis/Guide.wiki)
+- [OWASP Command Injection](https://wiki.owasp.org/index.php/Command_Injection)
+- [Ruby on Rails Security Guide Command Line Injection](https://guides.rubyonrails.org/security.html#command-line-injection)
 
 ## Use File and FileUtils instead of shell commands
 
@@ -35,7 +35,7 @@ Gitlab::Popen.popen(%W(find /some/path -not -path /some/path -mmin +120 -delete)
 
 This coding style could have prevented CVE-2013-4490.
 
-## Always use the configurable git binary path for git commands
+## Always use the configurable Git binary path for Git commands
 
 ```ruby
 # Wrong
@@ -71,23 +71,25 @@ Make the difference between options and arguments clear to the argument parsers 
 
 To understand what `--` does, consider the problem below.
 
-```
+```shell
 # Example
 $ echo hello > -l
 $ cat -l
+
 cat: illegal option -- l
 usage: cat [-benstuv] [file ...]
 ```
 
 In the example above, the argument parser of `cat` assumes that `-l` is an option. The solution in the example above is to make it clear to `cat` that `-l` is really an argument, not an option. Many Unix command line tools follow the convention of separating options from arguments with `--`.
 
-```
+```shell
 # Example (continued)
 $ cat -- -l
+
 hello
 ```
 
-In the GitLab codebase, we avoid the option/argument ambiguity by _always_ using `--`.
+In the GitLab codebase, we avoid the option/argument ambiguity by _always_ using `--` for commands that support it.
 
 ```ruby
 # Wrong
@@ -114,7 +116,7 @@ user = `whoami`
 user, exit_status = Gitlab::Popen.popen(%W(whoami))
 ```
 
-In other repositories, such as gitlab-shell you can also use `IO.popen`.
+In other repositories, such as GitLab Shell you can also use `IO.popen`.
 
 ```ruby
 # Safe IO.popen example
@@ -126,7 +128,7 @@ Note that unlike `Gitlab::Popen.popen`, `IO.popen` does not capture standard err
 ## Avoid user input at the start of path strings
 
 Various methods for opening and reading files in Ruby can be used to read the
-standard output of a process instead of a file.  The following two commands do
+standard output of a process instead of a file. The following two commands do
 roughly the same:
 
 ```ruby
@@ -138,7 +140,7 @@ The key is to open a 'file' whose name starts with a `|`.
 Affected methods include Kernel#open, File::read, File::open, IO::open and IO::read.
 
 You can protect against this behavior of 'open' and 'read' by ensuring that an
-attacker cannot control the start of the filename string you are opening.  For
+attacker cannot control the start of the filename string you are opening. For
 instance, the following is sufficient to protect against accidentally starting
 a shell command with `|`:
 
@@ -168,7 +170,7 @@ user_input = '../other-repo.git/other-file'
 repo_path = 'repositories/user-repo.git'
 
 # The intention of the code below is to open a file under repo_path, but
-# because the user used '..' she can 'break out' into
+# because the user used '..' they can 'break out' into
 # 'repositories/other-repo.git'
 full_path = File.join(repo_path, user_input)
 File.open(full_path) do # Oops!
@@ -190,7 +192,7 @@ A check like this could have avoided CVE-2013-4583.
 
 ## Properly anchor regular expressions to the start and end of strings
 
-When using regular expressions to validate user input that is passed as an argument to a shell command, make sure to use the `\A` and `\z` anchors that designate the start and end of the string, rather than `^` and `$`, or no anchors at all. 
+When using regular expressions to validate user input that is passed as an argument to a shell command, make sure to use the `\A` and `\z` anchors that designate the start and end of the string, rather than `^` and `$`, or no anchors at all.
 
 If you don't, an attacker could use this to execute commands with potentially harmful effect.
 
@@ -198,12 +200,12 @@ For example, when a project's `import_url` is validated like below, the user cou
 
 ```ruby
 validates :import_url, format: { with: URI.regexp(%w(ssh git http https)) }
-# URI.regexp(%w(ssh git http https)) roughly evaluates to /(ssh|git|http|https):(something_that_looks_like_a_url)/ 
+# URI.regexp(%w(ssh git http https)) roughly evaluates to /(ssh|git|http|https):(something_that_looks_like_a_url)/
 ```
 
 Suppose the user submits the following as their import URL:
 
-```
+```plaintext
 file://git:/tmp/lol
 ```
 
@@ -211,9 +213,8 @@ Since there are no anchors in the used regular expression, the `git:/tmp/lol` in
 
 When importing, GitLab would execute the following command, passing the `import_url` as an argument:
 
-
-```sh
+```shell
 git clone file://git:/tmp/lol
 ```
 
-Git would simply ignore the `git:` part, interpret the path as `file:///tmp/lol` and import the repository into the new project, in turn potentially giving the attacker access to any repository in the system, whether private or not.
+Git would simply ignore the `git:` part, interpret the path as `file:///tmp/lol`, and import the repository into the new project. This action could potentially give the attacker access to any repository in the system, whether private or not.

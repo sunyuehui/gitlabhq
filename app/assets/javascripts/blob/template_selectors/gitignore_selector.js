@@ -1,6 +1,5 @@
-import Api from '../../api';
-
 import FileTemplateSelector from '../file_template_selector';
+import initDeprecatedJQueryDropdown from '~/deprecated_jquery_dropdown';
 
 export default class BlobGitignoreSelector extends FileTemplateSelector {
   constructor({ mediator }) {
@@ -9,18 +8,17 @@ export default class BlobGitignoreSelector extends FileTemplateSelector {
       key: 'gitignore',
       name: '.gitignore',
       pattern: /(.gitignore)/,
-      endpoint: Api.gitignoreText,
+      type: 'gitignores',
       dropdown: '.js-gitignore-selector',
       wrapper: '.js-gitignore-selector-wrap',
     };
   }
 
   initDropdown() {
-    this.$dropdown.glDropdown({
+    initDeprecatedJQueryDropdown(this.$dropdown, {
       data: this.$dropdown.data('data'),
       filterable: true,
       selectable: true,
-      toggleLabel: item => item.name,
       search: {
         fields: ['name'],
       },

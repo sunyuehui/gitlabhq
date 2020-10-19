@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe 'Issue Boards add issue modal', :js do
+require 'spec_helper'
+
+RSpec.describe 'Issue Boards add issue modal', :js do
   let(:project) { create(:project, :public) }
   let(:board) { create(:board, project: project) }
   let(:user) { create(:user) }
@@ -8,11 +10,11 @@ describe 'Issue Boards add issue modal', :js do
   let!(:label) { create(:label, project: project) }
   let!(:list1) { create(:list, board: board, label: planning, position: 0) }
   let!(:list2) { create(:list, board: board, label: label, position: 1) }
-  let!(:issue) { create(:issue, project: project) }
-  let!(:issue2) { create(:issue, project: project) }
+  let!(:issue) { create(:issue, project: project, title: 'abc', description: 'def') }
+  let!(:issue2) { create(:issue, project: project, title: 'hij', description: 'klm') }
 
   before do
-    project.team << [user, :master]
+    project.add_maintainer(user)
 
     sign_in(user)
 
@@ -77,11 +79,11 @@ describe 'Issue Boards add issue modal', :js do
 
     it 'loads issues' do
       page.within('.add-issues-modal') do
-        page.within('.nav-links') do
+        page.within('.gl-tabs') do
           expect(page).to have_content('2')
         end
 
-        expect(page).to have_selector('.card', count: 2)
+        expect(page).to have_selector('.board-card', count: 2)
       end
     end
 
@@ -89,7 +91,7 @@ describe 'Issue Boards add issue modal', :js do
       page.within('.add-issues-modal') do
         click_link 'Selected issues'
 
-        expect(page).not_to have_selector('.card')
+        expect(page).not_to have_selector('.board-card')
       end
     end
 
@@ -101,7 +103,13 @@ describe 'Issue Boards add issue modal', :js do
           click_button 'Cancel'
         end
 
-        first('.board-delete').click
+        page.within(find('.board:nth-child(2)')) do
+          find('button[title="List settings"]').click
+        end
+
+        page.within(find('.js-board-settings-sidebar')) do
+          accept_confirm { find('[data-testid="remove-list"]').click }
+        end
 
         click_button('Add issues')
 
@@ -122,7 +130,7 @@ describe 'Issue Boards add issue modal', :js do
 
           wait_for_requests
 
-          expect(page).to have_selector('.card', count: 1)
+          expect(page).to have_selector('.board-card', count: 1)
         end
       end
 
@@ -133,7 +141,7 @@ describe 'Issue Boards add issue modal', :js do
 
           wait_for_requests
 
-          expect(page).not_to have_selector('.card')
+          expect(page).not_to have_selector('.board-card')
           expect(page).not_to have_content("You haven't added any issues to your project yet")
         end
       end
@@ -142,9 +150,9 @@ describe 'Issue Boards add issue modal', :js do
     context 'selecing issues' do
       it 'selects single issue' do
         page.within('.add-issues-modal') do
-          first('.card .card-number').click
+          first('.board-card .board-card-number').click
 
-          page.within('.nav-links') do
+          page.within('.gl-tabs') do
             expect(page).to have_content('Selected issues 1')
           end
         end
@@ -152,7 +160,7 @@ describe 'Issue Boards add issue modal', :js do
 
       it 'changes button text' do
         page.within('.add-issues-modal') do
-          first('.card .card-number').click
+          first('.board-card .board-card-number').click
 
           expect(first('.add-issues-footer .btn')).to have_content('Add 1 issue')
         end
@@ -160,7 +168,7 @@ describe 'Issue Boards add issue modal', :js do
 
       it 'changes button text with plural' do
         page.within('.add-issues-modal') do
-          all('.card .card-number').each do |el|
+          all('.board-card .js-board-card-number-container').each do |el|
             el.click
           end
 
@@ -170,11 +178,11 @@ describe 'Issue Boards add issue modal', :js do
 
       it 'shows only selected issues on selected tab' do
         page.within('.add-issues-modal') do
-          first('.card .card-number').click
+          first('.board-card .board-card-number').click
 
           click_link 'Selected issues'
 
-          expect(page).to have_selector('.card', count: 1)
+          expect(page).to have_selector('.board-card', count: 1)
         end
       end
 
@@ -200,7 +208,7 @@ describe 'Issue Boards add issue modal', :js do
 
       it 'selects all that arent already selected' do
         page.within('.add-issues-modal') do
-          first('.card .card-number').click
+          first('.board-card .board-card-number').click
 
           expect(page).to have_selector('.is-active', count: 1)
 
@@ -212,11 +220,11 @@ describe 'Issue Boards add issue modal', :js do
 
       it 'unselects from selected tab' do
         page.within('.add-issues-modal') do
-          first('.card .card-number').click
+          first('.board-card .board-card-number').click
 
           click_link 'Selected issues'
 
-          first('.card .card-number').click
+          first('.board-card .board-card-number').click
 
           expect(page).not_to have_selector('.is-active')
         end
@@ -226,19 +234,19 @@ describe 'Issue Boards add issue modal', :js do
     context 'adding issues' do
       it 'adds to board' do
         page.within('.add-issues-modal') do
-          first('.card .card-number').click
+          first('.board-card .board-card-number').click
 
           click_button 'Add 1 issue'
         end
 
         page.within(find('.board:nth-child(2)')) do
-          expect(page).to have_selector('.card')
+          expect(page).to have_selector('.board-card')
         end
       end
 
       it 'adds to second list' do
         page.within('.add-issues-modal') do
-          first('.card .card-number').click
+          first('.board-card .board-card-number').click
 
           click_button planning.title
 
@@ -248,7 +256,7 @@ describe 'Issue Boards add issue modal', :js do
         end
 
         page.within(find('.board:nth-child(3)')) do
-          expect(page).to have_selector('.card')
+          expect(page).to have_selector('.board-card')
         end
       end
     end

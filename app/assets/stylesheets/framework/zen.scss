@@ -1,6 +1,6 @@
 .zen-backdrop {
   &.fullscreen {
-    background-color: $white-light;
+    background-color: $white;
     position: fixed;
     top: 0;
     bottom: 0;
@@ -9,7 +9,7 @@
     z-index: 1031;
 
     textarea {
-      border: none;
+      border: 0;
       box-shadow: none;
       border-radius: 0;
       color: $black;
@@ -35,7 +35,7 @@
 
 .zen-control {
   padding: 0;
-  color: $zen-control-color;
+  color: $gray-700;
   background: none;
   border: 0;
 }
@@ -44,7 +44,7 @@
   color: $gl-text-color-secondary;
 
   &:hover {
-    color: $gl-link-color;
+    color: $blue-600;
     text-decoration: none;
   }
 }

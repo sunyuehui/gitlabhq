@@ -1,36 +1,26 @@
-class PipelineSerializer < BaseSerializer
-  InvalidResourceError = Class.new(StandardError)
+# frozen_string_literal: true
 
+class PipelineSerializer < BaseSerializer
+  include WithPagination
   entity PipelineDetailsEntity
 
-  def with_pagination(request, response)
-    tap { @paginator = Gitlab::Serializer::Pagination.new(request, response) }
-  end
-
-  def paginated?
-    @paginator.present?
-  end
-
+  # rubocop: disable CodeReuse/ActiveRecord
   def represent(resource, opts = {})
     if resource.is_a?(ActiveRecord::Relation)
-
-      resource = resource.preload([
-        :retryable_builds,
-        :cancelable_statuses,
-        :trigger_requests,
-        :project,
-        :manual_actions,
-        :artifacts,
-        { pending_builds: :project }
-      ])
+      resource = resource.preload(preloaded_relations)
     end
 
     if paginated?
-      super(@paginator.paginate(resource), opts)
-    else
-      super(resource, opts)
+      resource = paginator.paginate(resource)
     end
+
+    if opts.delete(:preload)
+      resource = Gitlab::Ci::Pipeline::Preloader.preload!(resource)
+    end
+
+    super(resource, opts)
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def represent_status(resource)
     return {} unless resource.present?
@@ -42,7 +32,46 @@ class PipelineSerializer < BaseSerializer
   def represent_stages(resource)
     return {} unless resource.present?
 
-    data = represent(resource, { only: [{ details: [:stages] }] })
+    data = represent(resource, { only: [{ details: [:stages] }], preload: true })
     data.dig(:details, :stages) || []
+  end
+
+  private
+
+  def preloaded_relations
+    [
+      :cancelable_statuses,
+      :latest_statuses_ordered_by_stage,
+      :latest_builds_report_results,
+      :manual_actions,
+      :retryable_builds,
+      :scheduled_actions,
+      :stages,
+      :latest_statuses,
+      :trigger_requests,
+      :user,
+      {
+        downloadable_artifacts: {
+          project: [:route, { namespace: :route }],
+          job: []
+        },
+        failed_builds: %i(project metadata),
+        merge_request: {
+          source_project: [:route, { namespace: :route }],
+          target_project: [:route, { namespace: :route }]
+        },
+        pending_builds: :project,
+        project: [:route, { namespace: :route }],
+        triggered_by_pipeline: [{ project: [:route, { namespace: :route }] }, :user],
+        triggered_pipelines: [
+          {
+            project: [:route, { namespace: :route }]
+          },
+          :source_job,
+          :latest_statuses,
+          :user
+        ]
+      }
+    ]
   end
 end

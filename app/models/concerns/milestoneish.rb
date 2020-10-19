@@ -1,26 +1,26 @@
+# frozen_string_literal: true
+
 module Milestoneish
-  def closed_items_count(user)
-    memoize_per_user(user, :closed_items_count) do
-      (count_issues_by_state(user)['closed'] || 0) + merge_requests.closed_and_merged.size
-    end
+  DISPLAY_ISSUES_LIMIT = 3000
+
+  def total_issues_count
+    @total_issues_count ||= Milestones::IssuesCountService.new(self).count
   end
 
-  def total_items_count(user)
-    memoize_per_user(user, :total_items_count) do
-      total_issues_count(user) + merge_requests.size
-    end
+  def closed_issues_count
+    @close_issues_count ||= Milestones::ClosedIssuesCountService.new(self).count
   end
 
-  def total_issues_count(user)
-    count_issues_by_state(user).values.sum
+  def opened_issues_count
+    total_issues_count - closed_issues_count
   end
 
-  def complete?(user)
-    total_items_count(user) > 0 && total_items_count(user) == closed_items_count(user)
+  def complete?
+    total_issues_count > 0 && total_issues_count == closed_issues_count
   end
 
-  def percent_complete(user)
-    ((closed_items_count(user) * 100) / total_items_count(user)).abs
+  def percent_complete
+    closed_issues_count * 100 / total_issues_count
   rescue ZeroDivisionError
     0
   end
@@ -40,16 +40,43 @@ module Milestoneish
   def issues_visible_to_user(user)
     memoize_per_user(user, :issues_visible_to_user) do
       IssuesFinder.new(user, issues_finder_params)
-        .execute.preload(:assignees).where(milestone_id: milestoneish_ids)
+        .execute.preload(:assignees).where(milestone_id: milestoneish_id)
     end
   end
 
-  def sorted_issues(user)
-    issues_visible_to_user(user).preload_associations.sort('label_priority')
+  def issue_participants_visible_by_user(user)
+    User.joins(:issue_assignees)
+      .where('issue_assignees.issue_id' => issues_visible_to_user(user).select(:id))
+      .distinct
   end
 
-  def sorted_merge_requests
-    merge_requests.sort('label_priority')
+  def issue_labels_visible_by_user(user)
+    Label.joins(:label_links)
+      .where('label_links.target_id' => issues_visible_to_user(user).select(:id), 'label_links.target_type' => 'Issue')
+      .distinct
+  end
+
+  def sorted_issues(user)
+    # This method is used on milestone view to filter opened assigned, opened unassigned and closed issues columns.
+    # We want a limit of DISPLAY_ISSUES_LIMIT for total issues present on all columns.
+    limited_ids =
+      issues_visible_to_user(user).sort_by_attribute('label_priority').limit(DISPLAY_ISSUES_LIMIT)
+
+    Issue
+      .where(id: Issue.select(:id).from(limited_ids))
+      .preload_associated_models
+      .sort_by_attribute('label_priority')
+  end
+
+  def sorted_merge_requests(user)
+    merge_requests_visible_to_user(user).sort_by_attribute('label_priority')
+  end
+
+  def merge_requests_visible_to_user(user)
+    memoize_per_user(user, :merge_requests_visible_to_user) do
+      MergeRequestsFinder.new(user, issues_finder_params)
+        .execute.where(milestone_id: milestoneish_id)
+    end
   end
 
   def upcoming?
@@ -70,34 +97,30 @@ module Milestoneish
     due_date && due_date.past?
   end
 
-  def is_group_milestone?
-    false
+  def total_time_spent
+    @total_time_spent ||= issues.joins(:timelogs).sum(:time_spent) + merge_requests.joins(:timelogs).sum(:time_spent)
   end
 
-  def is_project_milestone?
-    false
+  def human_total_time_spent
+    Gitlab::TimeTrackingFormatter.output(total_time_spent)
   end
 
-  def is_legacy_group_milestone?
-    false
+  def total_time_estimate
+    @total_time_estimate ||= issues.sum(:time_estimate) + merge_requests.sum(:time_estimate)
   end
 
-  def is_dashboard_milestone?
-    false
+  def human_total_time_estimate
+    Gitlab::TimeTrackingFormatter.output(total_time_estimate)
   end
 
   private
 
-  def count_issues_by_state(user)
-    memoize_per_user(user, :count_issues_by_state) do
-      issues_visible_to_user(user).reorder(nil).group(:state).count
-    end
+  def memoize_per_user(user, method_name)
+    memoized_users[method_name][user&.id] ||= yield
   end
 
-  def memoize_per_user(user, method_name)
-    @memoized ||= {}
-    @memoized[method_name] ||= {}
-    @memoized[method_name][user&.id] ||= yield
+  def memoized_users
+    @memoized_users ||= Hash.new { |h, k| h[k] = {} }
   end
 
   # override in a class that includes this module to get a faster query

@@ -1,13 +1,19 @@
-FactoryGirl.define do
+# frozen_string_literal: true
+
+FactoryBot.define do
   factory :todo do
     project
-    author
-    user
+    author { project&.creator || user }
+    user { project&.creator || user }
     target factory: :issue
     action { Todo::ASSIGNED }
 
     trait :assigned do
       action { Todo::ASSIGNED }
+    end
+
+    trait :review_requested do
+      action { Todo::REVIEW_REQUESTED }
     end
 
     trait :mentioned do
@@ -36,20 +42,20 @@ FactoryGirl.define do
     end
 
     trait :pending do
-      state :pending
+      state { :pending }
     end
 
     trait :done do
-      state :done
+      state { :done }
     end
   end
 
-  factory :on_commit_todo, class: Todo do
+  factory :on_commit_todo, class: 'Todo' do
     project
     author
     user
     action { Todo::ASSIGNED }
-    commit_id RepoHelpers.sample_commit.id
-    target_type "Commit"
+    commit_id { RepoHelpers.sample_commit.id }
+    target_type { "Commit" }
   end
 end

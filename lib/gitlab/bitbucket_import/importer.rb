@@ -1,8 +1,8 @@
+# frozen_string_literal: true
+
 module Gitlab
   module BitbucketImport
     class Importer
-      include Gitlab::ShellAdapter
-
       LABELS = [{ title: 'bug', color: '#FF0000' },
                 { title: 'enhancement', color: '#428BCA' },
                 { title: 'proposal', color: '#69D100' },
@@ -24,6 +24,7 @@ module Gitlab
         import_issues
         import_pull_requests
         handle_errors
+        metrics.track_finished_import
 
         true
       end
@@ -33,18 +34,32 @@ module Gitlab
       def handle_errors
         return unless errors.any?
 
-        project.update_column(:import_error, {
+        project.import_state.update_column(:last_error, {
           message: 'The remote data could not be fully imported.',
           errors: errors
         }.to_json)
+      end
+
+      def store_pull_request_error(pull_request, ex)
+        backtrace = Gitlab::BacktraceCleaner.clean_backtrace(ex.backtrace)
+        error = { type: :pull_request, iid: pull_request.iid, errors: ex.message, trace: backtrace, raw_response: pull_request.raw&.to_json }
+
+        Gitlab::ErrorTracking.log_exception(ex, error)
+
+        # Omit the details from the database to avoid blowing up usage in the error column
+        error.delete(:trace)
+        error.delete(:raw_response)
+
+        errors << error
       end
 
       def gitlab_user_id(project, username)
         find_user_id(username) || project.creator_id
       end
 
+      # rubocop: disable CodeReuse/ActiveRecord
       def find_user_id(username)
-        return nil unless username
+        return unless username
 
         return users[username] if users.key?(username)
 
@@ -53,6 +68,7 @@ module Gitlab
                               .find_by("identities.extern_uid = ? AND identities.provider = 'bitbucket'", username)
                               .try(:id)
       end
+      # rubocop: enable CodeReuse/ActiveRecord
 
       def repo
         @repo ||= client.repo(project.import_source)
@@ -61,9 +77,9 @@ module Gitlab
       def import_wiki
         return if project.wiki.repository_exists?
 
-        path_with_namespace = "#{project.full_path}.wiki"
-        import_url = project.import_url.sub(/\.git\z/, ".git/wiki")
-        gitlab_shell.import_repository(project.repository_storage_path, path_with_namespace, import_url)
+        wiki = WikiFormatter.new(project)
+
+        project.wiki.repository.import_repository(wiki.import_url)
       rescue StandardError => e
         errors << { type: :wiki, errors: e.message }
       end
@@ -74,33 +90,39 @@ module Gitlab
         create_labels
 
         client.issues(repo).each do |issue|
-          begin
-            description = ''
-            description += @formatter.author_line(issue.author) unless find_user_id(issue.author)
-            description += issue.description
-
-            label_name = issue.kind
-            milestone = issue.milestone ? project.milestones.find_or_create_by(title: issue.milestone) : nil
-
-            gitlab_issue = project.issues.create!(
-              iid: issue.iid,
-              title: issue.title,
-              description: description,
-              state: issue.state,
-              author_id: gitlab_user_id(project, issue.author),
-              milestone: milestone,
-              created_at: issue.created_at,
-              updated_at: issue.updated_at
-            )
-
-            gitlab_issue.labels << @labels[label_name]
-
-            import_issue_comments(issue, gitlab_issue) if gitlab_issue.persisted?
-          rescue StandardError => e
-            errors << { type: :issue, iid: issue.iid, errors: e.message }
-          end
+          import_issue(issue)
         end
       end
+
+      # rubocop: disable CodeReuse/ActiveRecord
+      def import_issue(issue)
+        description = ''
+        description += @formatter.author_line(issue.author) unless find_user_id(issue.author)
+        description += issue.description
+
+        label_name = issue.kind
+        milestone = issue.milestone ? project.milestones.find_or_create_by(title: issue.milestone) : nil
+
+        gitlab_issue = project.issues.create!(
+          iid: issue.iid,
+          title: issue.title,
+          description: description,
+          state_id: Issue.available_states[issue.state],
+          author_id: gitlab_user_id(project, issue.author),
+          milestone: milestone,
+          created_at: issue.created_at,
+          updated_at: issue.updated_at
+        )
+
+        metrics.issues_counter.increment
+
+        gitlab_issue.labels << @labels[label_name]
+
+        import_issue_comments(issue, gitlab_issue) if gitlab_issue.persisted?
+      rescue StandardError => e
+        errors << { type: :issue, iid: issue.iid, errors: e.message }
+      end
+      # rubocop: enable CodeReuse/ActiveRecord
 
       def import_issue_comments(issue, gitlab_issue)
         client.issue_comments(repo, issue.iid).each do |comment|
@@ -131,11 +153,11 @@ module Gitlab
 
       def create_labels
         LABELS.each do |label_params|
-          label = ::Labels::CreateService.new(label_params).execute(project: project)
+          label = ::Labels::FindOrCreateService.new(nil, project, label_params).execute(skip_authorization: true)
           if label.valid?
             @labels[label_params[:title]] = label
           else
-            raise "Failed to create label \"#{label_params[:title]}\" for project \"#{project.name_with_namespace}\""
+            raise "Failed to create label \"#{label_params[:title]}\" for project \"#{project.full_name}\""
           end
         end
       end
@@ -144,33 +166,41 @@ module Gitlab
         pull_requests = client.pull_requests(repo)
 
         pull_requests.each do |pull_request|
-          begin
-            description = ''
-            description += @formatter.author_line(pull_request.author) unless find_user_id(pull_request.author)
-            description += pull_request.description
-
-            merge_request = project.merge_requests.create!(
-              iid: pull_request.iid,
-              title: pull_request.title,
-              description: description,
-              source_project: project,
-              source_branch: pull_request.source_branch_name,
-              source_branch_sha: pull_request.source_branch_sha,
-              target_project: project,
-              target_branch: pull_request.target_branch_name,
-              target_branch_sha: pull_request.target_branch_sha,
-              state: pull_request.state,
-              author_id: gitlab_user_id(project, pull_request.author),
-              assignee_id: nil,
-              created_at: pull_request.created_at,
-              updated_at: pull_request.updated_at
-            )
-
-            import_pull_request_comments(pull_request, merge_request) if merge_request.persisted?
-          rescue StandardError => e
-            errors << { type: :pull_request, iid: pull_request.iid, errors: e.message, trace: e.backtrace.join("\n"), raw_response: pull_request.raw }
-          end
+          import_pull_request(pull_request)
         end
+      end
+
+      def import_pull_request(pull_request)
+        description = ''
+        description += @formatter.author_line(pull_request.author) unless find_user_id(pull_request.author)
+        description += pull_request.description
+
+        source_branch_sha = pull_request.source_branch_sha
+        target_branch_sha = pull_request.target_branch_sha
+        source_branch_sha = project.repository.commit(source_branch_sha)&.sha || source_branch_sha
+        target_branch_sha = project.repository.commit(target_branch_sha)&.sha || target_branch_sha
+
+        merge_request = project.merge_requests.create!(
+          iid: pull_request.iid,
+          title: pull_request.title,
+          description: description,
+          source_project: project,
+          source_branch: pull_request.source_branch_name,
+          source_branch_sha: source_branch_sha,
+          target_project: project,
+          target_branch: pull_request.target_branch_name,
+          target_branch_sha: target_branch_sha,
+          state: pull_request.state,
+          author_id: gitlab_user_id(project, pull_request.author),
+          created_at: pull_request.created_at,
+          updated_at: pull_request.updated_at
+        )
+
+        metrics.merge_requests_counter.increment
+
+        import_pull_request_comments(pull_request, merge_request) if merge_request.persisted?
+      rescue StandardError => e
+        store_pull_request_error(pull_request, e)
       end
 
       def import_pull_request_comments(pull_request, merge_request)
@@ -183,7 +213,8 @@ module Gitlab
       end
 
       def import_inline_comments(inline_comments, pull_request, merge_request)
-        line_code_map = {}
+        position_map = {}
+        discussion_map = {}
 
         children, parents = inline_comments.partition(&:has_parent?)
 
@@ -191,25 +222,29 @@ module Gitlab
         # relationships. We assume that the child can appear in any order in
         # the JSON.
         parents.each do |comment|
-          line_code_map[comment.iid] = generate_line_code(comment)
+          position_map[comment.iid] = build_position(merge_request, comment)
         end
 
         children.each do |comment|
-          line_code_map[comment.iid] = line_code_map.fetch(comment.parent_id, nil)
+          position_map[comment.iid] = position_map.fetch(comment.parent_id, nil)
         end
 
         inline_comments.each do |comment|
-          begin
-            attributes = pull_request_comment_attributes(comment)
-            attributes.merge!(
-              position: build_position(merge_request, comment),
-              line_code: line_code_map.fetch(comment.iid),
-              type: 'DiffNote')
+          attributes = pull_request_comment_attributes(comment)
+          attributes[:discussion_id] = discussion_map[comment.parent_id] if comment.has_parent?
 
-            merge_request.notes.create!(attributes)
-          rescue StandardError => e
-            errors << { type: :pull_request, iid: comment.iid, errors: e.message }
-          end
+          attributes.merge!(
+            position: position_map[comment.iid],
+            type: 'DiffNote')
+
+          note = merge_request.notes.create!(attributes)
+
+          # We can't store a discussion ID until a note is created, so if
+          # replies are created before the parent the discussion ID won't be
+          # linked properly.
+          discussion_map[comment.iid] = note.discussion_id
+        rescue StandardError => e
+          errors << { type: :pull_request, iid: comment.iid, errors: e.message }
         end
       end
 
@@ -227,26 +262,38 @@ module Gitlab
 
       def import_standalone_pr_comments(pr_comments, merge_request)
         pr_comments.each do |comment|
-          begin
-            merge_request.notes.create!(pull_request_comment_attributes(comment))
-          rescue StandardError => e
-            errors << { type: :pull_request, iid: comment.iid, errors: e.message }
-          end
+          merge_request.notes.create!(pull_request_comment_attributes(comment))
+        rescue StandardError => e
+          errors << { type: :pull_request, iid: comment.iid, errors: e.message }
         end
-      end
-
-      def generate_line_code(pr_comment)
-        Gitlab::Diff::LineCode.generate(pr_comment.file_path, pr_comment.new_pos, pr_comment.old_pos)
       end
 
       def pull_request_comment_attributes(comment)
         {
           project: project,
-          note: comment.note,
           author_id: gitlab_user_id(project, comment.author),
+          note: comment_note(comment),
           created_at: comment.created_at,
           updated_at: comment.updated_at
         }
+      end
+
+      def comment_note(comment)
+        author = @formatter.author_line(comment.author) unless find_user_id(comment.author)
+
+        author.to_s + comment.note.to_s
+      end
+
+      def log_base_data
+        {
+          class: self.class.name,
+          project_id: project.id,
+          project_path: project.full_path
+        }
+      end
+
+      def metrics
+        @metrics ||= Gitlab::Import::Metrics.new(:bitbucket_importer, @project)
       end
     end
   end

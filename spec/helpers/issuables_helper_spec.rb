@@ -1,12 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe IssuablesHelper do
+RSpec.describe IssuablesHelper do
   let(:label)  { build_stubbed(:label) }
   let(:label2) { build_stubbed(:label) }
 
   describe '#users_dropdown_label' do
-    let(:user)  { build_stubbed(:user) }
-    let(:user2)  { build_stubbed(:user) }
+    let(:user) { build_stubbed(:user) }
+    let(:user2) { build_stubbed(:user) }
 
     it 'returns unassigned' do
       expect(users_dropdown_label([])).to eq('Unassigned')
@@ -21,13 +23,41 @@ describe IssuablesHelper do
     end
   end
 
-  describe '#issuable_labels_tooltip' do
-    it 'returns label text' do
-      expect(issuable_labels_tooltip([label])).to eq(label.title)
+  describe '#group_dropdown_label' do
+    let(:group) { create(:group) }
+    let(:default) { 'default label' }
+
+    it 'returns default group label when group_id is nil' do
+      expect(group_dropdown_label(nil, default)).to eq('default label')
     end
 
-    it 'returns label text' do
-      expect(issuable_labels_tooltip([label, label2], limit: 1)).to eq("#{label.title}, and 1 more")
+    it 'returns "any group" when group_id is 0' do
+      expect(group_dropdown_label('0', default)).to eq('Any group')
+    end
+
+    it 'returns group full path when a group was found for the provided id' do
+      expect(group_dropdown_label(group.id, default)).to eq(group.full_name)
+    end
+
+    it 'returns default label when a group was not found for the provided id' do
+      expect(group_dropdown_label(non_existing_record_id, default)).to eq('default label')
+    end
+  end
+
+  describe '#issuable_labels_tooltip' do
+    let(:label_entity) { LabelEntity.represent(label).as_json }
+    let(:label2_entity) { LabelEntity.represent(label2).as_json }
+
+    it 'returns label text with no labels' do
+      expect(issuable_labels_tooltip([])).to eq(_('Labels'))
+    end
+
+    it 'returns label text with labels within max limit' do
+      expect(issuable_labels_tooltip([label_entity])).to eq(label[:title])
+    end
+
+    it 'returns label text with labels exceeding max limit' do
+      expect(issuable_labels_tooltip([label_entity, label2_entity], limit: 1)).to eq("#{label[:title]}, and 1 more")
     end
   end
 
@@ -40,129 +70,23 @@ describe IssuablesHelper do
       end
 
       it 'returns "Open" when state is :opened' do
-        expect(helper.issuables_state_counter_text(:issues, :opened))
-          .to eq('<span>Open</span> <span class="badge">42</span>')
+        expect(helper.issuables_state_counter_text(:issues, :opened, true))
+          .to eq('<span>Open</span> <span class="badge badge-pill">42</span>')
       end
 
       it 'returns "Closed" when state is :closed' do
-        expect(helper.issuables_state_counter_text(:issues, :closed))
-          .to eq('<span>Closed</span> <span class="badge">42</span>')
+        expect(helper.issuables_state_counter_text(:issues, :closed, true))
+          .to eq('<span>Closed</span> <span class="badge badge-pill">42</span>')
       end
 
       it 'returns "Merged" when state is :merged' do
-        expect(helper.issuables_state_counter_text(:merge_requests, :merged))
-          .to eq('<span>Merged</span> <span class="badge">42</span>')
+        expect(helper.issuables_state_counter_text(:merge_requests, :merged, true))
+          .to eq('<span>Merged</span> <span class="badge badge-pill">42</span>')
       end
 
       it 'returns "All" when state is :all' do
-        expect(helper.issuables_state_counter_text(:merge_requests, :all))
-          .to eq('<span>All</span> <span class="badge">42</span>')
-      end
-    end
-
-    describe 'counter caching based on issuable type and params', :use_clean_rails_memory_store_caching do
-      let(:params) do
-        {
-          scope: 'created-by-me',
-          state: 'opened',
-          utf8: '✓',
-          author_id: '11',
-          assignee_id: '18',
-          label_name: %w(bug discussion documentation),
-          milestone_title: 'v4.0',
-          sort: 'due_date_asc',
-          namespace_id: 'gitlab-org',
-          project_id: 'gitlab-ce',
-          page: 2
-        }.with_indifferent_access
-      end
-
-      let(:issues_finder) { IssuesFinder.new(nil, params) }
-      let(:merge_requests_finder) { MergeRequestsFinder.new(nil, params) }
-
-      before do
-        allow(helper).to receive(:issues_finder).and_return(issues_finder)
-        allow(helper).to receive(:merge_requests_finder).and_return(merge_requests_finder)
-      end
-
-      it 'returns the cached value when called for the same issuable type & with the same params' do
-        expect(issues_finder).to receive(:count_by_state).and_return(opened: 42)
-
-        expect(helper.issuables_state_counter_text(:issues, :opened))
-          .to eq('<span>Open</span> <span class="badge">42</span>')
-
-        expect(issues_finder).not_to receive(:count_by_state)
-
-        expect(helper.issuables_state_counter_text(:issues, :opened))
-          .to eq('<span>Open</span> <span class="badge">42</span>')
-      end
-
-      it 'takes confidential status into account when searching for issues' do
-        expect(issues_finder).to receive(:count_by_state).and_return(opened: 42)
-
-        expect(helper.issuables_state_counter_text(:issues, :opened))
-          .to include('42')
-
-        expect(issues_finder).to receive(:user_cannot_see_confidential_issues?).twice.and_return(false)
-        expect(issues_finder).to receive(:count_by_state).and_return(opened: 40)
-
-        expect(helper.issuables_state_counter_text(:issues, :opened))
-          .to include('40')
-
-        expect(issues_finder).to receive(:user_can_see_all_confidential_issues?).and_return(true)
-        expect(issues_finder).to receive(:count_by_state).and_return(opened: 45)
-
-        expect(helper.issuables_state_counter_text(:issues, :opened))
-          .to include('45')
-      end
-
-      it 'does not take confidential status into account when searching for merge requests' do
-        expect(merge_requests_finder).to receive(:count_by_state).and_return(opened: 42)
-        expect(merge_requests_finder).not_to receive(:user_cannot_see_confidential_issues?)
-        expect(merge_requests_finder).not_to receive(:user_can_see_all_confidential_issues?)
-
-        expect(helper.issuables_state_counter_text(:merge_requests, :opened))
-          .to include('42')
-      end
-
-      it 'does not take some keys into account in the cache key' do
-        expect(issues_finder).to receive(:count_by_state).and_return(opened: 42)
-        expect(issues_finder).to receive(:params).and_return({
-          author_id: '11',
-          state: 'foo',
-          sort: 'foo',
-          utf8: 'foo',
-          page: 'foo'
-        }.with_indifferent_access)
-
-        expect(helper.issuables_state_counter_text(:issues, :opened))
-          .to eq('<span>Open</span> <span class="badge">42</span>')
-
-        expect(issues_finder).not_to receive(:count_by_state)
-        expect(issues_finder).to receive(:params).and_return({
-          author_id: '11',
-          state: 'bar',
-          sort: 'bar',
-          utf8: 'bar',
-          page: 'bar'
-        }.with_indifferent_access)
-
-        expect(helper.issuables_state_counter_text(:issues, :opened))
-          .to eq('<span>Open</span> <span class="badge">42</span>')
-      end
-
-      it 'does not take params order into account in the cache key' do
-        expect(issues_finder).to receive(:params).and_return('author_id' => '11', 'state' => 'opened')
-        expect(issues_finder).to receive(:count_by_state).and_return(opened: 42)
-
-        expect(helper.issuables_state_counter_text(:issues, :opened))
-          .to eq('<span>Open</span> <span class="badge">42</span>')
-
-        expect(issues_finder).to receive(:params).and_return('state' => 'opened', 'author_id' => '11')
-        expect(issues_finder).not_to receive(:count_by_state)
-
-        expect(helper.issuables_state_counter_text(:issues, :opened))
-          .to eq('<span>Open</span> <span class="badge">42</span>')
+        expect(helper.issuables_state_counter_text(:merge_requests, :all, true))
+          .to eq('<span>All</span> <span class="badge badge-pill">42</span>')
       end
     end
   end
@@ -207,34 +131,13 @@ describe IssuablesHelper do
     end
   end
 
-  describe '#issuable_filter_present?' do
-    it 'returns true when any key is present' do
-      allow(helper).to receive(:params).and_return(
-        ActionController::Parameters.new(milestone_title: 'Velit consectetur asperiores natus delectus.',
-                                         project_id: 'gitlabhq',
-                                         scope: 'all')
-      )
-
-      expect(helper.issuable_filter_present?).to be_truthy
-    end
-
-    it 'returns false when no key is present' do
-      allow(helper).to receive(:params).and_return(
-        ActionController::Parameters.new(project_id: 'gitlabhq',
-                                         scope: 'all')
-      )
-
-      expect(helper.issuable_filter_present?).to be_falsey
-    end
-  end
-
   describe '#updated_at_by' do
     let(:user) { create(:user) }
     let(:unedited_issuable) { create(:issue) }
-    let(:edited_issuable) { create(:issue, last_edited_by: user, created_at: 3.days.ago, updated_at: 2.days.ago, last_edited_at: 2.days.ago) }
+    let(:edited_issuable) { create(:issue, last_edited_by: user, created_at: 3.days.ago, updated_at: 1.day.ago, last_edited_at: 2.days.ago) }
     let(:edited_updated_at_by) do
       {
-        updatedAt: edited_issuable.updated_at.to_time.iso8601,
+        updatedAt: edited_issuable.last_edited_at.to_time.iso8601,
         updatedBy: {
           name: user.name,
           path: user_path(user)
@@ -248,7 +151,7 @@ describe IssuablesHelper do
     context 'when updated by a deleted user' do
       let(:edited_updated_at_by) do
         {
-          updatedAt: edited_issuable.updated_at.to_time.iso8601,
+          updatedAt: edited_issuable.last_edited_at.to_time.iso8601,
           updatedBy: {
             name: User.ghost.name,
             path: user_path(User.ghost)
@@ -257,11 +160,243 @@ describe IssuablesHelper do
       end
 
       before do
-        user.destroy
+        user.destroy!
       end
 
       it 'returns "Ghost user" as edited_by' do
         expect(helper.updated_at_by(edited_issuable.reload)).to eq(edited_updated_at_by)
+      end
+    end
+  end
+
+  describe '#issuable_initial_data' do
+    let(:user) { create(:user) }
+
+    before do
+      allow(helper).to receive(:current_user).and_return(user)
+      allow(helper).to receive(:can?).and_return(true)
+      stub_commonmark_sourcepos_disabled
+    end
+
+    it 'returns the correct data for an issue' do
+      issue = create(:issue, author: user, description: 'issue text')
+      @project = issue.project
+
+      expected_data = {
+        endpoint: "/#{@project.full_path}/-/issues/#{issue.iid}",
+        updateEndpoint: "/#{@project.full_path}/-/issues/#{issue.iid}.json",
+        canUpdate: true,
+        canDestroy: true,
+        issuableRef: "##{issue.iid}",
+        markdownPreviewPath: "/#{@project.full_path}/preview_markdown",
+        markdownDocsPath: '/help/user/markdown',
+        lockVersion: issue.lock_version,
+        projectPath: @project.path,
+        projectNamespace: @project.namespace.path,
+        initialTitleHtml: issue.title,
+        initialTitleText: issue.title,
+        initialDescriptionHtml: '<p dir="auto">issue text</p>',
+        initialDescriptionText: 'issue text',
+        initialTaskStatus: '0 of 0 tasks completed',
+        issueType: 'issue',
+        iid: issue.iid.to_s
+      }
+      expect(helper.issuable_initial_data(issue)).to match(hash_including(expected_data))
+    end
+
+    describe '#sentryIssueIdentifier' do
+      let(:issue) { create(:issue, author: user) }
+
+      before do
+        assign(:project, issue.project)
+      end
+
+      it 'sets sentryIssueIdentifier to nil with no sentry issue ' do
+        expect(helper.issuable_initial_data(issue)[:sentryIssueIdentifier])
+          .to be_nil
+      end
+
+      it 'sets sentryIssueIdentifier to sentry_issue_identifier' do
+        sentry_issue = create(:sentry_issue, issue: issue)
+
+        expect(helper.issuable_initial_data(issue)[:sentryIssueIdentifier])
+          .to eq(sentry_issue.sentry_issue_identifier)
+      end
+    end
+
+    describe '#zoomMeetingUrl in issue' do
+      let(:issue) { create(:issue, author: user) }
+
+      before do
+        assign(:project, issue.project)
+      end
+
+      shared_examples 'sets zoomMeetingUrl to nil' do
+        specify do
+          expect(helper.issuable_initial_data(issue)[:zoomMeetingUrl])
+            .to be_nil
+        end
+      end
+
+      context 'with no "added" zoom mettings' do
+        it_behaves_like 'sets zoomMeetingUrl to nil'
+
+        context 'with multiple removed meetings' do
+          before do
+            create(:zoom_meeting, issue: issue, issue_status: :removed)
+            create(:zoom_meeting, issue: issue, issue_status: :removed)
+          end
+
+          it_behaves_like 'sets zoomMeetingUrl to nil'
+        end
+      end
+
+      context 'with "added" zoom meeting' do
+        before do
+          create(:zoom_meeting, issue: issue)
+        end
+
+        shared_examples 'sets zoomMeetingUrl to canonical meeting url' do
+          specify do
+            expect(helper.issuable_initial_data(issue))
+              .to include(zoomMeetingUrl: 'https://zoom.us/j/123456789')
+          end
+        end
+
+        it_behaves_like 'sets zoomMeetingUrl to canonical meeting url'
+
+        context 'with muliple "removed" zoom meetings' do
+          before do
+            create(:zoom_meeting, issue: issue, issue_status: :removed)
+            create(:zoom_meeting, issue: issue, issue_status: :removed)
+          end
+
+          it_behaves_like 'sets zoomMeetingUrl to canonical meeting url'
+        end
+      end
+    end
+  end
+
+  describe '#assignee_sidebar_data' do
+    let(:user) { create(:user) }
+    let(:merge_request) { nil }
+
+    subject { helper.assignee_sidebar_data(user, merge_request: merge_request) }
+
+    it 'returns hash of assignee data' do
+      is_expected.to eql({
+        avatar_url: user.avatar_url,
+        name: user.name,
+        username: user.username
+      })
+    end
+
+    context 'with merge_request' do
+      let(:merge_request) { build_stubbed(:merge_request) }
+
+      where(can_merge: [true, false])
+
+      with_them do
+        before do
+          allow(merge_request).to receive(:can_be_merged_by?).and_return(can_merge)
+        end
+
+        it { is_expected.to include({ can_merge: can_merge })}
+      end
+    end
+  end
+
+  describe '#reviewer_sidebar_data' do
+    let(:user) { create(:user) }
+
+    subject { helper.reviewer_sidebar_data(user, merge_request: merge_request) }
+
+    context 'without merge_request' do
+      let(:merge_request) { nil }
+
+      it 'returns hash of reviewer data' do
+        is_expected.to eql({
+          avatar_url: user.avatar_url,
+          name: user.name,
+          username: user.username
+        })
+      end
+    end
+
+    context 'with merge_request' do
+      let(:merge_request) { build(:merge_request) }
+
+      where(can_merge: [true, false])
+
+      with_them do
+        before do
+          allow(merge_request).to receive(:can_be_merged_by?).and_return(can_merge)
+        end
+
+        it { is_expected.to include({ can_merge: can_merge })}
+      end
+    end
+  end
+
+  describe '#issuable_squash_option?' do
+    using RSpec::Parameterized::TableSyntax
+
+    where(:issuable_persisted, :squash, :squash_enabled_by_default, :expectation) do
+      true  | true  | true  | true
+      true  | false | true  | false
+      false | false | false | false
+      false | false | true  | true
+      false | true  | false | false
+      false | true  | true  | true
+    end
+
+    with_them do
+      it 'returns the correct value' do
+        project = double(
+          squash_enabled_by_default?: squash_enabled_by_default
+        )
+        issuable = double(persisted?: issuable_persisted, squash: squash)
+
+        expect(helper.issuable_squash_option?(issuable, project)).to eq(expectation)
+      end
+    end
+  end
+
+  describe '#sidebar_milestone_tooltip_label' do
+    it 'escapes HTML in the milestone title' do
+      milestone = build(:milestone, title: '&lt;img onerror=alert(1)&gt;')
+
+      expect(helper.sidebar_milestone_tooltip_label(milestone)).to eq('&lt;img onerror=alert(1)&gt;<br/>Milestone')
+    end
+  end
+
+  describe '#serialize_issuable' do
+    context 'when it is a merge request' do
+      let(:merge_request) { build(:merge_request) }
+      let(:user) { build(:user) }
+
+      before do
+        allow(helper).to receive(:current_user) { user }
+      end
+
+      it 'has suggest_pipeline experiment enabled' do
+        allow(helper).to receive(:experiment_enabled?).with(:suggest_pipeline) { true }
+
+        expect_next_instance_of(MergeRequestSerializer) do |serializer|
+          expect(serializer).to receive(:represent).with(merge_request, { serializer: 'widget', experiment_enabled: :suggest_pipeline })
+        end
+
+        helper.serialize_issuable(merge_request, serializer: 'widget')
+      end
+
+      it 'suggest_pipeline experiment disabled' do
+        allow(helper).to receive(:experiment_enabled?).with(:suggest_pipeline) { false }
+
+        expect_next_instance_of(MergeRequestSerializer) do |serializer|
+          expect(serializer).to receive(:represent).with(merge_request, { serializer: 'widget' })
+        end
+
+        helper.serialize_issuable(merge_request, serializer: 'widget')
       end
     end
   end

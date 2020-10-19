@@ -1,11 +1,12 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Find file keyboard shortcuts', js: true do
-  let(:user) { create(:user) }
+RSpec.describe 'Projects > Files > Find file keyboard shortcuts', :js do
   let(:project) { create(:project, :repository) }
+  let(:user) { project.owner }
 
   before do
-    project.team << [user, :master]
     sign_in user
 
     visit project_find_file_path(project, project.repository.root_ref)

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Uniquify do
+RSpec.describe Uniquify do
   let(:uniquify) { described_class.new }
 
   describe "#string" do
@@ -18,6 +20,15 @@ describe Uniquify do
 
     it 'increments the counter for each candidate string that also exists' do
       result = uniquify.string('test_string') { |s| s == 'test_string' || s == 'test_string1' }
+
+      expect(result).to eq('test_string2')
+    end
+
+    it 'allows to pass an initial value for the counter' do
+      start_counting_from = 2
+      uniquify = described_class.new(start_counting_from)
+
+      result = uniquify.string('test_string') { |s| s == 'test_string' }
 
       expect(result).to eq('test_string2')
     end

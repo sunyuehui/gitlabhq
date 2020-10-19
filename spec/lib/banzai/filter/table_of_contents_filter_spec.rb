@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::TableOfContentsFilter do
+RSpec.describe Banzai::Filter::TableOfContentsFilter do
   include FilterSpecHelper
 
   def header(level, text)
@@ -58,6 +60,16 @@ describe Banzai::Filter::TableOfContentsFilter do
         expect(doc.css('h1 a').first.attr('href')).to eq '#this-header-is-filled-with-punctuation'
       end
 
+      it 'removes any leading or trailing spaces' do
+        doc = filter(header(1, " \r\n\tTitle with spaces\r\n\t "))
+        expect(doc.css('h1 a').first.attr('href')).to eq '#title-with-spaces'
+      end
+
+      it 'removes a product suffix' do
+        doc = filter(header(1, "Title with spaces (ULTIMATE)"))
+        expect(doc.css('h1 a').first.attr('href')).to eq '#title-with-spaces'
+      end
+
       it 'appends a unique number to duplicates' do
         doc = filter(header(1, 'One') + header(2, 'One'))
 
@@ -65,10 +77,19 @@ describe Banzai::Filter::TableOfContentsFilter do
         expect(doc.css('h2 a').first.attr('href')).to eq '#one-1'
       end
 
+      it 'prepends a prefix to digits-only ids' do
+        doc = filter(header(1, "123") + header(2, "1.0"))
+
+        expect(doc.css('h1 a').first.attr('href')).to eq '#anchor-123'
+        expect(doc.css('h2 a').first.attr('href')).to eq '#anchor-10'
+      end
+
       it 'supports Unicode' do
         doc = filter(header(1, '한글'))
         expect(doc.css('h1 a').first.attr('id')).to eq 'user-content-한글'
-        expect(doc.css('h1 a').first.attr('href')).to eq '#한글'
+        # check that we encode the href to avoid issues with the
+        # ExternalLinkFilter (see https://gitlab.com/gitlab-org/gitlab/issues/26210)
+        expect(doc.css('h1 a').first.attr('href')).to eq "##{CGI.escape('한글')}"
       end
     end
   end
@@ -95,6 +116,51 @@ describe Banzai::Filter::TableOfContentsFilter do
       expect(links.first.text).to eq 'Header 1'
       expect(links.last.attr('href')).to eq '#header-2'
       expect(links.last.text).to eq 'Header 2'
+    end
+
+    context 'table of contents nesting' do
+      let(:results) do
+        result(
+          header(1, 'Header 1') +
+          header(2, 'Header 1-1') +
+          header(3, 'Header 1-1-1') +
+          header(2, 'Header 1-2') +
+          header(1, 'Header 2') +
+          header(2, 'Header 2-1')
+        )
+      end
+
+      it 'keeps list levels regarding header levels' do
+        items = doc.css('li')
+
+        # Header 1
+        expect(items[0].ancestors).to satisfy_none { |node| node.name == 'li' }
+
+        # Header 1-1
+        expect(items[1].ancestors).to include(items[0])
+
+        # Header 1-1-1
+        expect(items[2].ancestors).to include(items[0], items[1])
+
+        # Header 1-2
+        expect(items[3].ancestors).to include(items[0])
+        expect(items[3].ancestors).not_to include(items[1])
+
+        # Header 2
+        expect(items[4].ancestors).to satisfy_none { |node| node.name == 'li' }
+
+        # Header 2-1
+        expect(items[5].ancestors).to include(items[4])
+      end
+    end
+
+    context 'header text contains escaped content' do
+      let(:content) { '&lt;img src="x" onerror="alert(42)"&gt;' }
+      let(:results) { result(header(1, content)) }
+
+      it 'outputs escaped content' do
+        expect(doc.inner_html).to include(content)
+      end
     end
   end
 end

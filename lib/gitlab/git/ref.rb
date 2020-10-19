@@ -1,9 +1,10 @@
-# Gitaly note: JV: probably no RPC's here (just one interaction with Rugged).
+# frozen_string_literal: true
 
 module Gitlab
   module Git
     class Ref
       include Gitlab::EncodingHelper
+      include Gitlab::Git::RuggedImpl::Ref
 
       # Branch or tag name
       # without "refs/tags|heads" prefix
@@ -23,19 +24,12 @@ module Gitlab
       # Ex.
       #   Ref.extract_branch_name('refs/heads/master') #=> 'master'
       def self.extract_branch_name(str)
-        str.gsub(/\Arefs\/heads\//, '')
+        str.gsub(%r{\Arefs/heads/}, '')
       end
 
-      # Gitaly: this method will probably be migrated indirectly via its call sites.
-      def self.dereference_object(object)
-        object = object.target while object.is_a?(Rugged::Tag::Annotation)
-
-        object
-      end
-
-      def initialize(repository, name, target, derefenced_target)
+      def initialize(repository, name, target, dereferenced_target)
         @name = Gitlab::Git.ref_name(name)
-        @dereferenced_target = derefenced_target
+        @dereferenced_target = dereferenced_target
         @target = if target.respond_to?(:oid)
                     target.oid
                   elsif target.respond_to?(:name)

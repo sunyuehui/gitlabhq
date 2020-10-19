@@ -1,34 +1,36 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'doorkeeper access' do
+RSpec.describe 'doorkeeper access' do
   let!(:user) { create(:user) }
   let!(:application) { Doorkeeper::Application.create!(name: "MyApp", redirect_uri: "https://app.com", owner: user) }
   let!(:token) { Doorkeeper::AccessToken.create! application_id: application.id, resource_owner_id: user.id, scopes: "api" }
 
   describe "unauthenticated" do
     it "returns authentication success" do
-      get api("/user"), access_token: token.token
-      expect(response).to have_http_status(200)
+      get api("/user"), params: { access_token: token.token }
+      expect(response).to have_gitlab_http_status(:ok)
     end
 
     include_examples 'user login request with unique ip limit' do
       def request
-        get api('/user'), access_token: token.token
+        get api('/user'), params: { access_token: token.token }
       end
     end
   end
 
   describe "when token invalid" do
     it "returns authentication error" do
-      get api("/user"), access_token: "123a"
-      expect(response).to have_http_status(401)
+      get api("/user"), params: { access_token: "123a" }
+      expect(response).to have_gitlab_http_status(:unauthorized)
     end
   end
 
-  describe "authorization by private token" do
+  describe "authorization by OAuth token" do
     it "returns authentication success" do
       get api("/user", user)
-      expect(response).to have_http_status(200)
+      expect(response).to have_gitlab_http_status(:ok)
     end
 
     include_examples 'user login request with unique ip limit' do
@@ -38,21 +40,43 @@ describe 'doorkeeper access' do
     end
   end
 
-  describe "when user is blocked" do
-    it "returns authentication error" do
-      user.block
-      get api("/user"), access_token: token.token
+  shared_examples 'forbidden request' do
+    it 'returns 403 response' do
+      get api("/user"), params: { access_token: token.token }
 
-      expect(response).to have_http_status(401)
+      expect(response).to have_gitlab_http_status(:forbidden)
     end
   end
 
-  describe "when user is ldap_blocked" do
-    it "returns authentication error" do
-      user.ldap_block
-      get api("/user"), access_token: token.token
-
-      expect(response).to have_http_status(401)
+  context "when user is blocked" do
+    before do
+      user.block
     end
+
+    it_behaves_like 'forbidden request'
+  end
+
+  context "when user is ldap_blocked" do
+    before do
+      user.ldap_block
+    end
+
+    it_behaves_like 'forbidden request'
+  end
+
+  context "when user is deactivated" do
+    before do
+      user.deactivate
+    end
+
+    it_behaves_like 'forbidden request'
+  end
+
+  context 'when user is blocked pending approval' do
+    before do
+      user.block_pending_approval
+    end
+
+    it_behaves_like 'forbidden request'
   end
 end

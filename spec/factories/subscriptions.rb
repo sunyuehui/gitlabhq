@@ -1,7 +1,9 @@
-FactoryGirl.define do
+# frozen_string_literal: true
+
+FactoryBot.define do
   factory :subscription do
-    user
     project
+    user { project.creator }
     subscribable factory: :issue
   end
 end

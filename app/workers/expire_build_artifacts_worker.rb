@@ -1,13 +1,15 @@
-class ExpireBuildArtifactsWorker
-  include Sidekiq::Worker
+# frozen_string_literal: true
+
+class ExpireBuildArtifactsWorker # rubocop:disable Scalability/IdempotentWorker
+  include ApplicationWorker
+  # rubocop:disable Scalability/CronWorkerContext
+  # This worker does not perform work scoped to a context
   include CronjobQueue
+  # rubocop:enable Scalability/CronWorkerContext
+
+  feature_category :continuous_integration
 
   def perform
-    Rails.logger.info 'Scheduling removal of build artifacts'
-
-    build_ids = Ci::Build.with_expired_artifacts.pluck(:id)
-    build_ids = build_ids.map { |build_id| [build_id] }
-
-    Sidekiq::Client.push_bulk('class' => ExpireBuildInstanceArtifactsWorker, 'args' => build_ids )
+    Ci::DestroyExpiredJobArtifactsService.new.execute
   end
 end

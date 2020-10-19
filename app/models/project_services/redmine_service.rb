@@ -1,22 +1,14 @@
-class RedmineService < IssueTrackerService
-  validates :project_url, :issues_url, :new_issue_url, presence: true, url: true, if: :activated?
+# frozen_string_literal: true
 
-  prop_accessor :title, :description, :project_url, :issues_url, :new_issue_url
+class RedmineService < IssueTrackerService
+  validates :project_url, :issues_url, :new_issue_url, presence: true, public_url: true, if: :activated?
 
   def title
-    if self.properties && self.properties['title'].present?
-      self.properties['title']
-    else
-      'Redmine'
-    end
+    'Redmine'
   end
 
   def description
-    if self.properties && self.properties['description'].present?
-      self.properties['description']
-    else
-      'Redmine issue tracker'
-    end
+    s_('IssueTracker|Redmine issue tracker')
   end
 
   def self.to_param

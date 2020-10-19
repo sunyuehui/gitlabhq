@@ -1,60 +1,116 @@
-/* eslint-disable comma-dangle, max-len, no-useless-return, no-param-reassign, max-len */
+/* eslint-disable no-useless-return */
+
+import $ from 'jquery';
 import Api from '../api';
-
 import TemplateSelector from '../blob/template_selector';
+import { __ } from '~/locale';
 
-((global) => {
-  class IssuableTemplateSelector extends TemplateSelector {
-    constructor(...args) {
-      super(...args);
-      this.projectPath = this.dropdown.data('project-path');
-      this.namespacePath = this.dropdown.data('namespace-path');
-      this.issuableType = this.$dropdownContainer.data('issuable-type');
-      this.titleInput = $(`#${this.issuableType}_title`);
+export default class IssuableTemplateSelector extends TemplateSelector {
+  constructor(...args) {
+    super(...args);
 
-      const initialQuery = {
-        name: this.dropdown.data('selected')
-      };
+    this.projectPath = this.dropdown.data('projectPath');
+    this.namespacePath = this.dropdown.data('namespacePath');
+    this.issuableType = this.$dropdownContainer.data('issuableType');
+    this.titleInput = $(`#${this.issuableType}_title`);
+    this.templateWarningEl = $('.js-issuable-template-warning');
+    this.warnTemplateOverride = args[0].warnTemplateOverride;
 
-      if (initialQuery.name) this.requestFile(initialQuery);
+    const initialQuery = {
+      name: this.dropdown.data('selected'),
+    };
 
-      $('.reset-template', this.dropdown.parent()).on('click', () => {
-        this.setInputValueToTemplateContent();
-      });
+    if (initialQuery.name) this.requestFile(initialQuery);
 
-      $('.no-template', this.dropdown.parent()).on('click', () => {
-        this.currentTemplate.content = '';
-        this.setInputValueToTemplateContent();
-        $('.dropdown-toggle-text', this.dropdown).text('Choose a template');
-      });
-    }
+    $('.reset-template', this.dropdown.parent()).on('click', () => {
+      this.setInputValueToTemplateContent();
+    });
 
-    requestFile(query) {
-      this.startLoadingSpinner();
-      Api.issueTemplate(this.namespacePath, this.projectPath, query.name, this.issuableType, (err, currentTemplate) => {
-        this.currentTemplate = currentTemplate;
-        if (err) return; // Error handled by global AJAX error handler
-        this.stopLoadingSpinner();
-        this.setInputValueToTemplateContent();
-      });
-      return;
-    }
+    $('.no-template', this.dropdown.parent()).on('click', () => {
+      this.reset();
+    });
 
-    setInputValueToTemplateContent() {
-      // `this.setEditorContent` sets the value of the description input field
-      // to the content of the template selected.
-      if (this.titleInput.val() === '') {
-        // If the title has not yet been set, focus the title input and
-        // skip focusing the description input by setting `true` as the
-        // `skipFocus` option to `setEditorContent`.
-        this.setEditorContent(this.currentTemplate, { skipFocus: true });
-        this.titleInput.focus();
+    this.templateWarningEl.find('.js-close-btn').on('click', () => {
+      // Explicitly check against 0 value
+      if (this.previousSelectedIndex !== undefined) {
+        this.dropdown.data('deprecatedJQueryDropdown').selectRowAtIndex(this.previousSelectedIndex);
       } else {
-        this.setEditorContent(this.currentTemplate, { skipFocus: false });
+        this.reset();
       }
-      return;
-    }
+
+      this.templateWarningEl.addClass('hidden');
+    });
+
+    this.templateWarningEl.find('.js-override-template').on('click', () => {
+      this.requestFile(this.overridingTemplate);
+      this.setSelectedIndex();
+
+      this.templateWarningEl.addClass('hidden');
+      this.overridingTemplate = null;
+    });
   }
 
-  global.IssuableTemplateSelector = IssuableTemplateSelector;
-})(window.gl || (window.gl = {}));
+  reset() {
+    if (this.currentTemplate) {
+      this.currentTemplate.content = '';
+    }
+
+    this.setInputValueToTemplateContent();
+    $('.dropdown-toggle-text', this.dropdown).text(__('Choose a template'));
+    this.previousSelectedIndex = null;
+  }
+
+  setSelectedIndex() {
+    this.previousSelectedIndex = this.dropdown.data('deprecatedJQueryDropdown').selectedIndex;
+  }
+
+  onDropdownClicked(query) {
+    const content = this.getEditorContent();
+    const isContentUnchanged =
+      content === '' || (this.currentTemplate && content === this.currentTemplate.content);
+
+    if (!this.warnTemplateOverride || isContentUnchanged) {
+      super.onDropdownClicked(query);
+      this.setSelectedIndex();
+
+      return;
+    }
+
+    this.overridingTemplate = query.selectedObj;
+    this.templateWarningEl.removeClass('hidden');
+  }
+
+  requestFile(query) {
+    this.startLoadingSpinner();
+
+    Api.issueTemplate(
+      this.namespacePath,
+      this.projectPath,
+      query.name,
+      this.issuableType,
+      (err, currentTemplate) => {
+        this.currentTemplate = currentTemplate;
+        this.stopLoadingSpinner();
+        if (err) return; // Error handled by global AJAX error handler
+        this.setInputValueToTemplateContent();
+      },
+    );
+    return;
+  }
+
+  setInputValueToTemplateContent() {
+    // `this.setEditorContent` sets the value of the description input field
+    // to the content of the template selected.
+    if (this.titleInput.val() === '') {
+      // If the title has not yet been set, focus the title input and
+      // skip focusing the description input by setting `true` as the
+      // `skipFocus` option to `setEditorContent`.
+      this.setEditorContent(this.currentTemplate, { skipFocus: true });
+      this.titleInput.focus();
+    } else {
+      this.setEditorContent(this.currentTemplate, { skipFocus: false });
+    }
+
+    return;
+  }
+}

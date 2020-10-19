@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Search::GlobalService do
+RSpec.describe Search::GlobalService do
   let(:user) { create(:user) }
   let(:internal_user) { create(:user) }
 
@@ -10,7 +12,7 @@ describe Search::GlobalService do
   let!(:public_project)   { create(:project, :public, name: 'searchable_public_project') }
 
   before do
-    found_project.add_master(user)
+    found_project.add_maintainer(user)
   end
 
   describe '#execute' do
@@ -35,10 +37,48 @@ describe Search::GlobalService do
         expect(results.objects('projects')).to match_array [internal_project, public_project]
       end
 
-      it 'namespace name is searchable' do
-        results = described_class.new(user, search: found_project.namespace.path).execute
+      it 'project name is searchable' do
+        results = described_class.new(user, search: found_project.name).execute
 
         expect(results.objects('projects')).to match_array [found_project]
+      end
+
+      it 'does not return archived projects' do
+        archived_project = create(:project, :public, archived: true, name: 'archived_project')
+
+        results = described_class.new(user, search: "archived").execute
+
+        expect(results.objects('projects')).not_to include(archived_project)
+      end
+    end
+  end
+
+  context 'issues' do
+    let(:scope) { 'issues' }
+
+    context 'sort by created_at' do
+      let!(:project) { create(:project, :public) }
+      let!(:old_result) { create(:issue, project: project, title: 'sorted old', created_at: 1.month.ago) }
+      let!(:new_result) { create(:issue, project: project, title: 'sorted recent', created_at: 1.day.ago) }
+      let!(:very_old_result) { create(:issue, project: project, title: 'sorted very old', created_at: 1.year.ago) }
+
+      include_examples 'search results sorted' do
+        let(:results) { described_class.new(nil, search: 'sorted', sort: sort).execute }
+      end
+    end
+  end
+
+  context 'merge_request' do
+    let(:scope) { 'merge_requests' }
+
+    context 'sort by created_at' do
+      let!(:project) { create(:project, :public) }
+      let!(:old_result) { create(:merge_request, :opened, source_project: project, source_branch: 'old-1', title: 'sorted old', created_at: 1.month.ago) }
+      let!(:new_result) { create(:merge_request, :opened, source_project: project, source_branch: 'new-1', title: 'sorted recent', created_at: 1.day.ago) }
+      let!(:very_old_result) { create(:merge_request, :opened, source_project: project, source_branch: 'very-old-1', title: 'sorted very old', created_at: 1.year.ago) }
+
+      include_examples 'search results sorted' do
+        let(:results) { described_class.new(nil, search: 'sorted', sort: sort).execute }
       end
     end
   end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'projects/pipelines/_stage' do
+RSpec.describe 'projects/pipelines/_stage' do
   let(:project) { create(:project, :repository) }
   let(:pipeline) { create(:ci_pipeline, project: project) }
   let(:stage) { build(:ci_stage, pipeline: pipeline) }
@@ -52,7 +54,7 @@ describe 'projects/pipelines/_stage' do
 
   context 'when there are multiple builds' do
     before do
-      HasStatus::AVAILABLE_STATUSES.each do |status|
+      Ci::HasStatus::AVAILABLE_STATUSES.each do |status|
         create_build(status)
       end
     end
@@ -60,7 +62,7 @@ describe 'projects/pipelines/_stage' do
     it 'shows them in order' do
       render
 
-      expect(rendered).to have_text(HasStatus::ORDERED_STATUSES.join(" "))
+      expect(rendered).to have_text(Ci::HasStatus::ORDERED_STATUSES.join(" "))
     end
 
     def create_build(status)

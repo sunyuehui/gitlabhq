@@ -3,19 +3,27 @@
   color: $gl-text-color;
   border: 1px solid $border-color;
   border-radius: $border-radius-default;
-  margin-bottom: $gl-padding;
 
-  .well-segment {
+  .card.card-body-segment {
     padding: $gl-padding;
 
     &:not(:last-of-type) {
       border-bottom: 1px solid $well-inner-border;
     }
 
+    &.borderless {
+      border-bottom: 0;
+    }
+
     &.branch-info {
       .commit-sha,
       .commit-info {
         margin-left: 4px;
+
+        .fork-svg {
+          margin-right: 4px;
+          vertical-align: bottom;
+        }
       }
 
       .ref-name {
@@ -49,8 +57,43 @@
     }
   }
 
-  .label.label-gray {
+  .label-gray {
     background-color: $well-expand-item;
+  }
+
+  .branches {
+    display: inline;
+  }
+
+  .branch-link {
+    margin-bottom: 2px;
+  }
+
+  .limit-box {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    background-color: $red-100;
+    border-radius: $border-radius-default;
+    text-align: center;
+
+    &:hover {
+      background-color: $red-200;
+    }
+
+    .limit-icon {
+      margin: 0 4px;
+    }
+
+    .limit-message {
+      line-height: 16px;
+      margin-right: 8px;
+      font-size: 12px;
+    }
+  }
+
+  svg {
+    vertical-align: text-top;
   }
 }
 
@@ -61,15 +104,11 @@
 
 .dark-well {
   background-color: $gray-normal;
-
-  .btn {
-    width: 100%;
-  }
 }
 
-.well-centered {
+.card.card-body-centered {
   h1 {
-    font-weight: normal;
+    font-weight: $gl-font-weight-normal;
     text-align: center;
     font-size: 48px;
   }

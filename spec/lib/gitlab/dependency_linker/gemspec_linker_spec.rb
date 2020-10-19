@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::GemspecLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::GemspecLinker do
   describe '.support?' do
     it 'supports *.gemspec' do
       expect(described_class.support?('gitlab_git.gemspec')).to be_truthy
@@ -43,8 +45,8 @@ describe Gitlab::DependencyLinker::GemspecLinker do
       %{<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>}
     end
 
-    it 'links the gem name' do
-      expect(subject).to include(link('gitlab_git', 'https://rubygems.org/gems/gitlab_git'))
+    it 'does not link the gem name' do
+      expect(subject).not_to include(link('gitlab_git', 'https://rubygems.org/gems/gitlab_git'))
     end
 
     it 'links the license' do

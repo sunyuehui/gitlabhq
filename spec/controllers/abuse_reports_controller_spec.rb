@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe AbuseReportsController do
+RSpec.describe AbuseReportsController do
   let(:reporter) { create(:user) }
   let(:user)     { create(:user) }
   let(:attrs) do
@@ -19,10 +21,10 @@ describe AbuseReportsController do
         user_id = user.id
         user.destroy
 
-        get :new, { user_id: user_id }
+        get :new, params: { user_id: user_id }
 
         expect(response).to redirect_to root_path
-        expect(flash[:alert]).to eq('Cannot create the abuse report. The user has been deleted.')
+        expect(flash[:alert]).to eq(_('Cannot create the abuse report. The user has been deleted.'))
       end
     end
 
@@ -30,10 +32,10 @@ describe AbuseReportsController do
       it 'redirects the reporter to the user\'s profile' do
         user.block
 
-        get :new, { user_id: user.id }
+        get :new, params: { user_id: user.id }
 
         expect(response).to redirect_to user
-        expect(flash[:alert]).to eq('Cannot create the abuse report. This user has been blocked.')
+        expect(flash[:alert]).to eq(_('Cannot create the abuse report. This user has been blocked.'))
       end
     end
   end
@@ -42,18 +44,20 @@ describe AbuseReportsController do
     context 'with valid attributes' do
       it 'saves the abuse report' do
         expect do
-          post :create, abuse_report: attrs
+          post :create, params: { abuse_report: attrs }
         end.to change { AbuseReport.count }.by(1)
       end
 
       it 'calls notify' do
-        expect_any_instance_of(AbuseReport).to receive(:notify)
+        expect_next_instance_of(AbuseReport) do |instance|
+          expect(instance).to receive(:notify)
+        end
 
-        post :create, abuse_report: attrs
+        post :create, params: { abuse_report: attrs }
       end
 
       it 'redirects back to the reported user' do
-        post :create, abuse_report: attrs
+        post :create, params: { abuse_report: attrs }
 
         expect(response).to redirect_to user
       end
@@ -62,7 +66,7 @@ describe AbuseReportsController do
     context 'with invalid attributes' do
       it 'renders new' do
         attrs.delete(:user_id)
-        post :create, abuse_report: attrs
+        post :create, params: { abuse_report: attrs }
 
         expect(response).to render_template(:new)
       end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe BlobViewer::PodspecJson do
+RSpec.describe BlobViewer::PodspecJson do
   include FakeBlobHelpers
 
   let(:project) { build_stubbed(:project) }
@@ -12,7 +14,9 @@ describe BlobViewer::PodspecJson do
       }
     SPEC
   end
+
   let(:blob) { fake_blob(path: 'AFNetworking.podspec.json', data: data) }
+
   subject { described_class.new(blob) }
 
   describe '#package_name' do

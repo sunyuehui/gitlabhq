@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module DiffHelper
   def mark_inline_diffs(old_line, new_line)
     old_diffs, new_diffs = Gitlab::Diff::InlineDiff.new(old_line, new_line).inline_diffs
@@ -27,37 +29,47 @@ module DiffHelper
     if action_name == 'diff_for_path'
       options[:expanded] = true
       options[:paths] = params.values_at(:old_path, :new_path)
+    elsif action_name == 'show'
+      options[:include_context_commits] = true unless @project.context_commits_enabled?
     end
 
     options
   end
 
   def diff_match_line(old_pos, new_pos, text: '', view: :inline, bottom: false)
-    content = content_tag :td, text, class: "line_content match #{view == :inline ? '' : view}"
-    cls = ['diff-line-num', 'unfold', 'js-unfold']
-    cls << 'js-unfold-bottom' if bottom
+    content_line_class = %w[line_content match]
+    content_line_class << 'parallel' if view == :parallel
 
-    html = ''
+    line_num_class = %w[diff-line-num unfold js-unfold]
+    line_num_class << 'js-unfold-bottom' if bottom
+
+    html = []
+
     if old_pos
-      html << content_tag(:td, '...', class: cls + ['old_line'], data: { linenumber: old_pos })
-      html << content unless view == :inline
+      html << content_tag(:td, '...', class: [*line_num_class, 'old_line'], data: { linenumber: old_pos })
+      html << content_tag(:td, text, class: [*content_line_class, 'left-side']) if view == :parallel
     end
 
     if new_pos
-      html << content_tag(:td, '...', class: cls + ['new_line'], data: { linenumber: new_pos })
-      html << content
+      html << content_tag(:td, '...', class: [*line_num_class, 'new_line'], data: { linenumber: new_pos })
+      html << content_tag(:td, text, class: [*content_line_class, ('right-side' if view == :parallel)])
     end
 
-    html.html_safe
+    html.join.html_safe
   end
 
   def diff_line_content(line)
     if line.blank?
       "&nbsp;".html_safe
     else
-      # We can't use `sub` because the HTML-safeness of `line` will not survive.
-      line[0] = '' if line.start_with?('+', '-', ' ')
-      line
+      # `sub` and substring-ing would destroy HTML-safeness of `line`
+      if line.start_with?('+', '-', ' ')
+        line.dup.tap do |line|
+          line[0] = ''
+        end
+      else
+        line
+      end
     end
   end
 
@@ -88,34 +100,65 @@ module DiffHelper
   end
 
   def submodule_link(blob, ref, repository = @repository)
-    project_url, tree_url = submodule_links(blob, ref, repository)
-    commit_id = if tree_url.nil?
-                  Commit.truncate_sha(blob.id)
-                else
-                  link_to Commit.truncate_sha(blob.id), tree_url
-                end
+    urls = submodule_links(blob, ref, repository)
+
+    folder_name = truncate(blob.name, length: 40)
+    folder_name = link_to(folder_name, urls.web) if urls&.web
+
+    commit_id = Commit.truncate_sha(blob.id)
+    commit_id = link_to(commit_id, urls.tree) if urls&.tree
 
     [
-      content_tag(:span, link_to(truncate(blob.name, length: 40), project_url)),
+      content_tag(:span, folder_name),
       '@',
       content_tag(:span, commit_id, class: 'commit-sha')
     ].join(' ').html_safe
   end
 
+  def submodule_diff_compare_link(diff_file)
+    compare_url = submodule_links(diff_file.blob, diff_file.content_sha, diff_file.repository, diff_file)&.compare
+
+    link = ""
+
+    if compare_url
+
+      link_text = [
+          _('Compare'),
+          ' ',
+          content_tag(:span, Commit.truncate_sha(diff_file.old_blob.id), class: 'commit-sha'),
+          '...',
+          content_tag(:span, Commit.truncate_sha(diff_file.blob.id), class: 'commit-sha')
+        ].join('').html_safe
+
+      tooltip = _('Compare submodule commit revisions')
+      link = content_tag(:span, link_to(link_text, compare_url, class: 'btn has-tooltip', title: tooltip), class: 'submodule-compare')
+    end
+
+    link
+  end
+
+  def diff_file_blob_raw_url(diff_file, only_path: false)
+    project_raw_url(@project, tree_join(diff_file.content_sha, diff_file.file_path), only_path: only_path)
+  end
+
+  def diff_file_old_blob_raw_url(diff_file, only_path: false)
+    sha = diff_file.old_content_sha
+    return unless sha
+
+    project_raw_url(@project, tree_join(diff_file.old_content_sha, diff_file.old_path), only_path: only_path)
+  end
+
   def diff_file_blob_raw_path(diff_file)
-    project_raw_path(@project, tree_join(diff_file.content_sha, diff_file.file_path))
+    diff_file_blob_raw_url(diff_file, only_path: true)
   end
 
   def diff_file_old_blob_raw_path(diff_file)
-    sha = diff_file.old_content_sha
-    return unless sha
-    project_raw_path(@project, tree_join(diff_file.old_content_sha, diff_file.old_path))
+    diff_file_old_blob_raw_url(diff_file, only_path: true)
   end
 
   def diff_file_html_data(project, diff_file_path, diff_commit_id)
     {
-      blob_diff_path: project_blob_diff_path(project,
-                                                       tree_join(diff_commit_id, diff_file_path)),
+      blob_diff_path: project_blob_diff_path(project, tree_join(diff_commit_id, diff_file_path)),
       view: diff_view
     }
   end
@@ -124,37 +167,13 @@ module DiffHelper
     !diff_file.deleted_file? && @merge_request && @merge_request.source_project
   end
 
-  def diff_render_error_reason(viewer)
-    case viewer.render_error
-    when :too_large
-      "it is too large"
-    when :server_side_but_stored_externally
-      case viewer.diff_file.external_storage
-      when :lfs
-        'it is stored in LFS'
-      else
-        'it is stored externally'
-      end
-    end
-  end
-
-  def diff_render_error_options(viewer)
-    diff_file = viewer.diff_file
-    options = []
-
-    blob_url = project_blob_path(@project, tree_join(diff_file.content_sha, diff_file.file_path))
-    options << link_to('view the blob', blob_url)
-
-    options
-  end
-
   def diff_file_changed_icon(diff_file)
-    if diff_file.deleted_file? || diff_file.renamed_file?
-      "minus"
+    if diff_file.deleted_file?
+      "file-deletion"
     elsif diff_file.new_file?
-      "plus"
+      "file-addition"
     else
-      "adjust"
+      "file-modified"
     end
   end
 
@@ -166,10 +185,26 @@ module DiffHelper
     end
   end
 
+  def render_overflow_warning?(diffs_collection)
+    diff_files = diffs_collection.raw_diff_files
+
+    if diff_files.any?(&:too_large?)
+      Gitlab::Metrics.add_event(:diffs_overflow_single_file_limits)
+    end
+
+    diff_files.overflow?.tap do |overflown|
+      Gitlab::Metrics.add_event(:diffs_overflow_collection_limits) if overflown
+    end
+  end
+
+  def apply_diff_view_cookie!
+    set_secure_cookie(:diff_view, params.delete(:view), type: CookiesHelper::COOKIE_TYPE_PERMANENT) if params[:view].present?
+  end
+
   private
 
   def diff_btn(title, name, selected)
-    params_copy = params.dup
+    params_copy = safe_params.dup
     params_copy[:view] = name
 
     # Always use HTML to handle case where JSON diff rendered this button
@@ -204,15 +239,15 @@ module DiffHelper
   end
 
   def toggle_whitespace_link(url, options)
-    options[:class] ||= ''
-    options[:class] << ' btn btn-default'
-
+    options[:class] = [*options[:class], 'btn btn-default'].join(' ')
     link_to "#{hide_whitespace? ? 'Show' : 'Hide'} whitespace changes", url, class: options[:class]
   end
 
-  def render_overflow_warning?(diff_files)
-    diffs = @merge_request_diff.presence || diff_files
+  def diff_file_path_text(diff_file, max: 60)
+    path = diff_file.new_path
 
-    diffs.overflow?
+    return path unless path.size > max && max > 3
+
+    "...#{path[-(max - 3)..-1]}"
   end
 end

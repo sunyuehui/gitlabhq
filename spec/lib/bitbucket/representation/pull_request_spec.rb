@@ -1,12 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Bitbucket::Representation::PullRequest do
+RSpec.describe Bitbucket::Representation::PullRequest do
   describe '#iid' do
     it { expect(described_class.new('id' => 1).iid).to eq(1) }
   end
 
   describe '#author' do
-    it { expect(described_class.new({ 'author' => { 'username' => 'Ben' } }).author).to eq('Ben') }
+    it { expect(described_class.new({ 'author' => { 'nickname' => 'Ben' } }).author).to eq('Ben') }
     it { expect(described_class.new({}).author).to be_nil }
   end
 
@@ -18,6 +20,7 @@ describe Bitbucket::Representation::PullRequest do
   describe '#state' do
     it { expect(described_class.new({ 'state' => 'MERGED' }).state).to eq('merged') }
     it { expect(described_class.new({ 'state' => 'DECLINED' }).state).to eq('closed') }
+    it { expect(described_class.new({ 'state' => 'SUPERSEDED' }).state).to eq('closed') }
     it { expect(described_class.new({}).state).to eq('opened') }
   end
 

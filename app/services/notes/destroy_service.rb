@@ -1,7 +1,15 @@
+# frozen_string_literal: true
+
 module Notes
-  class DestroyService < BaseService
+  class DestroyService < ::Notes::BaseService
     def execute(note)
-      note.destroy
+      TodoService.new.destroy_target(note) do |note|
+        note.destroy
+      end
+
+      clear_noteable_diffs_cache(note)
     end
   end
 end
+
+Notes::DestroyService.prepend_if_ee('EE::Notes::DestroyService')

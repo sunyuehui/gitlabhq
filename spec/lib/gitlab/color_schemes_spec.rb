@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::ColorSchemes do
+RSpec.describe Gitlab::ColorSchemes do
   describe '.body_classes' do
     it 'returns a space-separated list of class names' do
       css = described_class.body_classes

@@ -1,12 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe PipelineProcessWorker do
+RSpec.describe PipelineProcessWorker do
   describe '#perform' do
     context 'when pipeline exists' do
       let(:pipeline) { create(:ci_pipeline) }
 
       it 'processes pipeline' do
-        expect_any_instance_of(Ci::Pipeline).to receive(:process!)
+        expect_any_instance_of(Ci::ProcessPipelineService).to receive(:execute)
 
         described_class.new.perform(pipeline.id)
       end

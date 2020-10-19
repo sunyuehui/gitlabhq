@@ -1,8 +1,11 @@
+# frozen_string_literal: true
+
 module Ci
   # Currently this is artificial object, constructed dynamically
   # We should migrate this object to actual database record in the future
   class LegacyStage
     include StaticModel
+    include Presentable
 
     attr_reader :pipeline, :name
 
@@ -12,15 +15,12 @@ module Ci
       @pipeline = pipeline
       @name = name
       @status = status
-      @warnings = warnings
+      # support ints and booleans
+      @has_warnings = ActiveRecord::Type::Boolean.new.cast(warnings)
     end
 
     def groups
-      @groups ||= statuses.ordered.latest
-        .sort_by(&:sortable_name).group_by(&:group_name)
-        .map do |group_name, grouped_statuses|
-          Ci::Group.new(self, name: group_name, jobs: grouped_statuses)
-        end
+      @groups ||= Ci::Group.fabricate(project, self)
     end
 
     def to_param
@@ -32,13 +32,17 @@ module Ci
     end
 
     def status
-      @status ||= statuses.latest.status
+      @status ||= statuses.latest.composite_status
     end
 
     def detailed_status(current_user)
       Gitlab::Ci::Status::Stage::Factory
         .new(self, current_user)
         .fabricate!
+    end
+
+    def latest_statuses
+      statuses.ordered.latest
     end
 
     def statuses
@@ -54,11 +58,16 @@ module Ci
     end
 
     def has_warnings?
-      if @warnings.is_a?(Integer)
-        @warnings > 0
-      else
-        statuses.latest.failed_but_allowed.any?
+      # lazilly calculate the warnings
+      if @has_warnings.nil?
+        @has_warnings = statuses.latest.failed_but_allowed.any?
       end
+
+      @has_warnings
+    end
+
+    def manual_playable?
+      %[manual scheduled skipped].include?(status.to_s)
     end
   end
 end

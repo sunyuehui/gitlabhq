@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::PodspecLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::PodspecLinker do
   describe '.support?' do
     it 'supports *.podspec' do
       expect(described_class.support?('Reachability.podspec')).to be_truthy
@@ -42,8 +44,8 @@ describe Gitlab::DependencyLinker::PodspecLinker do
       %{<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>}
     end
 
-    it 'links the gem name' do
-      expect(subject).to include(link('Reachability', 'https://cocoapods.org/pods/Reachability'))
+    it 'does not link the pod name' do
+      expect(subject).not_to include(link('Reachability', 'https://cocoapods.org/pods/Reachability'))
     end
 
     it 'links the license' do

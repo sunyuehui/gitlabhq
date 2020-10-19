@@ -1,18 +1,90 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ProjectsHelper do
+RSpec.describe ProjectsHelper do
+  include ProjectForksHelper
+
+  let_it_be_with_reload(:project) { create(:project) }
+  let_it_be_with_refind(:project_with_repo) { create(:project, :repository) }
+  let_it_be(:user) { create(:user) }
+
+  before do
+    helper.instance_variable_set(:@project, project)
+  end
+
+  describe '#project_incident_management_setting' do
+    context 'when incident_management_setting exists' do
+      let(:project_incident_management_setting) do
+        create(:project_incident_management_setting, project: project)
+      end
+
+      it 'return project_incident_management_setting' do
+        expect(helper.project_incident_management_setting).to(
+          eq(project_incident_management_setting)
+        )
+      end
+    end
+
+    context 'when incident_management_setting does not exist' do
+      it 'builds incident_management_setting' do
+        setting = helper.project_incident_management_setting
+
+        expect(setting).not_to be_persisted
+        expect(setting.create_issue).to be_falsey
+        expect(setting.send_email).to be_falsey
+        expect(setting.issue_template_key).to be_nil
+      end
+    end
+  end
+
+  describe '#error_tracking_setting_project_json' do
+    context 'error tracking setting does not exist' do
+      it 'returns nil' do
+        expect(helper.error_tracking_setting_project_json).to be_nil
+      end
+    end
+
+    context 'error tracking setting exists' do
+      let_it_be(:error_tracking_setting) { create(:project_error_tracking_setting, project: project) }
+
+      context 'api_url present' do
+        let(:json) do
+          {
+            name: error_tracking_setting.project_name,
+            organization_name: error_tracking_setting.organization_name,
+            organization_slug: error_tracking_setting.organization_slug,
+            slug: error_tracking_setting.project_slug
+          }.to_json
+        end
+
+        it 'returns error tracking json' do
+          expect(helper.error_tracking_setting_project_json).to eq(json)
+        end
+      end
+
+      context 'api_url not present' do
+        it 'returns nil' do
+          project.error_tracking_setting.api_url = nil
+          project.error_tracking_setting.enabled = false
+
+          expect(helper.error_tracking_setting_project_json).to be_nil
+        end
+      end
+    end
+  end
+
   describe "#project_status_css_class" do
     it "returns appropriate class" do
-      expect(project_status_css_class("started")).to eq("active")
-      expect(project_status_css_class("failed")).to eq("danger")
-      expect(project_status_css_class("finished")).to eq("success")
+      expect(project_status_css_class("started")).to eq("table-active")
+      expect(project_status_css_class("failed")).to eq("table-danger")
+      expect(project_status_css_class("finished")).to eq("table-success")
     end
   end
 
   describe "can_change_visibility_level?" do
-    let(:project) { create(:project, :repository) }
-    let(:user) { create(:project_member, :reporter, user: create(:user), project: project).user }
-    let(:fork_project) { Projects::ForkService.new(project, user).execute }
+    let_it_be(:user) { create(:project_member, :reporter, user: create(:user), project: project).user }
+    let(:forked_project) { fork_project(project, user) }
 
     it "returns false if there are no appropriate permissions" do
       allow(helper).to receive(:can?) { false }
@@ -26,31 +98,58 @@ describe ProjectsHelper do
       expect(helper.can_change_visibility_level?(project, user)).to be_truthy
     end
 
+    it 'allows visibility level to be changed if the project is forked' do
+      allow(helper).to receive(:can?).with(user, :change_visibility_level, project) { true }
+      project.update!(visibility_level: Gitlab::VisibilityLevel::PRIVATE)
+      fork_project(project)
+
+      expect(helper.can_change_visibility_level?(project, user)).to be_truthy
+    end
+
     context "forks" do
       it "returns false if there are permissions and origin project is PRIVATE" do
         allow(helper).to receive(:can?) { true }
 
-        project.update visibility_level:  Gitlab::VisibilityLevel::PRIVATE
+        project.update!(visibility_level: Gitlab::VisibilityLevel::PRIVATE)
 
-        expect(helper.can_change_visibility_level?(fork_project, user)).to be_falsey
+        expect(helper.can_change_visibility_level?(forked_project, user)).to be_falsey
       end
 
       it "returns true if there are permissions and origin project is INTERNAL" do
         allow(helper).to receive(:can?) { true }
 
-        project.update visibility_level:  Gitlab::VisibilityLevel::INTERNAL
+        project.update!(visibility_level: Gitlab::VisibilityLevel::INTERNAL)
 
-        expect(helper.can_change_visibility_level?(fork_project, user)).to be_truthy
+        expect(helper.can_change_visibility_level?(forked_project, user)).to be_truthy
       end
     end
   end
 
-  describe "readme_cache_key" do
-    let(:project) { create(:project, :repository) }
+  describe '#can_disable_emails?' do
+    let_it_be(:user) { create(:project_member, :maintainer, user: create(:user), project: project).user }
 
-    before do
-      helper.instance_variable_set(:@project, project)
+    it 'returns true for the project owner' do
+      allow(helper).to receive(:can?).with(project.owner, :set_emails_disabled, project) { true }
+
+      expect(helper.can_disable_emails?(project, project.owner)).to be_truthy
     end
+
+    it 'returns false for anyone else' do
+      allow(helper).to receive(:can?).with(user, :set_emails_disabled, project) { false }
+
+      expect(helper.can_disable_emails?(project, user)).to be_falsey
+    end
+
+    it 'returns false if group emails disabled' do
+      project = create(:project, group: create(:group))
+      allow(project.group).to receive(:emails_disabled?).and_return(true)
+
+      expect(helper.can_disable_emails?(project, project.owner)).to be_falsey
+    end
+  end
+
+  describe "readme_cache_key" do
+    let(:project) { project_with_repo }
 
     it "returns a valid cach key" do
       expect(helper.send(:readme_cache_key)).to eq("#{project.full_path}-#{project.commit.id}-readme")
@@ -63,8 +162,15 @@ describe ProjectsHelper do
     end
   end
 
-  describe "#project_list_cache_key", clean_gitlab_redis_shared_state: true do
-    let(:project) { create(:project, :repository) }
+  describe "#project_list_cache_key", :clean_gitlab_redis_shared_state do
+    let(:project) { project_with_repo }
+
+    before do
+      allow(helper).to receive(:current_user).and_return(user)
+      allow(helper).to receive(:can?).with(user, :read_cross_project) { true }
+      allow(user).to receive(:max_member_access_for_project).and_return(40)
+      allow(Gitlab::I18n).to receive(:locale).and_return('es')
+    end
 
     it "includes the route" do
       expect(helper.project_list_cache_key(project)).to include(project.route.cache_key)
@@ -72,6 +178,10 @@ describe ProjectsHelper do
 
     it "includes the project" do
       expect(helper.project_list_cache_key(project)).to include(project.cache_key)
+    end
+
+    it "includes the last activity date" do
+      expect(helper.project_list_cache_key(project)).to include(project.last_activity_date)
     end
 
     it "includes the controller name" do
@@ -96,17 +206,27 @@ describe ProjectsHelper do
       expect(helper.project_list_cache_key(project).last).to start_with('v')
     end
 
+    it 'includes whether or not the user can read cross project' do
+      expect(helper.project_list_cache_key(project)).to include('cross-project:true')
+    end
+
     it "includes the pipeline status when there is a status" do
       create(:ci_pipeline, :success, project: project, sha: project.commit.sha)
 
       expect(helper.project_list_cache_key(project)).to include("pipeline-status/#{project.commit.sha}-success")
     end
+
+    it "includes the user locale" do
+      expect(helper.project_list_cache_key(project)).to include('es')
+    end
+
+    it "includes the user max member access" do
+      expect(helper.project_list_cache_key(project)).to include('access:40')
+    end
   end
 
   describe '#load_pipeline_status' do
     it 'loads the pipeline status in batch' do
-      project = build(:project)
-
       helper.load_pipeline_status([project])
       # Skip lazy loading of the `pipeline_status` attribute
       pipeline_status = project.instance_variable_get('@pipeline_status')
@@ -116,8 +236,6 @@ describe ProjectsHelper do
   end
 
   describe '#show_no_ssh_key_message?' do
-    let(:user) { create(:user) }
-
     before do
       allow(helper).to receive(:current_user).and_return(user)
     end
@@ -138,8 +256,6 @@ describe ProjectsHelper do
   end
 
   describe '#show_no_password_message?' do
-    let(:user) { create(:user) }
-
     before do
       allow(helper).to receive(:current_user).and_return(user)
     end
@@ -150,17 +266,26 @@ describe ProjectsHelper do
       end
     end
 
-    context 'user requires a password' do
-      let(:user) { create(:user, password_automatically_set: true) }
+    context 'user has hidden the message' do
+      it 'returns false' do
+        allow(helper).to receive(:cookies).and_return(hide_no_password_message: true)
 
+        expect(helper.show_no_password_message?).to be_falsey
+      end
+    end
+
+    context 'user requires a password for Git' do
       it 'returns true' do
+        allow(user).to receive(:require_password_creation_for_git?).and_return(true)
+
         expect(helper.show_no_password_message?).to be_truthy
       end
     end
 
-    context 'user requires a personal access token' do
+    context 'user requires a personal access token for Git' do
       it 'returns true' do
-        stub_application_setting(password_authentication_enabled?: false)
+        allow(user).to receive(:require_password_creation_for_git?).and_return(false)
+        allow(user).to receive(:require_personal_access_token_creation_for_git_auth?).and_return(true)
 
         expect(helper.show_no_password_message?).to be_truthy
       end
@@ -168,39 +293,80 @@ describe ProjectsHelper do
   end
 
   describe '#link_to_set_password' do
+    let(:user) { create(:user, password_automatically_set: true) }
+
     before do
       allow(helper).to receive(:current_user).and_return(user)
     end
 
-    context 'user requires a password' do
-      let(:user) { create(:user, password_automatically_set: true) }
-
+    context 'password authentication is enabled for Git' do
       it 'returns link to set a password' do
+        stub_application_setting(password_authentication_enabled_for_git?: true)
+
         expect(helper.link_to_set_password).to match %r{<a href="#{edit_profile_password_path}">set a password</a>}
       end
     end
 
-    context 'user requires a personal access token' do
-      let(:user) { create(:user) }
-
+    context 'password authentication is disabled for Git' do
       it 'returns link to create a personal access token' do
-        stub_application_setting(password_authentication_enabled?: false)
+        stub_application_setting(password_authentication_enabled_for_git?: false)
 
         expect(helper.link_to_set_password).to match %r{<a href="#{profile_personal_access_tokens_path}">create a personal access token</a>}
       end
     end
   end
 
-  describe 'link_to_member' do
-    let(:group)   { create(:group) }
-    let(:project) { create(:project, group: group) }
-    let(:user)    { create(:user) }
+  describe '#link_to_project' do
+    let(:group)   { create(:group, name: 'group name with space') }
+    let(:project) { create(:project, group: group, name: 'project name with space') }
+
+    subject { link_to_project(project) }
+
+    it 'returns an HTML link to the project' do
+      expect(subject).to match(%r{/#{group.full_path}/#{project.path}})
+      expect(subject).to include('group name with space /')
+      expect(subject).to include('project name with space')
+    end
+  end
+
+  describe '#link_to_member_avatar' do
+    let(:user) { build_stubbed(:user) }
+    let(:expected) { double }
+
+    before do
+      expect(helper).to receive(:avatar_icon_for_user).with(user, 16).and_return(expected)
+    end
+
+    it 'returns image tag for member avatar' do
+      expect(helper).to receive(:image_tag).with(expected, { width: 16, class: %w[avatar avatar-inline s16], alt: "", "data-src" => anything })
+
+      helper.link_to_member_avatar(user)
+    end
+
+    it 'returns image tag with avatar class' do
+      expect(helper).to receive(:image_tag).with(expected, { width: 16, class: %w[avatar avatar-inline s16 any-avatar-class], alt: "", "data-src" => anything })
+
+      helper.link_to_member_avatar(user, avatar_class: "any-avatar-class")
+    end
+  end
+
+  describe '#link_to_member' do
+    let(:group)   { build_stubbed(:group) }
+    let(:project) { build_stubbed(:project, group: group) }
+    let(:user)    { build_stubbed(:user, name: '<h1>Administrator</h1>') }
 
     describe 'using the default options' do
       it 'returns an HTML link to the user' do
         link = helper.link_to_member(project, user)
 
         expect(link).to match(%r{/#{user.username}})
+      end
+
+      it 'HTML escapes the name of the user' do
+        link = helper.link_to_member(project, user)
+
+        expect(link).to include(ERB::Util.html_escape(user.name))
+        expect(link).not_to include(user.name)
       end
     end
   end
@@ -224,62 +390,12 @@ describe ProjectsHelper do
     end
   end
 
-  describe '#license_short_name' do
-    let(:project) { create(:project) }
-
-    context 'when project.repository has a license_key' do
-      it 'returns the nickname of the license if present' do
-        allow(project.repository).to receive(:license_key).and_return('agpl-3.0')
-
-        expect(helper.license_short_name(project)).to eq('GNU AGPLv3')
-      end
-
-      it 'returns the name of the license if nickname is not present' do
-        allow(project.repository).to receive(:license_key).and_return('mit')
-
-        expect(helper.license_short_name(project)).to eq('MIT License')
-      end
-    end
-
-    context 'when project.repository has no license_key but a license_blob' do
-      it 'returns LICENSE' do
-        allow(project.repository).to receive(:license_key).and_return(nil)
-
-        expect(helper.license_short_name(project)).to eq('LICENSE')
-      end
-    end
-  end
-
-  describe '#sanitized_import_error' do
-    let(:project) { create(:project, :repository) }
-
-    before do
-      allow(project).to receive(:repository_storage_path).and_return('/base/repo/path')
-      allow(Settings.shared).to receive(:[]).with('path').and_return('/base/repo/export/path')
-    end
-
-    it 'removes the repo path' do
-      repo = '/base/repo/path/namespace/test.git'
-      import_error = "Could not clone #{repo}\n"
-
-      expect(sanitize_repo_path(project, import_error)).to eq('Could not clone [REPOS PATH]/namespace/test.git')
-    end
-
-    it 'removes the temporary repo path used for uploads/exports' do
-      repo = '/base/repo/export/path/tmp/project_exports/uploads/test.tar.gz'
-      import_error = "Unable to decompress #{repo}\n"
-
-      expect(sanitize_repo_path(project, import_error)).to eq('Unable to decompress [REPO EXPORT PATH]/uploads/test.tar.gz')
-    end
-  end
-
   describe '#last_push_event' do
     let(:user) { double(:user, fork_of: nil) }
     let(:project) { double(:project, id: 1) }
 
     before do
       allow(helper).to receive(:current_user).and_return(user)
-      helper.instance_variable_set(:@project, project)
     end
 
     context 'when there is no current_user' do
@@ -292,97 +408,13 @@ describe ProjectsHelper do
 
     it 'returns recent push on the current project' do
       event = double(:event)
-      expect(user).to receive(:recent_push).with([project.id]).and_return(event)
+      expect(user).to receive(:recent_push).with(project).and_return(event)
 
       expect(helper.last_push_event).to eq(event)
-    end
-
-    context 'when current user has a fork of the current project' do
-      let(:fork) { double(:fork, id: 2) }
-
-      it 'returns recent push considering fork events' do
-        expect(user).to receive(:fork_of).with(project).and_return(fork)
-
-        event_on_fork = double(:event)
-        expect(user).to receive(:recent_push).with([project.id, fork.id]).and_return(event_on_fork)
-
-        expect(helper.last_push_event).to eq(event_on_fork)
-      end
-    end
-  end
-
-  describe "#project_feature_access_select" do
-    let(:project) { create(:project, :public) }
-    let(:user)    { create(:user) }
-
-    context "when project is internal or public" do
-      it "shows all options" do
-        helper.instance_variable_set(:@project, project)
-        result = helper.project_feature_access_select(:issues_access_level)
-        expect(result).to include("Disabled")
-        expect(result).to include("Only team members")
-        expect(result).to include("Everyone with access")
-      end
-    end
-
-    context "when project is private" do
-      before do
-        project.update_attributes(visibility_level: Gitlab::VisibilityLevel::PRIVATE)
-      end
-
-      it "shows only allowed options" do
-        helper.instance_variable_set(:@project, project)
-        result = helper.project_feature_access_select(:issues_access_level)
-        expect(result).to include("Disabled")
-        expect(result).to include("Only team members")
-        expect(result).to have_selector('option[disabled]', text: "Everyone with access")
-      end
-    end
-
-    context "when project moves from public to private" do
-      before do
-        project.update_attributes(visibility_level: Gitlab::VisibilityLevel::PRIVATE)
-      end
-
-      it "shows the highest allowed level selected" do
-        helper.instance_variable_set(:@project, project)
-        result = helper.project_feature_access_select(:issues_access_level)
-
-        expect(result).to include("Disabled")
-        expect(result).to include("Only team members")
-        expect(result).to have_selector('option[disabled]', text: "Everyone with access")
-        expect(result).to have_selector('option[selected]', text: "Only team members")
-      end
-    end
-  end
-
-  describe "#visibility_select_options" do
-    let(:project) { create(:project, :repository) }
-    let(:user)    { create(:user) }
-
-    before do
-      allow(helper).to receive(:current_user).and_return(user)
-
-      stub_application_setting(restricted_visibility_levels: [Gitlab::VisibilityLevel::PUBLIC])
-    end
-
-    it "does not include the Public restricted level" do
-      expect(helper.send(:visibility_select_options, project, Gitlab::VisibilityLevel::PRIVATE)).not_to include('Public')
-    end
-
-    it "includes the Internal level" do
-      expect(helper.send(:visibility_select_options, project, Gitlab::VisibilityLevel::PRIVATE)).to include('Internal')
-    end
-
-    it "includes the Private level" do
-      expect(helper.send(:visibility_select_options, project, Gitlab::VisibilityLevel::PRIVATE)).to include('Private')
     end
   end
 
   describe '#get_project_nav_tabs' do
-    let(:project) { create(:project) }
-    let(:user)    { create(:user) }
-
     before do
       allow(helper).to receive(:can?) { true }
     end
@@ -406,34 +438,120 @@ describe ProjectsHelper do
         allow(project).to receive(:builds_enabled?).and_return(false)
       end
 
-      it "do not include pipelines tab" do
-        is_expected.not_to include(:pipelines)
+      context 'when user has access to builds' do
+        it "does include pipelines tab" do
+          is_expected.to include(:pipelines)
+        end
+      end
+
+      context 'when user does not have access to builds' do
+        before do
+          allow(helper).to receive(:can?) { false }
+        end
+
+        it "does not include pipelines tab" do
+          is_expected.not_to include(:pipelines)
+        end
+      end
+    end
+
+    context 'when project has external wiki' do
+      it 'includes external wiki tab' do
+        project.create_external_wiki_service(active: true, properties: { 'external_wiki_url' => 'https://gitlab.com' })
+
+        is_expected.to include(:external_wiki)
+      end
+    end
+
+    context 'when project does not have external wiki' do
+      it 'does not include external wiki tab' do
+        expect(project.external_wiki).to be_nil
+        is_expected.not_to include(:external_wiki)
+      end
+    end
+
+    context 'when project has confluence enabled' do
+      before do
+        allow(project).to receive(:has_confluence?).and_return(true)
+      end
+
+      it { is_expected.to include(:confluence) }
+      it { is_expected.not_to include(:wiki) }
+    end
+
+    context 'when project does not have confluence enabled' do
+      it { is_expected.not_to include(:confluence) }
+      it { is_expected.to include(:wiki) }
+    end
+  end
+
+  describe '#can_view_operations_tab?' do
+    before do
+      allow(helper).to receive(:current_user).and_return(user)
+    end
+
+    subject { helper.send(:can_view_operations_tab?, user, project) }
+
+    [
+      :metrics_dashboard,
+      :read_alert_management_alert,
+      :read_environment,
+      :read_issue,
+      :read_sentry_issue,
+      :read_cluster
+    ].each do |ability|
+      it 'includes operations tab' do
+        allow(helper).to receive(:can?).and_return(false)
+        allow(helper).to receive(:can?).with(user, ability, project).and_return(true)
+
+        is_expected.to be(true)
       end
     end
   end
 
-  describe '#has_projects_or_name?' do
+  describe '#show_projects' do
     let(:projects) do
-      create(:project)
       Project.all
     end
 
+    before do
+      stub_feature_flags(project_list_filter_bar: false)
+    end
+
     it 'returns true when there are projects' do
-      expect(helper.has_projects_or_name?(projects, {})).to eq(true)
+      expect(helper.show_projects?(projects, {})).to eq(true)
     end
 
     it 'returns true when there are no projects but a name is given' do
-      expect(helper.has_projects_or_name?(Project.none, name: 'foo')).to eq(true)
+      expect(helper.show_projects?(Project.none, name: 'foo')).to eq(true)
+    end
+
+    it 'returns true when there are no projects but personal is present' do
+      expect(helper.show_projects?(Project.none, personal: 'true')).to eq(true)
     end
 
     it 'returns false when there are no projects and there is no name' do
-      expect(helper.has_projects_or_name?(Project.none, {})).to eq(false)
+      expect(helper.show_projects?(Project.none, {})).to eq(false)
+    end
+  end
+
+  describe '#push_to_create_project_command' do
+    let(:user) { build_stubbed(:user, username: 'john') }
+
+    it 'returns the command to push to create project over HTTP' do
+      allow(Gitlab::CurrentSettings.current_application_settings).to receive(:enabled_git_access_protocol) { 'http' }
+
+      expect(helper.push_to_create_project_command(user)).to eq('git push --set-upstream http://test.host/john/$(git rev-parse --show-toplevel | xargs basename).git $(git rev-parse --abbrev-ref HEAD)')
+    end
+
+    it 'returns the command to push to create project over SSH' do
+      allow(Gitlab::CurrentSettings.current_application_settings).to receive(:enabled_git_access_protocol) { 'ssh' }
+
+      expect(helper.push_to_create_project_command(user)).to eq("git push --set-upstream #{Gitlab.config.gitlab.user}@localhost:john/$(git rev-parse --show-toplevel | xargs basename).git $(git rev-parse --abbrev-ref HEAD)")
     end
   end
 
   describe '#any_projects?' do
-    let!(:project) { create(:project) }
-
     it 'returns true when projects will be returned' do
       expect(helper.any_projects?(Project.all)).to eq(true)
     end
@@ -459,6 +577,426 @@ describe ProjectsHelper do
       end
 
       expect(recorder.count).to eq(1)
+    end
+  end
+
+  describe '#git_user_name' do
+    let(:user) { build_stubbed(:user, name: 'John "A" Doe53') }
+
+    before do
+      allow(helper).to receive(:current_user).and_return(user)
+    end
+
+    it 'parses quotes in name' do
+      expect(helper.send(:git_user_name)).to eq('John \"A\" Doe53')
+    end
+  end
+
+  describe '#git_user_email' do
+    context 'not logged-in' do
+      before do
+        allow(helper).to receive(:current_user).and_return(nil)
+      end
+
+      it 'returns your@email.com' do
+        expect(helper.send(:git_user_email)).to eq('your@email.com')
+      end
+    end
+
+    context 'user logged in' do
+      before do
+        allow(helper).to receive(:current_user).and_return(user)
+      end
+
+      context 'user has no configured commit email' do
+        it 'returns the primary email' do
+          expect(helper.send(:git_user_email)).to eq(user.email)
+        end
+      end
+
+      context 'user has a configured commit email' do
+        before do
+          confirmed_email = create(:email, :confirmed, user: user)
+          user.update!(commit_email: confirmed_email)
+        end
+
+        it 'returns the commit email' do
+          expect(helper.send(:git_user_email)).to eq(user.commit_email)
+        end
+      end
+    end
+  end
+
+  describe 'show_xcode_link' do
+    let(:mac_ua) { 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.139 Safari/537.36' }
+    let(:ios_ua) { 'Mozilla/5.0 (iPad; CPU OS 5_1_1 like Mac OS X) AppleWebKit/534.46 (KHTML, like Gecko) Version/5.1 Mobile/9B206 Safari/7534.48.3' }
+
+    context 'when the repository is xcode compatible' do
+      before do
+        allow(project.repository).to receive(:xcode_project?).and_return(true)
+      end
+
+      it 'returns false if the visitor is not using macos' do
+        allow(helper).to receive(:browser).and_return(Browser.new(ios_ua))
+
+        expect(helper.show_xcode_link?(project)).to eq(false)
+      end
+
+      it 'returns true if the visitor is using macos' do
+        allow(helper).to receive(:browser).and_return(Browser.new(mac_ua))
+
+        expect(helper.show_xcode_link?(project)).to eq(true)
+      end
+    end
+
+    context 'when the repository is not xcode compatible' do
+      before do
+        allow(project.repository).to receive(:xcode_project?).and_return(false)
+      end
+
+      it 'returns false if the visitor is not using macos' do
+        allow(helper).to receive(:browser).and_return(Browser.new(ios_ua))
+
+        expect(helper.show_xcode_link?(project)).to eq(false)
+      end
+
+      it 'returns false if the visitor is using macos' do
+        allow(helper).to receive(:browser).and_return(Browser.new(mac_ua))
+
+        expect(helper.show_xcode_link?(project)).to eq(false)
+      end
+    end
+  end
+
+  describe 'link_to_filter_repo' do
+    subject { helper.link_to_filter_repo }
+
+    it 'generates a hardcoded link to git filter-repo' do
+      result = helper.link_to_filter_repo
+      doc = Nokogiri::HTML.fragment(result)
+
+      expect(doc.children.size).to eq(1)
+
+      link = doc.children.first
+
+      aggregate_failures do
+        expect(result).to be_html_safe
+
+        expect(link.name).to eq('a')
+        expect(link[:target]).to eq('_blank')
+        expect(link[:rel]).to eq('noopener noreferrer')
+        expect(link[:href]).to eq('https://github.com/newren/git-filter-repo')
+        expect(link.inner_html).to eq('git filter-repo')
+
+        expect(result).to be_html_safe
+      end
+    end
+  end
+
+  describe '#explore_projects_tab?' do
+    subject { helper.explore_projects_tab? }
+
+    it 'returns true when on the "All" tab under "Explore projects"' do
+      allow(@request).to receive(:path) { explore_projects_path }
+
+      expect(subject).to be_truthy
+    end
+
+    it 'returns true when on the "Trending" tab under "Explore projects"' do
+      allow(@request).to receive(:path) { trending_explore_projects_path }
+
+      expect(subject).to be_truthy
+    end
+
+    it 'returns true when on the "Starred" tab under "Explore projects"' do
+      allow(@request).to receive(:path) { starred_explore_projects_path }
+
+      expect(subject).to be_truthy
+    end
+
+    it 'returns false when on the "Your projects" tab' do
+      allow(@request).to receive(:path) { dashboard_projects_path }
+
+      expect(subject).to be_falsey
+    end
+  end
+
+  describe '#show_merge_request_count' do
+    context 'enabled flag' do
+      it 'returns true if compact mode is disabled' do
+        expect(helper.show_merge_request_count?).to be_truthy
+      end
+
+      it 'returns false if compact mode is enabled' do
+        expect(helper.show_merge_request_count?(compact_mode: true)).to be_falsey
+      end
+    end
+
+    context 'disabled flag' do
+      it 'returns false if disabled flag is true' do
+        expect(helper.show_merge_request_count?(disabled: true)).to be_falsey
+      end
+
+      it 'returns true if disabled flag is false' do
+        expect(helper.show_merge_request_count?).to be_truthy
+      end
+    end
+  end
+
+  describe '#show_issue_count?' do
+    context 'enabled flag' do
+      it 'returns true if compact mode is disabled' do
+        expect(helper.show_issue_count?).to be_truthy
+      end
+
+      it 'returns false if compact mode is enabled' do
+        expect(helper.show_issue_count?(compact_mode: true)).to be_falsey
+      end
+    end
+
+    context 'disabled flag' do
+      it 'returns false if disabled flag is true' do
+        expect(helper.show_issue_count?(disabled: true)).to be_falsey
+      end
+
+      it 'returns true if disabled flag is false' do
+        expect(helper.show_issue_count?).to be_truthy
+      end
+    end
+  end
+
+  describe '#show_auto_devops_implicitly_enabled_banner?' do
+    using RSpec::Parameterized::TableSyntax
+
+    let_it_be_with_reload(:project_with_auto_devops) { create(:project, :repository, :auto_devops) }
+
+    let(:feature_visibilities) do
+      {
+        enabled: ProjectFeature::ENABLED,
+        disabled: ProjectFeature::DISABLED
+      }
+    end
+
+    where(:global_setting, :project_setting, :builds_visibility, :gitlab_ci_yml, :user_access, :result) do
+      # With ADO implicitly enabled scenarios
+      true | nil | :disabled | true  | :developer  | false
+      true | nil | :disabled | true  | :maintainer | false
+      true | nil | :disabled | true  | :owner      | false
+
+      true | nil | :disabled | false | :developer  | false
+      true | nil | :disabled | false | :maintainer | false
+      true | nil | :disabled | false | :owner      | false
+
+      true | nil | :enabled  | true  | :developer  | false
+      true | nil | :enabled  | true  | :maintainer | false
+      true | nil | :enabled  | true  | :owner      | false
+
+      true | nil | :enabled  | false | :developer  | false
+      true | nil | :enabled  | false | :maintainer | true
+      true | nil | :enabled  | false | :owner      | true
+
+      # With ADO enabled scenarios
+      true | true | :disabled | true  | :developer  | false
+      true | true | :disabled | true  | :maintainer | false
+      true | true | :disabled | true  | :owner      | false
+
+      true | true | :disabled | false | :developer  | false
+      true | true | :disabled | false | :maintainer | false
+      true | true | :disabled | false | :owner      | false
+
+      true | true | :enabled  | true  | :developer  | false
+      true | true | :enabled  | true  | :maintainer | false
+      true | true | :enabled  | true  | :owner      | false
+
+      true | true | :enabled  | false | :developer  | false
+      true | true | :enabled  | false | :maintainer | false
+      true | true | :enabled  | false | :owner      | false
+
+      # With ADO disabled scenarios
+      true | false | :disabled | true  | :developer  | false
+      true | false | :disabled | true  | :maintainer | false
+      true | false | :disabled | true  | :owner      | false
+
+      true | false | :disabled | false | :developer  | false
+      true | false | :disabled | false | :maintainer | false
+      true | false | :disabled | false | :owner      | false
+
+      true | false | :enabled  | true  | :developer  | false
+      true | false | :enabled  | true  | :maintainer | false
+      true | false | :enabled  | true  | :owner      | false
+
+      true | false | :enabled  | false | :developer  | false
+      true | false | :enabled  | false | :maintainer | false
+      true | false | :enabled  | false | :owner      | false
+    end
+
+    def grant_user_access(project, user, access)
+      case access
+      when :developer, :maintainer
+        project.add_user(user, access)
+      when :owner
+        project.namespace.update!(owner: user)
+      end
+    end
+
+    with_them do
+      let(:project) do
+        if project_setting.nil?
+          project_with_repo
+        else
+          project_with_auto_devops
+        end
+      end
+
+      before do
+        stub_application_setting(auto_devops_enabled: global_setting)
+
+        allow_any_instance_of(Repository).to receive(:gitlab_ci_yml).and_return(gitlab_ci_yml)
+
+        grant_user_access(project, user, user_access)
+        project.project_feature.update_attribute(:builds_access_level, feature_visibilities[builds_visibility])
+        project.auto_devops.update_attribute(:enabled, project_setting) unless project_setting.nil?
+      end
+
+      subject { helper.show_auto_devops_implicitly_enabled_banner?(project, user) }
+
+      it { is_expected.to eq(result) }
+    end
+  end
+
+  describe '#can_import_members?' do
+    let(:owner) { project.owner }
+
+    it 'returns false if user cannot admin_project_member' do
+      allow(helper).to receive(:current_user) { user }
+      expect(helper.can_import_members?).to eq false
+    end
+
+    it 'returns true if user can admin_project_member' do
+      allow(helper).to receive(:current_user) { owner }
+      expect(helper.can_import_members?).to eq true
+    end
+  end
+
+  describe '#metrics_external_dashboard_url' do
+    context 'metrics_setting exists' do
+      it 'returns external_dashboard_url' do
+        metrics_setting = create(:project_metrics_setting, project: project)
+
+        expect(helper.metrics_external_dashboard_url).to eq(metrics_setting.external_dashboard_url)
+      end
+    end
+
+    context 'metrics_setting does not exist' do
+      it 'returns nil' do
+        expect(helper.metrics_external_dashboard_url).to eq(nil)
+      end
+    end
+  end
+
+  describe '#grafana_integration_url' do
+    subject { helper.grafana_integration_url }
+
+    it { is_expected.to eq(nil) }
+
+    context 'grafana integration exists' do
+      let!(:grafana_integration) { create(:grafana_integration, project: project) }
+
+      it { is_expected.to eq(grafana_integration.grafana_url) }
+    end
+  end
+
+  describe '#grafana_integration_token' do
+    subject { helper.grafana_integration_masked_token }
+
+    it { is_expected.to eq(nil) }
+
+    context 'grafana integration exists' do
+      let!(:grafana_integration) { create(:grafana_integration, project: project) }
+
+      it { is_expected.to eq(grafana_integration.masked_token) }
+    end
+  end
+
+  describe '#grafana_integration_enabled?' do
+    subject { helper.grafana_integration_enabled? }
+
+    it { is_expected.to eq(nil) }
+
+    context 'grafana integration exists' do
+      let!(:grafana_integration) { create(:grafana_integration, project: project) }
+
+      it { is_expected.to eq(grafana_integration.enabled) }
+    end
+  end
+
+  describe '#project_license_name(project)', :request_store do
+    let_it_be(:repository) { project.repository }
+
+    subject { project_license_name(project) }
+
+    def license_name
+      project_license_name(project)
+    end
+
+    context 'gitaly is working appropriately' do
+      let(:license) { Licensee::License.new('mit') }
+
+      before do
+        expect(repository).to receive(:license).and_return(license)
+      end
+
+      it 'returns the license name' do
+        expect(subject).to eq(license.name)
+      end
+
+      it 'memoizes the value' do
+        expect do
+          2.times { expect(license_name).to eq(license.name) }
+        end.to change { Gitlab::GitalyClient.get_request_count }.by_at_most(1)
+      end
+    end
+
+    context 'gitaly is unreachable' do
+      shared_examples 'returns nil and tracks exception' do
+        it { is_expected.to be_nil }
+
+        it 'tracks the exception' do
+          expect(Gitlab::ErrorTracking).to receive(:track_exception).with(
+            an_instance_of(exception)
+          )
+
+          subject
+        end
+
+        it 'memoizes the nil value' do
+          expect do
+            2.times { expect(license_name).to be_nil }
+          end.to change { Gitlab::GitalyClient.get_request_count }.by_at_most(1)
+        end
+      end
+
+      before do
+        expect(repository).to receive(:license).and_raise(exception)
+      end
+
+      context "Gitlab::Git::CommandError" do
+        let(:exception) { Gitlab::Git::CommandError }
+
+        it_behaves_like 'returns nil and tracks exception'
+      end
+
+      context "GRPC::Unavailable" do
+        let(:exception) { GRPC::Unavailable }
+
+        it_behaves_like 'returns nil and tracks exception'
+      end
+
+      context "GRPC::DeadlineExceeded" do
+        let(:exception) { GRPC::DeadlineExceeded }
+
+        it_behaves_like 'returns nil and tracks exception'
+      end
     end
   end
 end

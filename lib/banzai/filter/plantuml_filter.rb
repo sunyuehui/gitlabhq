@@ -1,5 +1,7 @@
+# frozen_string_literal: true
+
 require "nokogiri"
-require "asciidoctor-plantuml/plantuml"
+require "asciidoctor_plantuml/plantuml"
 
 module Banzai
   module Filter
@@ -23,7 +25,7 @@ module Banzai
       private
 
       def settings
-        ApplicationSetting.current || ApplicationSetting.create_from_defaults
+        Gitlab::CurrentSettings.current_application_settings
       end
 
       def plantuml_setup

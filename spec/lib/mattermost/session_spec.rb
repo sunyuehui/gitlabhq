@@ -1,6 +1,11 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Mattermost::Session, type: :request do
+RSpec.describe Mattermost::Session, type: :request do
+  include ExclusiveLeaseHelpers
+  include StubRequests
+
   let(:user) { create(:user) }
 
   let(:gitlab_url) { "http://gitlab.com" }
@@ -15,15 +20,15 @@ describe Mattermost::Session, type: :request do
   it { is_expected.to respond_to(:strategy) }
 
   before do
-    described_class.base_uri(mattermost_url)
+    subject.base_uri = mattermost_url
   end
 
   describe '#with session' do
     let(:location) { 'http://location.tld' }
     let(:cookie_header) {'MMOAUTH=taskik8az7rq8k6rkpuas7htia; Path=/;'}
     let!(:stub) do
-      WebMock.stub_request(:get, "#{mattermost_url}/api/v3/oauth/gitlab/login")
-        .to_return(headers: { 'location' => location, 'Set-Cookie' => cookie_header }, status: 307)
+      stub_full_request("#{mattermost_url}/oauth/gitlab/login")
+        .to_return(headers: { 'location' => location, 'Set-Cookie' => cookie_header }, status: 302)
     end
 
     context 'without oauth uri' do
@@ -56,31 +61,34 @@ describe Mattermost::Session, type: :request do
             redirect_uri: "#{mattermost_url}/signup/gitlab/complete",
             state: state }
         end
+
         let(:location) do
           "#{gitlab_url}/oauth/authorize?#{URI.encode_www_form(params)}"
         end
 
         before do
-          WebMock.stub_request(:get, "#{mattermost_url}/signup/gitlab/complete")
+          stub_full_request("#{mattermost_url}/signup/gitlab/complete")
             .with(query: hash_including({ 'state' => state }))
             .to_return do |request|
               post "/oauth/token",
-                client_id: doorkeeper.uid,
-                client_secret: doorkeeper.secret,
-                redirect_uri: params[:redirect_uri],
-                grant_type: 'authorization_code',
-                code: request.uri.query_values['code']
+                params: {
+                  client_id: doorkeeper.uid,
+                  client_secret: doorkeeper.secret,
+                  redirect_uri: params[:redirect_uri],
+                  grant_type: 'authorization_code',
+                  code: request.uri.query_values['code']
+                }
 
               if response.status == 200
                 { headers: { 'token' => 'thisworksnow' }, status: 202 }
               end
             end
 
-          WebMock.stub_request(:post, "#{mattermost_url}/api/v3/users/logout")
+          stub_full_request("#{mattermost_url}/api/v4/users/logout", method: :post)
             .to_return(headers: { Authorization: 'token thisworksnow' }, status: 200)
         end
 
-        it 'can setup a session' do
+        it 'can set up a session' do
           subject.with_session do |session|
           end
 
@@ -97,26 +105,20 @@ describe Mattermost::Session, type: :request do
       end
     end
 
-    context 'with lease' do
-      before do
-        allow(subject).to receive(:lease_try_obtain).and_return('aldkfjsldfk')
-      end
+    context 'exclusive lease' do
+      let(:lease_key) { 'mattermost:session' }
 
       it 'tries to obtain a lease' do
-        expect(subject).to receive(:lease_try_obtain)
-        expect(Gitlab::ExclusiveLease).to receive(:cancel)
+        expect_to_obtain_exclusive_lease(lease_key, 'uuid')
+        expect_to_cancel_exclusive_lease(lease_key, 'uuid')
 
-        # Cannot setup a session, but we should still cancel the lease
+        # Cannot set up a session, but we should still cancel the lease
         expect { subject.with_session }.to raise_error(Mattermost::NoSessionError)
       end
-    end
 
-    context 'without lease' do
-      before do
-        allow(subject).to receive(:lease_try_obtain).and_return(nil)
-      end
+      it 'returns a NoSessionError error without lease' do
+        stub_exclusive_lease_taken(lease_key)
 
-      it 'returns a NoSessionError error' do
         expect { subject.with_session }.to raise_error(Mattermost::NoSessionError)
       end
     end

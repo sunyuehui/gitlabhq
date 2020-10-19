@@ -1,4 +1,10 @@
-class EmailRejectionMailer < BaseMailer
+# frozen_string_literal: true
+
+class EmailRejectionMailer < ApplicationMailer
+  layout 'empty_mailer'
+
+  helper EmailsHelper
+
   def rejection(reason, original_raw, can_retry = false)
     @reason = reason
     @original_message = Mail::Message.new(original_raw)

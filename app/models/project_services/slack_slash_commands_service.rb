@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class SlackSlashCommandsService < SlashCommandsService
   include TriggersHelper
 
@@ -20,9 +22,13 @@ class SlackSlashCommandsService < SlashCommandsService
     end
   end
 
+  def chat_responder
+    ::Gitlab::Chat::Responder::Slack
+  end
+
   private
 
   def format(text)
-    Slack::Notifier::LinkFormatter.format(text) if text
+    Slack::Messenger::Util::LinkFormatter.format(text) if text
   end
 end

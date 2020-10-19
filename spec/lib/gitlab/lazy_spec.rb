@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Lazy do
+RSpec.describe Gitlab::Lazy do
   let(:dummy) { double(:dummy) }
 
   context 'when not calling any methods' do

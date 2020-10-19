@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Blob button line permalinks (BlobLinePermalinkUpdater)', js: true do
+RSpec.describe 'Blob button line permalinks (BlobLinePermalinkUpdater)', :js do
   include TreeHelper
 
   let(:project) { create(:project, :public, :repository) }
@@ -42,6 +44,17 @@ feature 'Blob button line permalinks (BlobLinePermalinkUpdater)', js: true do
         expect(find('.js-data-file-blob-permalink-url')['href']).to eq(get_absolute_url(project_blob_path(project, tree_join(sha, path), anchor: ending_fragment)))
       end
 
+      it 'changes fragment hash if icon inside line number link is clicked' do
+        ending_fragment = "L7"
+
+        visit_blob
+
+        find("##{ending_fragment}").hover
+        find("##{ending_fragment} svg").click
+
+        expect(find('.js-data-file-blob-permalink-url')['href']).to eq(get_absolute_url(project_blob_path(project, tree_join(sha, path), anchor: ending_fragment)))
+      end
+
       it 'with initial fragment hash, changes fragment hash if line number clicked' do
         fragment = "L1"
         ending_fragment = "L5"
@@ -77,6 +90,17 @@ feature 'Blob button line permalinks (BlobLinePermalinkUpdater)', js: true do
 
         find('#L3').click
         find("##{ending_fragment}").click
+
+        expect(find('.js-blob-blame-link')['href']).to eq(get_absolute_url(project_blame_path(project, tree_join('master', path), anchor: ending_fragment)))
+      end
+
+      it 'changes fragment hash if icon inside line number link is clicked' do
+        ending_fragment = "L7"
+
+        visit_blob
+
+        find("##{ending_fragment}").hover
+        find("##{ending_fragment} svg").click
 
         expect(find('.js-blob-blame-link')['href']).to eq(get_absolute_url(project_blame_path(project, tree_join('master', path), anchor: ending_fragment)))
       end

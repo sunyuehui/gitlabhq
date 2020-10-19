@@ -1,6 +1,36 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Git::DiffCollection, seed_helper: true do
+RSpec.describe Gitlab::Git::DiffCollection, :seed_helper do
+  before do
+    stub_const('MutatingConstantIterator', Class.new)
+
+    MutatingConstantIterator.class_eval do
+      include Enumerable
+
+      attr_reader :size
+
+      def initialize(count, value)
+        @count = count
+        @size  = count
+        @value = value
+      end
+
+      def each
+        return enum_for(:each) unless block_given?
+
+        loop do
+          break if @count == 0
+
+          # It is critical to decrement before yielding. We may never reach the lines after 'yield'.
+          @count -= 1
+          yield @value
+        end
+      end
+    end
+  end
+
   subject do
     Gitlab::Git::DiffCollection.new(
       iterator,
@@ -10,6 +40,7 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
       expanded: expanded
     )
   end
+
   let(:iterator) { MutatingConstantIterator.new(file_count, fake_diff(line_length, line_count)) }
   let(:file_count) { 0 }
   let(:line_length) { 1 }
@@ -21,6 +52,7 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
   describe '#to_a' do
     subject { super().to_a }
+
     it { is_expected.to be_kind_of ::Array }
   end
 
@@ -52,16 +84,19 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
         describe '#overflow?' do
           subject { super().overflow? }
+
           it { is_expected.to be_falsey }
         end
 
         describe '#empty?' do
           subject { super().empty? }
+
           it { is_expected.to be_falsey }
         end
 
         describe '#real_size' do
           subject { super().real_size }
+
           it { is_expected.to eq('3') }
         end
 
@@ -74,21 +109,30 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
           end
         end
 
+        describe '#line_count' do
+          subject { super().line_count }
+
+          it { is_expected.to eq file_count * line_count }
+        end
+
         context 'when limiting is disabled' do
           let(:limits) { false }
 
           describe '#overflow?' do
             subject { super().overflow? }
+
             it { is_expected.to be_falsey }
           end
 
           describe '#empty?' do
             subject { super().empty? }
+
             it { is_expected.to be_falsey }
           end
 
           describe '#real_size' do
             subject { super().real_size }
+
             it { is_expected.to eq('3') }
           end
 
@@ -100,6 +144,12 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
               expect(subject.size).to eq(3)
             end
           end
+
+          describe '#line_count' do
+            subject { super().line_count }
+
+            it { is_expected.to eq file_count * line_count }
+          end
         end
       end
 
@@ -108,18 +158,28 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
         describe '#overflow?' do
           subject { super().overflow? }
+
           it { is_expected.to be_truthy }
         end
 
         describe '#empty?' do
           subject { super().empty? }
+
           it { is_expected.to be_falsey }
         end
 
         describe '#real_size' do
           subject { super().real_size }
+
           it { is_expected.to eq('0+') }
         end
+
+        describe '#line_count' do
+          subject { super().line_count }
+
+          it { is_expected.to eq 1000 }
+        end
+
         it { expect(subject.size).to eq(0) }
 
         context 'when limiting is disabled' do
@@ -127,18 +187,28 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
           describe '#overflow?' do
             subject { super().overflow? }
+
             it { is_expected.to be_falsey }
           end
 
           describe '#empty?' do
             subject { super().empty? }
+
             it { is_expected.to be_falsey }
           end
 
           describe '#real_size' do
             subject { super().real_size }
+
             it { is_expected.to eq('3') }
           end
+
+          describe '#line_count' do
+            subject { super().line_count }
+
+            it { is_expected.to eq file_count * line_count }
+          end
+
           it { expect(subject.size).to eq(3) }
         end
       end
@@ -152,18 +222,28 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
         describe '#overflow?' do
           subject { super().overflow? }
+
           it { is_expected.to be_truthy }
         end
 
         describe '#empty?' do
           subject { super().empty? }
+
           it { is_expected.to be_falsey }
         end
 
         describe '#real_size' do
           subject { super().real_size }
+
           it { is_expected.to eq('10+') }
         end
+
+        describe '#line_count' do
+          subject { super().line_count }
+
+          it { is_expected.to eq 10 }
+        end
+
         it { expect(subject.size).to eq(10) }
 
         context 'when limiting is disabled' do
@@ -171,18 +251,28 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
           describe '#overflow?' do
             subject { super().overflow? }
+
             it { is_expected.to be_falsey }
           end
 
           describe '#empty?' do
             subject { super().empty? }
+
             it { is_expected.to be_falsey }
           end
 
           describe '#real_size' do
             subject { super().real_size }
+
             it { is_expected.to eq('11') }
           end
+
+          describe '#line_count' do
+            subject { super().line_count }
+
+            it { is_expected.to eq file_count * line_count }
+          end
+
           it { expect(subject.size).to eq(11) }
         end
       end
@@ -192,18 +282,28 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
         describe '#overflow?' do
           subject { super().overflow? }
+
           it { is_expected.to be_truthy }
         end
 
         describe '#empty?' do
           subject { super().empty? }
+
           it { is_expected.to be_falsey }
         end
 
         describe '#real_size' do
           subject { super().real_size }
+
           it { is_expected.to eq('3+') }
         end
+
+        describe '#line_count' do
+          subject { super().line_count }
+
+          it { is_expected.to eq 120 }
+        end
+
         it { expect(subject.size).to eq(3) }
 
         context 'when limiting is disabled' do
@@ -211,18 +311,28 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
           describe '#overflow?' do
             subject { super().overflow? }
+
             it { is_expected.to be_falsey }
           end
 
           describe '#empty?' do
             subject { super().empty? }
+
             it { is_expected.to be_falsey }
           end
 
           describe '#real_size' do
             subject { super().real_size }
+
             it { is_expected.to eq('11') }
           end
+
+          describe '#line_count' do
+            subject { super().line_count }
+
+            it { is_expected.to eq file_count * line_count }
+          end
+
           it { expect(subject.size).to eq(11) }
         end
       end
@@ -236,18 +346,28 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
         describe '#overflow?' do
           subject { super().overflow? }
+
           it { is_expected.to be_falsey }
         end
 
         describe '#empty?' do
           subject { super().empty? }
+
           it { is_expected.to be_falsey }
         end
 
         describe '#real_size' do
           subject { super().real_size }
+
           it { is_expected.to eq('10') }
         end
+
+        describe '#line_count' do
+          subject { super().line_count }
+
+          it { is_expected.to eq file_count * line_count }
+        end
+
         it { expect(subject.size).to eq(10) }
       end
     end
@@ -258,18 +378,28 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
       describe '#overflow?' do
         subject { super().overflow? }
+
         it { is_expected.to be_truthy }
       end
 
       describe '#empty?' do
         subject { super().empty? }
+
         it { is_expected.to be_falsey }
       end
 
       describe '#real_size' do
         subject { super().real_size }
+
         it { is_expected.to eq('9+') }
       end
+
+      describe '#line_count' do
+        subject { super().line_count }
+
+        it { is_expected.to eq file_count * line_count }
+      end
+
       it { expect(subject.size).to eq(9) }
 
       context 'when limiting is disabled' do
@@ -277,18 +407,28 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
         describe '#overflow?' do
           subject { super().overflow? }
+
           it { is_expected.to be_falsey }
         end
 
         describe '#empty?' do
           subject { super().empty? }
+
           it { is_expected.to be_falsey }
         end
 
         describe '#real_size' do
           subject { super().real_size }
+
           it { is_expected.to eq('10') }
         end
+
+        describe '#line_count' do
+          subject { super().line_count }
+
+          it { is_expected.to eq file_count * line_count }
+        end
+
         it { expect(subject.size).to eq(10) }
       end
     end
@@ -299,22 +439,32 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
 
     describe '#overflow?' do
       subject { super().overflow? }
+
       it { is_expected.to be_falsey }
     end
 
     describe '#empty?' do
       subject { super().empty? }
+
       it { is_expected.to be_truthy }
     end
 
     describe '#size' do
       subject { super().size }
+
       it { is_expected.to eq(0) }
     end
 
     describe '#real_size' do
       subject { super().real_size }
+
       it { is_expected.to eq('0')}
+    end
+
+    describe '#line_count' do
+      subject { super().line_count }
+
+      it { is_expected.to eq 0 }
     end
   end
 
@@ -341,8 +491,7 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
     end
 
     context 'when diff is quite large will collapse by default' do
-      let(:iterator) { [{ diff: 'a' * (Gitlab::Git::Diff.collapse_limit + 1) }] }
-      let(:max_files) { 100 }
+      let(:iterator) { [{ diff: 'a' * 20480 }] }
 
       context 'when no collapse is set' do
         let(:expanded) { true }
@@ -371,21 +520,39 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
             .to yield_with_args(an_instance_of(Gitlab::Git::Diff))
         end
 
-        it 'prunes diffs that are quite big' do
-          diff = nil
+        context 'single-file collections' do
+          it 'does not prune diffs' do
+            diff = nil
 
-          subject.each do |d|
-            diff = d
+            subject.each do |d|
+              diff = d
+            end
+
+            expect(diff.diff).not_to eq('')
           end
+        end
 
-          expect(diff.diff).to eq('')
+        context 'multi-file collections' do
+          let(:iterator) { [{ diff: 'b' }, { diff: 'a' * 20480 }]}
+
+          it 'prunes diffs that are quite big' do
+            diff = nil
+
+            subject.each do |d|
+              diff = d
+            end
+
+            expect(diff.diff).to eq('')
+          end
         end
 
         context 'when go over safe limits on files' do
           let(:iterator) { [fake_diff(1, 1)] * 4 }
 
           before do
-            stub_const('Gitlab::Git::DiffCollection::DEFAULT_LIMITS', { max_files: 2, max_lines: max_lines })
+            allow(Gitlab::Git::DiffCollection)
+              .to receive(:default_limits)
+              .and_return({ max_files: 2, max_lines: max_lines })
           end
 
           it 'prunes diffs by default even little ones' do
@@ -410,7 +577,9 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
           end
 
           before do
-            stub_const('Gitlab::Git::DiffCollection::DEFAULT_LIMITS', { max_files: max_files, max_lines: 80 })
+            allow(Gitlab::Git::DiffCollection)
+              .to receive(:default_limits)
+              .and_return({ max_files: max_files, max_lines: 80 })
           end
 
           it 'prunes diffs by default even little ones' do
@@ -435,7 +604,9 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
           end
 
           before do
-            stub_const('Gitlab::Git::DiffCollection::DEFAULT_LIMITS', { max_files: max_files, max_lines: 80 })
+            allow(Gitlab::Git::DiffCollection)
+              .to receive(:default_limits)
+              .and_return({ max_files: max_files, max_lines: 80 })
           end
 
           it 'prunes diffs by default even little ones' do
@@ -469,29 +640,74 @@ describe Gitlab::Git::DiffCollection, seed_helper: true do
         end
       end
     end
+
+    context 'when offset_index is given' do
+      subject do
+        Gitlab::Git::DiffCollection.new(
+          iterator,
+          max_files: max_files,
+          max_lines: max_lines,
+          limits: limits,
+          offset_index: 2,
+          expanded: expanded
+        )
+      end
+
+      def diff(raw)
+        raw['diff']
+      end
+
+      let(:iterator) do
+        [
+          fake_diff(1, 1),
+          fake_diff(2, 2),
+          fake_diff(3, 3),
+          fake_diff(4, 4)
+        ]
+      end
+
+      it 'does not yield diffs before the offset' do
+        expect(subject.to_a.map(&:diff)).to eq(
+          [
+            diff(fake_diff(3, 3)),
+            diff(fake_diff(4, 4))
+          ]
+        )
+      end
+
+      context 'when go over safe limits on bytes' do
+        let(:iterator) do
+          [
+            fake_diff(1, 10), # 10
+            fake_diff(1, 10), # 20
+            fake_diff(1, 15), # 35
+            fake_diff(1, 20), # 55
+            fake_diff(1, 45), # 100 - limit hit
+            fake_diff(1, 45),
+            fake_diff(1, 20480),
+            fake_diff(1, 1)
+          ]
+        end
+
+        before do
+          allow(Gitlab::Git::DiffCollection)
+            .to receive(:default_limits)
+            .and_return({ max_files: max_files, max_lines: 80 })
+        end
+
+        it 'considers size of diffs before the offset for prunning' do
+          expect(subject.to_a.map(&:diff)).to eq(
+            [
+              diff(fake_diff(1, 15)),
+              diff(fake_diff(1, 20))
+            ]
+          )
+        end
+      end
+    end
   end
 
   def fake_diff(line_length, line_count)
     { 'diff' => "#{'a' * line_length}\n" * line_count }
-  end
-
-  class MutatingConstantIterator
-    include Enumerable
-
-    def initialize(count, value)
-      @count = count
-      @value = value
-    end
-
-    def each
-      return enum_for(:each) unless block_given?
-
-      loop do
-        break if @count.zero?
-        # It is critical to decrement before yielding. We may never reach the lines after 'yield'.
-        @count -= 1
-        yield @value
-      end
-    end
   end
 end

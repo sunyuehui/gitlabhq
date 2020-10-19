@@ -1,36 +1,30 @@
-- @content_class = "limit-container-width limit-container-width-sm" unless fluid_layout
-- page_title "Git Access", "Wiki"
+- @content_class = "limit-container-width" unless fluid_layout
+- page_title s_("WikiClone|Git Access"), _("Wiki")
 
-.wiki-page-header.has-sidebar-toggle
-  %button.btn.btn-default.visible-xs.visible-sm.pull-right.sidebar-toggle.js-sidebar-wiki-toggle{ role: "button", type: "button" }
-    = icon('angle-double-left')
+.wiki-page-header.top-area.has-sidebar-toggle.py-3.flex-column.flex-lg-row
+  = wiki_sidebar_toggle_button
 
-  .git-access-header
-    Clone repository
-    %strong= @project_wiki.full_path
+  .git-access-header.w-100.d-flex.flex-column.justify-content-center
+    %span
+      = _("Clone repository")
+      %strong= @wiki.full_path
 
-  = render "shared/clone_panel", project: @project_wiki
+  .pt-3.pt-lg-0.w-100
+    = render "shared/clone_panel", project: @wiki
 
 .wiki-git-access
-  %h3 Install Gollum
+  %h3= s_("WikiClone|Install Gollum")
   %pre.dark
     :preserve
       gem install gollum
-  %p
-    It is recommended to install
-    %code github-markdown
-    so that GFM features render locally:
+
+  %h3= s_("WikiClone|Clone your wiki")
   %pre.dark
     :preserve
-      gem install github-markdown
+      git clone #{ content_tag(:span, h(default_url_to_repo(@wiki)), class: 'clone')}
+      cd #{h @wiki.path}
 
-  %h3 Clone your wiki
-  %pre.dark
-    :preserve
-      git clone #{ content_tag(:span, h(default_url_to_repo(@project_wiki)), class: 'clone')}
-      cd #{h @project_wiki.path}
-
-  %h3 Start Gollum and edit locally
+  %h3= s_("WikiClone|Start Gollum and edit locally")
   %pre.dark
     :preserve
       gollum
@@ -39,4 +33,4 @@
       >> Maximum connections set to 1024
       >> Listening on 0.0.0.0:4567, CTRL+C to stop
 
-= render 'sidebar'
+= render 'shared/wikis/sidebar'

@@ -1,7 +1,8 @@
-require 'spec_helper'
-require_relative '../email_shared_blocks'
+# frozen_string_literal: true
 
-describe Gitlab::Email::Handler::UnsubscribeHandler do
+require 'spec_helper'
+
+RSpec.describe Gitlab::Email::Handler::UnsubscribeHandler do
   include_context :email_shared_context
 
   before do
@@ -9,12 +10,34 @@ describe Gitlab::Email::Handler::UnsubscribeHandler do
     stub_config_setting(host: 'localhost')
   end
 
-  let(:email_raw) { fixture_file('emails/valid_reply.eml').gsub(mail_key, "#{mail_key}+unsubscribe") }
-  let(:project) { create(:project, :public) }
-  let(:user) { create(:user) }
-  let(:noteable) { create(:issue, project: project) }
+  let(:email_raw) { fixture_file('emails/valid_reply.eml').gsub(mail_key, "#{mail_key}#{Gitlab::IncomingEmail::UNSUBSCRIBE_SUFFIX}") }
+  let(:project)   { create(:project, :public) }
+  let(:user)      { create(:user) }
+  let(:noteable)  { create(:issue, project: project) }
 
   let!(:sent_notification) { SentNotification.record(noteable, user.id, mail_key) }
+
+  context "when email key" do
+    let(:mail) { Mail::Message.new(email_raw) }
+
+    it "matches the new format" do
+      handler = described_class.new(mail, "#{mail_key}#{Gitlab::IncomingEmail::UNSUBSCRIBE_SUFFIX}")
+
+      expect(handler.can_handle?).to be_truthy
+    end
+
+    it "matches the legacy format" do
+      handler = described_class.new(mail, "#{mail_key}#{Gitlab::IncomingEmail::UNSUBSCRIBE_SUFFIX_LEGACY}")
+
+      expect(handler.can_handle?).to be_truthy
+    end
+
+    it "doesn't match either format" do
+      handler = described_class.new(mail, "+#{mail_key}#{Gitlab::IncomingEmail::UNSUBSCRIBE_SUFFIX}")
+
+      expect(handler.can_handle?).to be_falsey
+    end
+  end
 
   context 'when notification concerns a commit' do
     let(:commit) { create(:commit, project: project) }
@@ -38,6 +61,14 @@ describe Gitlab::Email::Handler::UnsubscribeHandler do
 
     it 'unsubscribes user from notable' do
       expect { receiver.execute }.to change { noteable.subscribed?(user) }.from(true).to(false)
+    end
+
+    context 'when using old style unsubscribe link' do
+      let(:email_raw) { fixture_file('emails/valid_reply.eml').gsub(mail_key, "#{mail_key}#{Gitlab::IncomingEmail::UNSUBSCRIBE_SUFFIX_LEGACY}") }
+
+      it 'unsubscribes user from notable' do
+        expect { receiver.execute }.to change { noteable.subscribed?(user) }.from(true).to(false)
+      end
     end
   end
 

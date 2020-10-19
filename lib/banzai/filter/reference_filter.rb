@@ -1,3 +1,6 @@
+# frozen_string_literal: true
+
+# Generated HTML is transformed back to GFM by app/assets/javascripts/behaviors/markdown/nodes/reference.js
 module Banzai
   module Filter
     # Base class for GitLab Flavored Markdown reference filters.
@@ -8,8 +11,26 @@ module Banzai
     #   :project (required) - Current project, ignored if reference is cross-project.
     #   :only_path          - Generate path-only links.
     class ReferenceFilter < HTML::Pipeline::Filter
+      include RequestStoreReferenceCache
+      include OutputSafety
+
       class << self
         attr_accessor :reference_type
+
+        def call(doc, context = nil, result = nil)
+          new(doc, context, result).call_and_update_nodes
+        end
+      end
+
+      def initialize(doc, context = nil, result = nil)
+        super
+
+        @new_nodes = {}
+        @nodes = self.result[:reference_filter_nodes]
+      end
+
+      def call_and_update_nodes
+        with_update_nodes { call }
       end
 
       # Returns a data attribute String to attach to a reference link
@@ -31,15 +52,11 @@ module Banzai
 
         attributes[:reference_type] ||= self.class.reference_type
         attributes[:container] ||= 'body'
-        attributes[:placement] ||= 'bottom'
+        attributes[:placement] ||= 'top'
         attributes.delete(:original) if context[:no_original_data]
         attributes.map do |key, value|
           %Q(data-#{key.to_s.dasherize}="#{escape_once(value)}")
         end.join(' ')
-      end
-
-      def escape_once(html)
-        html.html_safe? ? html : ERB::Util.html_escape_once(html)
       end
 
       def ignore_ancestor_query
@@ -55,19 +72,31 @@ module Banzai
         context[:project]
       end
 
+      def group
+        context[:group]
+      end
+
+      def user
+        context[:user]
+      end
+
       def skip_project_check?
         context[:skip_project_check]
       end
 
-      def reference_class(type)
-        "gfm gfm-#{type} has-tooltip"
+      def reference_class(type, tooltip: true)
+        gfm_klass = "gfm gfm-#{type}"
+
+        return gfm_klass unless tooltip
+
+        "#{gfm_klass} has-tooltip"
       end
 
       # Ensure that a :project key exists in context
       #
       # Note that while the key might exist, its value could be nil!
       def validate
-        needs :project
+        needs :project unless skip_project_check?
       end
 
       # Iterates over all <a> and text() nodes in a document.
@@ -77,11 +106,6 @@ module Banzai
       # "gfm" class or the "href" attribute is empty.
       def each_node
         return to_enum(__method__) unless block_given?
-
-        query = %Q{descendant-or-self::text()[not(#{ignore_ancestor_query})]
-        | descendant-or-self::a[
-          not(contains(concat(" ", @class, " "), " gfm ")) and not(@href = "")
-        ]}
 
         doc.xpath(query).each do |node|
           yield node
@@ -103,25 +127,25 @@ module Banzai
         yield link, inner_html
       end
 
-      def replace_text_when_pattern_matches(node, pattern)
+      def replace_text_when_pattern_matches(node, index, pattern)
         return unless node.text =~ pattern
 
         content = node.to_html
         html = yield content
 
-        node.replace(html) unless content == html
+        replace_text_with_html(node, index, html) unless html == content
       end
 
-      def replace_link_node_with_text(node, link)
+      def replace_link_node_with_text(node, index)
         html = yield
 
-        node.replace(html) unless html == node.text
+        replace_text_with_html(node, index, html) unless html == node.text
       end
 
-      def replace_link_node_with_href(node, link)
+      def replace_link_node_with_href(node, index, link)
         html = yield
 
-        node.replace(html) unless html == link
+        replace_text_with_html(node, index, html) unless html == link
       end
 
       def text_node?(node)
@@ -130,6 +154,57 @@ module Banzai
 
       def element_node?(node)
         node.is_a?(Nokogiri::XML::Element)
+      end
+
+      private
+
+      def query
+        @query ||= %Q{descendant-or-self::text()[not(#{ignore_ancestor_query})]
+        | descendant-or-self::a[
+          not(contains(concat(" ", @class, " "), " gfm ")) and not(@href = "")
+        ]}
+      end
+
+      def replace_text_with_html(node, index, html)
+        replace_and_update_new_nodes(node, index, html)
+      end
+
+      def replace_and_update_new_nodes(node, index, html)
+        previous_node = node.previous
+        next_node = node.next
+        parent_node = node.parent
+        # Unfortunately node.replace(html) returns re-parented nodes, not the actual replaced nodes in the doc
+        # We need to find the actual nodes in the doc that were replaced
+        node.replace(html)
+        @new_nodes[index] = []
+
+        # We replaced node with new nodes, so we find first new node. If previous_node is nil, we take first parent child
+        new_node = previous_node ? previous_node.next : parent_node&.children&.first
+
+        # We iterate from first to last replaced node and store replaced nodes in @new_nodes
+        while new_node && new_node != next_node
+          @new_nodes[index] << new_node.xpath(query)
+          new_node = new_node.next
+        end
+
+        @new_nodes[index].flatten!
+      end
+
+      def only_path?
+        context[:only_path]
+      end
+
+      def with_update_nodes
+        @new_nodes = {}
+        yield.tap { update_nodes! }
+      end
+
+      # Once Filter completes replacing nodes, we update nodes with @new_nodes
+      def update_nodes!
+        @new_nodes.sort_by { |index, _new_nodes| -index }.each do |index, new_nodes|
+          nodes[index, 1] = new_nodes
+        end
+        result[:reference_filter_nodes] = nodes
       end
     end
   end

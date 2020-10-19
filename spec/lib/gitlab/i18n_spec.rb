@@ -1,7 +1,17 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::I18n do
+RSpec.describe Gitlab::I18n do
   let(:user) { create(:user, preferred_language: 'es') }
+
+  describe '.selectable_locales' do
+    it 'does not return languages that should not be available in the UI' do
+      Gitlab::I18n::NOT_AVAILABLE_IN_UI.each do |language|
+        expect(described_class.selectable_locales).not_to include(language)
+      end
+    end
+  end
 
   describe '.locale=' do
     after do

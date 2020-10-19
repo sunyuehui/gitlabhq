@@ -1,8 +1,8 @@
+# frozen_string_literal: true
+
 module Bitbucket
   module Representation
     class Repo < Representation::Base
-      attr_reader :owner, :slug
-
       def initialize(raw)
         super(raw)
       end

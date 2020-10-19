@@ -1,19 +1,54 @@
+# frozen_string_literal: true
+
 class IssueTrackerService < Service
   validate :one_issue_tracker, if: :activated?, on: :manual_change
 
+  # TODO: we can probably just delegate as part of
+  # https://gitlab.com/gitlab-org/gitlab/issues/29404
+  data_field :project_url, :issues_url, :new_issue_url
+
   default_value_for :category, 'issue_tracker'
+
+  before_validation :handle_properties
+  before_validation :set_default_data, on: :create
 
   # Pattern used to extract links from comments
   # Override this method on services that uses different patterns
   # This pattern does not support cross-project references
   # The other code assumes that this pattern is a superset of all
-  # overriden patterns. See ReferenceRegexes::EXTERNAL_PATTERN
+  # overridden patterns. See ReferenceRegexes.external_pattern
   def self.reference_pattern(only_long: false)
     if only_long
-      %r{(\b[A-Z][A-Z0-9_]+-)(?<issue>\d+)}
+      /(\b[A-Z][A-Z0-9_]*-)#{Gitlab::Regex.issue}/
     else
-      %r{(\b[A-Z][A-Z0-9_]+-|#{Issue.reference_prefix})(?<issue>\d+)}
+      /(\b[A-Z][A-Z0-9_]*-|#{Issue.reference_prefix})#{Gitlab::Regex.issue}/
     end
+  end
+
+  def handle_properties
+    # this has been moved from initialize_properties and should be improved
+    # as part of https://gitlab.com/gitlab-org/gitlab/issues/29404
+    return unless properties
+
+    @legacy_properties_data = properties.dup
+    data_values = properties.slice!('title', 'description')
+    data_values.reject! { |key| data_fields.changed.include?(key) }
+    data_values.slice!(*data_fields.attributes.keys)
+    data_fields.assign_attributes(data_values) if data_values.present?
+
+    self.properties = {}
+  end
+
+  def legacy_properties_data
+    @legacy_properties_data ||= {}
+  end
+
+  def supports_data_fields?
+    true
+  end
+
+  def data_fields
+    issue_tracker_data || self.build_issue_tracker_data
   end
 
   def default?
@@ -21,7 +56,7 @@ class IssueTrackerService < Service
   end
 
   def issue_url(iid)
-    self.issues_url.gsub(':id', iid.to_s)
+    issues_url.gsub(':id', iid.to_s)
   end
 
   def issue_tracker_path
@@ -38,32 +73,26 @@ class IssueTrackerService < Service
 
   def fields
     [
-      { type: 'text', name: 'description', placeholder: description },
       { type: 'text', name: 'project_url', placeholder: 'Project url', required: true },
       { type: 'text', name: 'issues_url', placeholder: 'Issue url', required: true },
       { type: 'text', name: 'new_issue_url', placeholder: 'New Issue url', required: true }
     ]
   end
 
-  # Initialize with default properties values
-  # or receive a block with custom properties
-  def initialize_properties(&block)
-    return unless properties.nil?
+  def initialize_properties
+    {}
+  end
 
-    if enabled_in_gitlab_config
-      if block_given?
-        yield
-      else
-        self.properties = {
-          title: issues_tracker['title'],
-          project_url: issues_tracker['project_url'],
-          issues_url: issues_tracker['issues_url'],
-          new_issue_url: issues_tracker['new_issue_url']
-        }
-      end
-    else
-      self.properties = {}
-    end
+  # Initialize with default properties values
+  def set_default_data
+    return unless issues_tracker.present?
+
+    # we don't want to override if we have set something
+    return if project_url || issues_url || new_issue_url
+
+    data_fields.project_url = issues_tracker['project_url']
+    data_fields.issues_url = issues_tracker['issues_url']
+    data_fields.new_issue_url = issues_tracker['new_issue_url']
   end
 
   def self.supported_events
@@ -77,17 +106,25 @@ class IssueTrackerService < Service
     result = false
 
     begin
-      response = HTTParty.head(self.project_url, verify: true)
+      response = Gitlab::HTTP.head(self.project_url, verify: true)
 
       if response
         message = "#{self.type} received response #{response.code} when attempting to connect to #{self.project_url}"
         result = true
       end
-    rescue HTTParty::Error, Timeout::Error, SocketError, Errno::ECONNRESET, Errno::ECONNREFUSED, OpenSSL::SSL::SSLError => error
+    rescue Gitlab::HTTP::Error, Timeout::Error, SocketError, Errno::ECONNRESET, Errno::ECONNREFUSED, OpenSSL::SSL::SSLError => error
       message = "#{self.type} had an error when trying to connect to #{self.project_url}: #{error.message}"
     end
-    Rails.logger.info(message)
+    log_info(message)
     result
+  end
+
+  def support_close_issue?
+    false
+  end
+
+  def support_cross_reference?
+    false
   end
 
   private
@@ -103,11 +140,13 @@ class IssueTrackerService < Service
   end
 
   def one_issue_tracker
-    return if template?
+    return if template? || instance?
     return if project.blank?
 
     if project.services.external_issue_trackers.where.not(id: id).any?
-      errors.add(:base, 'Another issue tracker is already in use. Only one issue tracker service can be active at a time')
+      errors.add(:base, _('Another issue tracker is already in use. Only one issue tracker service can be active at a time'))
     end
   end
 end
+
+IssueTrackerService.prepend_if_ee('EE::IssueTrackerService')

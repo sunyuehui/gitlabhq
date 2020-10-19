@@ -1,11 +1,13 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Project member activity', js: true do
+RSpec.describe 'Project member activity', :js do
   let(:user)            { create(:user) }
   let(:project)         { create(:project, :public, name: 'x', namespace: user.namespace) }
 
   before do
-    project.team << [user, :master]
+    project.add_maintainer(user)
   end
 
   def visit_activities_and_wait_with_event(event_type)
@@ -14,32 +16,36 @@ feature 'Project member activity', js: true do
     wait_for_requests
   end
 
-  subject { page.find(".event-title").text }
-
   context 'when a user joins the project' do
     before do
-      visit_activities_and_wait_with_event(Event::JOINED)
+      visit_activities_and_wait_with_event(:joined)
     end
 
-    it { is_expected.to eq("#{user.name} joined project") }
+    it "presents the correct message" do
+      expect(page.find('.event-user-info').text).to eq("#{user.name} #{user.to_reference}")
+      expect(page.find('.event-title').text).to eq("joined project")
+    end
   end
 
   context 'when a user leaves the project' do
     before do
-      visit_activities_and_wait_with_event(Event::LEFT)
+      visit_activities_and_wait_with_event(:left)
     end
 
-    it { is_expected.to eq("#{user.name} left project") }
+    it "presents the correct message" do
+      expect(page.find('.event-user-info').text).to eq("#{user.name} #{user.to_reference}")
+      expect(page.find('.event-title').text).to eq("left project")
+    end
   end
 
   context 'when a users membership expires for the project' do
     before do
-      visit_activities_and_wait_with_event(Event::EXPIRED)
+      visit_activities_and_wait_with_event(:expired)
     end
 
     it "presents the correct message" do
-      message = "#{user.name} removed due to membership expiration from project"
-      is_expected.to eq(message)
+      expect(page.find('.event-user-info').text).to eq("#{user.name} #{user.to_reference}")
+      expect(page.find('.event-title').text).to eq("removed due to membership expiration from project")
     end
   end
 end

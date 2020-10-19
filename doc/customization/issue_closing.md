@@ -1,4 +1,5 @@
-This document was split into:
+---
+redirect_to: '../user/project/issues/managing_issues.md#closing-issues-automatically'
+---
 
-- [administration/issue_closing_pattern.md](../administration/issue_closing_pattern.md).
-- [user/project/issues/automatic_issue_closing](../user/project/issues/automatic_issue_closing.md).
+This document was moved to [another location](../user/project/issues/managing_issues.md#closing-issues-automatically).

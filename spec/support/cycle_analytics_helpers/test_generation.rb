@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # rubocop:disable Metrics/AbcSize
 
 # Note: The ABC size is large here because we have a method generating test cases with
@@ -25,9 +27,15 @@ module CycleAnalyticsHelpers
 
       scenarios = combinations_of_start_time_conditions.product(combinations_of_end_time_conditions)
       scenarios.each do |start_time_conditions, end_time_conditions|
+        let_it_be(:other_project) { create(:project, :repository) }
+
+        before do
+          other_project.add_developer(self.user)
+        end
+
         context "start condition: #{start_time_conditions.map(&:first).to_sentence}" do
           context "end condition: #{end_time_conditions.map(&:first).to_sentence}" do
-            it "finds the median of available durations between the two conditions" do
+            it "finds the median of available durations between the two conditions", :sidekiq_might_not_need_inline do
               time_differences = Array.new(5) do |index|
                 data = data_fn[self]
                 start_time = (index * 10).days.from_now
@@ -50,12 +58,10 @@ module CycleAnalyticsHelpers
               end
 
               median_time_difference = time_differences.sort[2]
-              expect(subject[phase].median).to be_within(5).of(median_time_difference)
+              expect(subject[phase].project_median).to be_within(5).of(median_time_difference)
             end
 
             context "when the data belongs to another project" do
-              let(:other_project) { create(:project, :repository) }
-
               it "returns nil" do
                 # Use a stub to "trick" the data/condition functions
                 # into using another project. This saves us from having to
@@ -80,7 +86,7 @@ module CycleAnalyticsHelpers
                 # Turn off the stub before checking assertions
                 allow(self).to receive(:project).and_call_original
 
-                expect(subject[phase].median).to be_nil
+                expect(subject[phase].project_median).to be_nil
               end
             end
 
@@ -103,7 +109,7 @@ module CycleAnalyticsHelpers
 
                 Timecop.freeze(end_time + 1.day) { post_fn[self, data] } if post_fn
 
-                expect(subject[phase].median).to be_nil
+                expect(subject[phase].project_median).to be_nil
               end
             end
           end
@@ -115,13 +121,13 @@ module CycleAnalyticsHelpers
               data = data_fn[self]
               end_time = rand(1..10).days.from_now
 
-              end_time_conditions.each_with_index do |(condition_name, condition_fn), index|
+              end_time_conditions.each_with_index do |(_condition_name, condition_fn), index|
                 Timecop.freeze(end_time + index.days) { condition_fn[self, data] }
               end
 
               Timecop.freeze(end_time + 1.day) { post_fn[self, data] } if post_fn
 
-              expect(subject[phase].median).to be_nil
+              expect(subject[phase].project_median).to be_nil
             end
           end
         end
@@ -138,7 +144,7 @@ module CycleAnalyticsHelpers
 
               post_fn[self, data] if post_fn
 
-              expect(subject[phase].median).to be_nil
+              expect(subject[phase].project_median).to be_nil
             end
           end
         end
@@ -146,7 +152,7 @@ module CycleAnalyticsHelpers
 
       context "when none of the start / end conditions are matched" do
         it "returns nil" do
-          expect(subject[phase].median).to be_nil
+          expect(subject[phase].project_median).to be_nil
         end
       end
     end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module PathRegex
     extend self
@@ -26,11 +28,11 @@ module Gitlab
       apple-touch-icon.png
       assets
       autocomplete
-      ci
       dashboard
       deploy.html
       explore
       favicon.ico
+      favicon.png
       files
       groups
       health_check
@@ -38,8 +40,7 @@ module Gitlab
       import
       invites
       jwt
-      koding
-      notification_settings
+      login
       oauth
       profile
       projects
@@ -50,13 +51,16 @@ module Gitlab
       sent_notifications
       slash-command-logo.png
       snippets
-      u
-      unicorn_test
       unsubscribes
       uploads
       users
+      v2
     ].freeze
 
+    # NOTE: Do not add new items to this list unless necessary as this will
+    # cause conflicts with existing namespaced routes for groups or projects.
+    # See https://docs.gitlab.com/ee/development/routing.html#project-routes
+    #
     # This list should contain all words following `/*namespace_id/:project_id` in
     # routes that contain a second wildcard.
     #
@@ -103,6 +107,10 @@ module Gitlab
       wikis
     ].freeze
 
+    # NOTE: Do not add new items to this list unless necessary as this will
+    # cause conflicts with existing namespaced routes for groups or projects.
+    # See https://docs.gitlab.com/ee/development/routing.html#group-routes
+    #
     # These are all the paths that follow `/groups/*id/ or `/groups/*group_id`
     # We need to reject these because we have a `/groups/*id` page that is the same
     # as the `/*id`.
@@ -112,23 +120,6 @@ module Gitlab
     # this would map to the activity-page of its parent.
     GROUP_ROUTES = %w[
       -
-      activity
-      analytics
-      audit_events
-      avatar
-      edit
-      group_members
-      hooks
-      issues
-      labels
-      ldap
-      ldap_group_links
-      merge_requests
-      milestones
-      notification_setting
-      pipeline_quota
-      projects
-      subgroups
     ].freeze
 
     ILLEGAL_PROJECT_PATH_WORDS = PROJECT_WILDCARD_ROUTES
@@ -140,13 +131,14 @@ module Gitlab
     # allow non-regex validations, etc), `NAMESPACE_FORMAT_REGEX_JS` serves as a Javascript-compatible version of
     # `NAMESPACE_FORMAT_REGEX`, with the negative lookbehind assertion removed. This means that the client-side validation
     # will pass for usernames ending in `.atom` and `.git`, but will be caught by the server-side validation.
-    PATH_REGEX_STR = '[a-zA-Z0-9_\.][a-zA-Z0-9_\-\.]*'.freeze
-    NAMESPACE_FORMAT_REGEX_JS = PATH_REGEX_STR + '[a-zA-Z0-9_\-]|[a-zA-Z0-9_]'.freeze
+    PATH_START_CHAR = '[a-zA-Z0-9_\.]'
+    PATH_REGEX_STR = PATH_START_CHAR + '[a-zA-Z0-9_\-\.]*'
+    NAMESPACE_FORMAT_REGEX_JS = PATH_REGEX_STR + '[a-zA-Z0-9_\-]|[a-zA-Z0-9_]'
 
     NO_SUFFIX_REGEX = /(?<!\.git|\.atom)/.freeze
     NAMESPACE_FORMAT_REGEX = /(?:#{NAMESPACE_FORMAT_REGEX_JS})#{NO_SUFFIX_REGEX}/.freeze
     PROJECT_PATH_FORMAT_REGEX = /(?:#{PATH_REGEX_STR})#{NO_SUFFIX_REGEX}/.freeze
-    FULL_NAMESPACE_FORMAT_REGEX = %r{(#{NAMESPACE_FORMAT_REGEX}/)*#{NAMESPACE_FORMAT_REGEX}}.freeze
+    FULL_NAMESPACE_FORMAT_REGEX = %r{(#{NAMESPACE_FORMAT_REGEX}/){,#{Namespace::NUMBER_OF_ANCESTORS_ALLOWED}}#{NAMESPACE_FORMAT_REGEX}}.freeze
 
     def root_namespace_route_regex
       @root_namespace_route_regex ||= begin
@@ -189,24 +181,20 @@ module Gitlab
       @project_git_route_regex ||= /#{project_route_regex}\.git/.freeze
     end
 
-    def root_namespace_path_regex
-      @root_namespace_path_regex ||= %r{\A#{root_namespace_route_regex}/\z}
+    def project_wiki_git_route_regex
+      @project_wiki_git_route_regex ||= /#{PATH_REGEX_STR}\.wiki/.freeze
     end
 
     def full_namespace_path_regex
       @full_namespace_path_regex ||= %r{\A#{full_namespace_route_regex}/\z}
     end
 
-    def project_path_regex
-      @project_path_regex ||= %r{\A#{project_route_regex}/\z}
-    end
-
     def full_project_path_regex
       @full_project_path_regex ||= %r{\A#{full_namespace_route_regex}/#{project_route_regex}/\z}
     end
 
-    def full_namespace_format_regex
-      @namespace_format_regex ||= /A#{FULL_NAMESPACE_FORMAT_REGEX}\z/.freeze
+    def full_project_git_path_regex
+      @full_project_git_path_regex ||= %r{\A\/?(?<namespace_path>#{full_namespace_route_regex})\/(?<project_path>#{project_route_regex})\.git\z}
     end
 
     def namespace_format_regex
@@ -255,12 +243,38 @@ module Gitlab
       }x
     end
 
+    def full_snippets_repository_path_regex
+      %r{\A(#{personal_snippet_repository_path_regex}|#{project_snippet_repository_path_regex})\z}
+    end
+
+    def personal_and_project_snippets_path_regex
+      %r{#{personal_snippet_path_regex}|#{project_snippet_path_regex}}
+    end
+
     private
+
+    def personal_snippet_path_regex
+      /snippets/
+    end
+
+    def personal_snippet_repository_path_regex
+      %r{#{personal_snippet_path_regex}/\d+}
+    end
+
+    def project_snippet_path_regex
+      %r{#{full_namespace_route_regex}/#{project_route_regex}/snippets}
+    end
+
+    def project_snippet_repository_path_regex
+      %r{#{project_snippet_path_regex}/\d+}
+    end
 
     def single_line_regexp(regex)
       # Turns a multiline extended regexp into a single line one,
-      # beacuse `rake routes` breaks on multiline regexes.
+      # because `rake routes` breaks on multiline regexes.
       Regexp.new(regex.source.gsub(/\(\?#.+?\)/, '').gsub(/\s*/, ''), regex.options ^ Regexp::EXTENDED).freeze
     end
   end
 end
+
+Gitlab::PathRegex.prepend_if_ee('EE::Gitlab::PathRegex')

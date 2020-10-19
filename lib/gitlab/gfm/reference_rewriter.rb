@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Gfm
     ##
@@ -29,19 +31,21 @@ module Gitlab
     #  http://gitlab.com/some/link/#1234, and code `puts #1234`'
     #
     class ReferenceRewriter
-      def initialize(text, source_project, current_user)
+      RewriteError = Class.new(StandardError)
+
+      def initialize(text, source_parent, current_user)
         @text = text
-        @source_project = source_project
+        @source_parent = source_parent
         @current_user = current_user
         @original_html = markdown(text)
         @pattern = Gitlab::ReferenceExtractor.references_pattern
       end
 
-      def rewrite(target_project)
+      def rewrite(target_parent)
         return @text unless needs_rewrite?
 
         @text.gsub(@pattern) do |reference|
-          unfold_reference(reference, Regexp.last_match, target_project)
+          unfold_reference(reference, Regexp.last_match, target_parent)
         end
       end
 
@@ -51,32 +55,36 @@ module Gitlab
 
       private
 
-      def unfold_reference(reference, match, target_project)
+      def unfold_reference(reference, match, target_parent)
         before = @text[0...match.begin(0)]
         after = @text[match.end(0)..-1]
 
         referable = find_referable(reference)
         return reference unless referable
 
-        cross_reference = build_cross_reference(referable, target_project)
+        cross_reference = build_cross_reference(referable, target_parent)
         return reference if reference == cross_reference
+
+        if cross_reference.nil?
+          raise RewriteError, "Unspecified reference detected for #{referable.class.name}"
+        end
 
         new_text = before + cross_reference + after
         substitution_valid?(new_text) ? cross_reference : reference
       end
 
       def find_referable(reference)
-        extractor = Gitlab::ReferenceExtractor.new(@source_project,
+        extractor = Gitlab::ReferenceExtractor.new(@source_parent,
                                                    @current_user)
         extractor.analyze(reference)
         extractor.all.first
       end
 
-      def build_cross_reference(referable, target_project)
+      def build_cross_reference(referable, target_parent)
         if referable.respond_to?(:project)
-          referable.to_reference(target_project)
+          referable.to_reference(target_parent)
         else
-          referable.to_reference(@source_project, target_project: target_project)
+          referable.to_reference(@source_parent, target_project: target_parent)
         end
       end
 
@@ -85,7 +93,7 @@ module Gitlab
       end
 
       def markdown(text)
-        Banzai.render(text, project: @source_project, no_original_data: true)
+        Banzai.render(text, project: @source_parent, no_original_data: true, no_sourcepos: true)
       end
     end
   end

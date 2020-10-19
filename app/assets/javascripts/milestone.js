@@ -1,53 +1,72 @@
-/* eslint-disable func-names, space-before-function-paren, wrap-iife, no-use-before-define, camelcase, quotes, object-shorthand, no-shadow, no-unused-vars, comma-dangle, no-var, prefer-template, no-underscore-dangle, consistent-return, one-var, one-var-declaration-per-line, default-case, prefer-arrow-callback, max-len */
-/* global Flash */
-/* global Sortable */
+import $ from 'jquery';
+import axios from './lib/utils/axios_utils';
+import { deprecatedCreateFlash as flash } from './flash';
+import { mouseenter, debouncedMouseleave, togglePopover } from './shared/popover';
+import { __ } from './locale';
 
-(function() {
-  this.Milestone = (function() {
-    function Milestone() {
-      this.bindTabsSwitching();
+export default class Milestone {
+  constructor() {
+    this.bindTabsSwitching();
+    this.loadInitialTab();
+  }
 
-      // Load merge request tab if it is active
-      // merge request tab is active based on different conditions in the backend
-      this.loadTab($('.js-milestone-tabs .active a'));
+  bindTabsSwitching() {
+    return $('a[data-toggle="tab"]').on('show.bs.tab', e => {
+      const $target = $(e.target);
 
-      this.loadInitialTab();
+      window.location.hash = $target.attr('href');
+      this.loadTab($target);
+    });
+  }
+
+  loadInitialTab() {
+    const $target = $(`.js-milestone-tabs a:not(.active)[href="${window.location.hash}"]`);
+
+    if ($target.length) {
+      $target.tab('show');
+    } else {
+      this.loadTab($('.js-milestone-tabs a.active'));
     }
+  }
+  // eslint-disable-next-line class-methods-use-this
+  loadTab($target) {
+    const endpoint = $target.data('endpoint');
+    const tabElId = $target.attr('href');
 
-    Milestone.prototype.bindTabsSwitching = function() {
-      return $('a[data-toggle="tab"]').on('show.bs.tab', (e) => {
-        const $target = $(e.target);
-
-        location.hash = $target.attr('href');
-        this.loadTab($target);
-      });
-    };
-
-    Milestone.prototype.loadInitialTab = function() {
-      const $target = $(`.js-milestone-tabs a[href="${location.hash}"]`);
-
-      if ($target.length) {
-        $target.tab('show');
-      }
-    };
-
-    Milestone.prototype.loadTab = function($target) {
-      const endpoint = $target.data('endpoint');
-      const tabElId = $target.attr('href');
-
-      if (endpoint && !$target.hasClass('is-loaded')) {
-        $.ajax({
-          url: endpoint,
-          dataType: 'JSON',
-        })
-        .fail(() => new Flash('Error loading milestone tab'))
-        .done((data) => {
+    if (endpoint && !$target.hasClass('is-loaded')) {
+      axios
+        .get(endpoint)
+        .then(({ data }) => {
           $(tabElId).html(data.html);
           $target.addClass('is-loaded');
-        });
-      }
-    };
+        })
+        .catch(() => flash(__('Error loading milestone tab')));
+    }
+  }
 
-    return Milestone;
-  })();
-}).call(window);
+  static initDeprecationMessage() {
+    const deprecationMesssageContainer = document.querySelector(
+      '.js-milestone-deprecation-message',
+    );
+
+    if (!deprecationMesssageContainer) return;
+
+    const deprecationMessage = deprecationMesssageContainer.querySelector(
+      '.js-milestone-deprecation-message-template',
+    ).innerHTML;
+    const $popover = $('.js-popover-link', deprecationMesssageContainer);
+    const hideOnScroll = togglePopover.bind($popover, false);
+
+    $popover
+      .popover({
+        content: deprecationMessage,
+        html: true,
+        placement: 'bottom',
+      })
+      .on('mouseenter', mouseenter)
+      .on('mouseleave', debouncedMouseleave())
+      .on('show.bs.popover', () => {
+        window.addEventListener('scroll', hideOnScroll, { once: true });
+      });
+  }
+}

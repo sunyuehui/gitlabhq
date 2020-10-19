@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Badge
     module Coverage
@@ -18,22 +20,32 @@ module Gitlab
         def initialize(badge)
           @entity = badge.entity
           @status = badge.status
+          @key_text = badge.customization.dig(:key_text)
+          @key_width = badge.customization.dig(:key_width)
         end
 
         def key_text
-          @entity.to_s
+          if @key_text && @key_text.size <= MAX_KEY_TEXT_SIZE
+            @key_text
+          else
+            @entity.to_s
+          end
         end
 
         def value_text
-          @status ? "#{@status}%" : 'unknown'
+          @status ? ("%.2f%%" % @status) : 'unknown'
         end
 
         def key_width
-          62
+          if @key_width && @key_width.between?(1, MAX_KEY_WIDTH)
+            @key_width
+          else
+            62
+          end
         end
 
         def value_width
-          @status ? 36 : 58
+          @status ? 54 : 58
         end
 
         def value_color

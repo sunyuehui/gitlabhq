@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Prioritize labels' do
+RSpec.describe 'Prioritize labels' do
   include DragTo
 
   let(:user)     { create(:user) }
@@ -12,12 +14,12 @@ feature 'Prioritize labels' do
 
   context 'when user belongs to project team' do
     before do
-      project.team << [user, :developer]
+      project.add_developer(user)
 
       sign_in user
     end
 
-    scenario 'user can prioritize a group label', js: true do
+    it 'user can prioritize a group label', :js do
       visit project_labels_path(project)
 
       expect(page).to have_content('Star labels to start sorting by priority')
@@ -34,7 +36,7 @@ feature 'Prioritize labels' do
       end
     end
 
-    scenario 'user can unprioritize a group label', js: true do
+    it 'user can unprioritize a group label', :js do
       create(:label_priority, project: project, label: feature, priority: 1)
 
       visit project_labels_path(project)
@@ -52,7 +54,7 @@ feature 'Prioritize labels' do
       end
     end
 
-    scenario 'user can prioritize a project label', js: true do
+    it 'user can prioritize a project label', :js do
       visit project_labels_path(project)
 
       expect(page).to have_content('Star labels to start sorting by priority')
@@ -69,7 +71,7 @@ feature 'Prioritize labels' do
       end
     end
 
-    scenario 'user can unprioritize a project label', js: true do
+    it 'user can unprioritize a project label', :js do
       create(:label_priority, project: project, label: bug, priority: 1)
 
       visit project_labels_path(project)
@@ -88,7 +90,7 @@ feature 'Prioritize labels' do
       end
     end
 
-    scenario 'user can sort prioritized labels and persist across reloads', js: true do
+    it 'user can sort prioritized labels and persist across reloads', :js do
       create(:label_priority, project: project, label: bug, priority: 1)
       create(:label_priority, project: project, label: feature, priority: 2)
 
@@ -99,19 +101,34 @@ feature 'Prioritize labels' do
       expect(page).to have_content 'wontfix'
 
       # Sort labels
-      drag_to(selector: '.js-prioritized-labels', from_index: 1, to_index: 2)
+      drag_to(selector: '.label-list-item', from_index: 1, to_index: 2)
 
       page.within('.prioritized-labels') do
-        expect(first('li')).to have_content('feature')
-        expect(page.all('li').last).to have_content('bug')
+        expect(first('.label-list-item')).to have_content('feature')
+        expect(page.all('.label-list-item').last).to have_content('bug')
       end
 
       refresh
       wait_for_requests
 
       page.within('.prioritized-labels') do
-        expect(first('li')).to have_content('feature')
-        expect(page.all('li').last).to have_content('bug')
+        expect(first('.label-list-item')).to have_content('feature')
+        expect(page.all('.label-list-item').last).to have_content('bug')
+      end
+    end
+
+    it 'user can see a primary button when there are only prioritized labels', :js do
+      visit project_labels_path(project)
+
+      page.within('.other-labels') do
+        all('.js-toggle-priority').each do |el|
+          el.click
+        end
+        wait_for_requests
+      end
+
+      page.within('.top-area') do
+        expect(page).to have_link('New label')
       end
     end
 
@@ -123,29 +140,41 @@ feature 'Prioritize labels' do
   end
 
   context 'as a guest' do
-    it 'does not prioritize labels' do
+    before do
+      create(:label_priority, project: project, label: bug, priority: 1)
+      create(:label_priority, project: project, label: feature, priority: 2)
+
       guest = create(:user)
 
       sign_in guest
 
       visit project_labels_path(project)
+    end
 
+    it 'cannot prioritize labels' do
       expect(page).to have_content 'bug'
       expect(page).to have_content 'wontfix'
       expect(page).to have_content 'feature'
-      expect(page).not_to have_css('.prioritized-labels')
       expect(page).not_to have_content 'Star a label'
+    end
+
+    it 'cannot sort prioritized labels', :js do
+      drag_to(selector: '.prioritized-labels .label-list-item', from_index: 1, to_index: 2)
+
+      page.within('.prioritized-labels') do
+        expect(first('.label-list-item')).to have_content('bug')
+        expect(page.all('.label-list-item').last).to have_content('feature')
+      end
     end
   end
 
   context 'as a non signed in user' do
-    it 'does not prioritize labels' do
+    it 'cannot prioritize labels' do
       visit project_labels_path(project)
 
       expect(page).to have_content 'bug'
       expect(page).to have_content 'wontfix'
       expect(page).to have_content 'feature'
-      expect(page).not_to have_css('.prioritized-labels')
       expect(page).not_to have_content 'Star a label'
     end
   end

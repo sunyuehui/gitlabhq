@@ -1,16 +1,11 @@
 resource :dashboard, controller: 'dashboard', only: [] do
+  get :issues, action: :issues_calendar, constraints: lambda { |req| req.format == :ics }
   get :issues
   get :merge_requests
   get :activity
 
   scope module: :dashboard do
-    resources :milestones, only: [:index, :show] do
-      member do
-        get :merge_requests
-        get :participants
-        get :labels
-      end
-    end
+    resources :milestones, only: [:index]
     resources :labels, only: [:index]
 
     resources :groups, only: [:index]

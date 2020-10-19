@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 module Spammable
   extend ActiveSupport::Concern
 
-  module ClassMethods
+  class_methods do
     def attr_spammable(attr, options = {})
       spammable_attrs << [attr.to_s, options]
     end
@@ -11,9 +13,14 @@ module Spammable
     has_one :user_agent_detail, as: :subject, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
 
     attr_accessor :spam
+    attr_accessor :needs_recaptcha
     attr_accessor :spam_log
 
-    after_validation :check_for_spam, on: [:create, :update]
+    alias_method :spam?, :spam
+    alias_method :needs_recaptcha?, :needs_recaptcha
+
+    # if spam errors are added before validation, they will be wiped
+    after_validation :invalidate_if_spam, on: [:create, :update]
 
     cattr_accessor :spammable_attrs, instance_accessor: false do
       []
@@ -28,25 +35,40 @@ module Spammable
 
   def submittable_as_spam?
     if user_agent_detail
-      user_agent_detail.submittable? && current_application_settings.akismet_enabled
+      user_agent_detail.submittable? && Gitlab::CurrentSettings.current_application_settings.akismet_enabled
     else
       false
     end
   end
 
-  def spam?
-    @spam
+  def needs_recaptcha!
+    self.needs_recaptcha = true
   end
 
-  def check_for_spam
-    error_msg = if Gitlab::Recaptcha.enabled?
-                  "Your #{spammable_entity_type} has been recognized as spam. "\
-                  "Please, change the content or solve the reCAPTCHA to proceed."
-                else
-                  "Your #{spammable_entity_type} has been recognized as spam and has been discarded."
-                end
+  def spam!
+    self.spam = true
+  end
 
-    self.errors.add(:base, error_msg) if spam?
+  def clear_spam_flags!
+    self.spam = false
+    self.needs_recaptcha = false
+  end
+
+  def invalidate_if_spam
+    if needs_recaptcha? && Gitlab::Recaptcha.enabled?
+      recaptcha_error!
+    elsif needs_recaptcha? || spam?
+      unrecoverable_spam_error!
+    end
+  end
+
+  def recaptcha_error!
+    self.errors.add(:base, "Your #{spammable_entity_type} has been recognized as spam. "\
+                    "Please, change the content or solve the reCAPTCHA to proceed.")
+  end
+
+  def unrecoverable_spam_error!
+    self.errors.add(:base, "Your #{spammable_entity_type} has been recognized as spam and has been discarded.")
   end
 
   def spammable_entity_type
@@ -80,5 +102,10 @@ module Spammable
   # Override in Spammable if further checks are necessary
   def check_for_spam?
     true
+  end
+
+  # Override in Spammable if differs
+  def allow_possible_spam?
+    Feature.enabled?(:allow_possible_spam, project)
   end
 end

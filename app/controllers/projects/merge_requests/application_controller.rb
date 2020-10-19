@@ -1,19 +1,26 @@
+# frozen_string_literal: true
+
 class Projects::MergeRequests::ApplicationController < Projects::ApplicationController
   before_action :check_merge_requests_available!
   before_action :merge_request
   before_action :authorize_read_merge_request!
-  before_action :ensure_ref_fetched
+
+  feature_category :code_review
 
   private
 
   def merge_request
-    @issuable = @merge_request ||= @project.merge_requests.find_by!(iid: params[:id])
+    @issuable =
+      @merge_request ||=
+        merge_request_includes(@project.merge_requests).find_by_iid!(params[:id])
   end
 
-  # Make sure merge requests created before 8.0
-  # have head file in refs/merge-requests/
-  def ensure_ref_fetched
-    @merge_request.ensure_ref_fetched
+  def merge_request_includes(association)
+    association.includes(preloadable_mr_relations) # rubocop:disable CodeReuse/ActiveRecord
+  end
+
+  def preloadable_mr_relations
+    [:metrics, :assignees, { author: :status }]
   end
 
   def merge_request_params
@@ -22,7 +29,7 @@ class Projects::MergeRequests::ApplicationController < Projects::ApplicationCont
 
   def merge_request_params_attributes
     [
-      :assignee_id,
+      :allow_collaboration,
       :description,
       :force_remove_source_branch,
       :lock_version,
@@ -30,18 +37,32 @@ class Projects::MergeRequests::ApplicationController < Projects::ApplicationCont
       :source_branch,
       :source_project_id,
       :state_event,
+      :wip_event,
+      :squash,
       :target_branch,
       :target_project_id,
       :task_num,
       :title,
-
-      label_ids: []
+      :discussion_locked,
+      label_ids: [],
+      assignee_ids: [],
+      reviewer_ids: [],
+      update_task: [:index, :checked, :line_number, :line_source]
     ]
   end
 
   def set_pipeline_variables
-    @pipelines = @merge_request.all_pipelines
-    @pipeline = @merge_request.head_pipeline
-    @statuses_count = @pipeline.present? ? @pipeline.statuses.relevant.count : 0
+    @pipelines = Ci::PipelinesForMergeRequestFinder
+      .new(@merge_request, current_user)
+      .execute
+  end
+
+  def close_merge_request_if_no_source_project
+    return if @merge_request.source_project
+    return unless @merge_request.open?
+
+    @merge_request.close
   end
 end
+
+Projects::MergeRequests::ApplicationController.prepend_if_ee('EE::Projects::MergeRequests::ApplicationController')

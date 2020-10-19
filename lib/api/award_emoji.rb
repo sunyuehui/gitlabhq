@@ -1,5 +1,7 @@
+# frozen_string_literal: true
+
 module API
-  class AwardEmoji < Grape::API
+  class AwardEmoji < ::API::Base
     include PaginationParams
 
     before { authenticate! }
@@ -12,7 +14,7 @@ module API
     params do
       requires :id, type: String, desc: 'The ID of a project'
     end
-    resource :projects, requirements: { id: %r{[^/]+} } do
+    resource :projects, requirements: API::NAMESPACE_OR_PROJECT_REQUIREMENTS do
       AWARDABLES.each do |awardable_params|
         awardable_string = awardable_params[:type].pluralize
         awardable_id_string = "#{awardable_params[:type]}_#{awardable_params[:find_by]}"
@@ -25,7 +27,6 @@ module API
           ":id/#{awardable_string}/:#{awardable_id_string}/award_emoji",
           ":id/#{awardable_string}/:#{awardable_id_string}/notes/:note_id/award_emoji"
         ].each do |endpoint|
-
           desc 'Get a list of project +awardable+ award emoji' do
             detail 'This feature was introduced in 8.9'
             success Entities::AwardEmoji
@@ -67,12 +68,12 @@ module API
           post endpoint do
             not_found!('Award Emoji') unless can_read_awardable? && can_award_awardable?
 
-            award = awardable.create_award_emoji(params[:name], current_user)
+            service = AwardEmojis::AddService.new(awardable, params[:name], current_user).execute
 
-            if award.persisted?
-              present award, with: Entities::AwardEmoji
+            if service[:status] == :success
+              present service[:award], with: Entities::AwardEmoji
             else
-              not_found!("Award Emoji #{award.errors.messages}")
+              not_found!("Award Emoji #{service[:message]}")
             end
           end
 
@@ -88,8 +89,7 @@ module API
 
             unauthorized! unless award.user == current_user || current_user.admin?
 
-            status 204
-            award.destroy
+            destroy_conditionally!(award)
           end
         end
       end
@@ -101,9 +101,10 @@ module API
       end
 
       def can_award_awardable?
-        awardable.user_can_award?(current_user, params[:name])
+        awardable.user_can_award?(current_user)
       end
 
+      # rubocop: disable CodeReuse/ActiveRecord
       def awardable
         @awardable ||=
           begin
@@ -120,11 +121,14 @@ module API
             end
           end
       end
+      # rubocop: enable CodeReuse/ActiveRecord
 
       def read_ability(awardable)
         case awardable
         when Note
           read_ability(awardable.noteable)
+        when Snippet, ProjectSnippet
+          :read_snippet
         else
           :"read_#{awardable.class.to_s.underscore}"
         end

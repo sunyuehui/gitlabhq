@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe BuildCoverageWorker do
+RSpec.describe BuildCoverageWorker do
   describe '#perform' do
     context 'when build exists' do
       let!(:build) { create(:ci_build) }

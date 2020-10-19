@@ -1,7 +1,49 @@
-/* global Flash */
+import $ from 'jquery';
+import '~/behaviors/markdown/render_gfm';
+import { deprecatedCreateFlash as Flash } from '../../flash';
+import { handleLocationHash } from '../../lib/utils/common_utils';
+import axios from '../../lib/utils/axios_utils';
+import eventHub from '../../notes/event_hub';
+import { __ } from '~/locale';
+import { fixTitle } from '~/tooltips';
+
+const loadRichBlobViewer = type => {
+  switch (type) {
+    case 'balsamiq':
+      return import(/* webpackChunkName: 'balsamiq_viewer' */ '../balsamiq_viewer');
+    case 'notebook':
+      return import(/* webpackChunkName: 'notebook_viewer' */ '../notebook_viewer');
+    case 'openapi':
+      return import(/* webpackChunkName: 'openapi_viewer' */ '../openapi_viewer');
+    case 'pdf':
+      return import(/* webpackChunkName: 'pdf_viewer' */ '../pdf_viewer');
+    case 'sketch':
+      return import(/* webpackChunkName: 'sketch_viewer' */ '../sketch_viewer');
+    case 'stl':
+      return import(/* webpackChunkName: 'stl_viewer' */ '../stl_viewer');
+    default:
+      return Promise.resolve();
+  }
+};
+
+export const handleBlobRichViewer = (viewer, type) => {
+  if (!viewer || !type) return;
+
+  loadRichBlobViewer(type)
+    .then(module => module?.default(viewer))
+    .catch(error => {
+      Flash(__('Error loading file viewer.'));
+      throw error;
+    });
+};
+
 export default class BlobViewer {
   constructor() {
+    const viewer = document.querySelector('.blob-viewer[data-type="rich"]');
+    const type = viewer?.dataset?.richType;
     BlobViewer.initAuxiliaryViewer();
+
+    handleBlobRichViewer(viewer, type);
 
     this.initMainViewers();
   }
@@ -33,7 +75,7 @@ export default class BlobViewer {
     const initialViewer = this.$fileHolder[0].querySelector('.blob-viewer:not(.hidden)');
     let initialViewerName = initialViewer.getAttribute('data-type');
 
-    if (this.switcher && location.hash.indexOf('#L') === 0) {
+    if (this.switcher && window.location.hash.indexOf('#L') === 0) {
       initialViewerName = 'simple';
     }
 
@@ -42,10 +84,9 @@ export default class BlobViewer {
 
   initBindings() {
     if (this.switcherBtns.length) {
-      Array.from(this.switcherBtns)
-        .forEach((el) => {
-          el.addEventListener('click', this.switchViewHandler.bind(this));
-        });
+      Array.from(this.switcherBtns).forEach(el => {
+        el.addEventListener('click', this.switchViewHandler.bind(this));
+      });
     }
 
     if (this.copySourceBtn) {
@@ -67,19 +108,24 @@ export default class BlobViewer {
 
   toggleCopyButtonState() {
     if (!this.copySourceBtn) return;
-
     if (this.simpleViewer.getAttribute('data-loaded')) {
-      this.copySourceBtn.setAttribute('title', 'Copy source to clipboard');
+      this.copySourceBtn.setAttribute('title', __('Copy file contents'));
       this.copySourceBtn.classList.remove('disabled');
     } else if (this.activeViewer === this.simpleViewer) {
-      this.copySourceBtn.setAttribute('title', 'Wait for the source to load to copy it to the clipboard');
+      this.copySourceBtn.setAttribute(
+        'title',
+        __('Wait for the file to load to copy its contents'),
+      );
       this.copySourceBtn.classList.add('disabled');
     } else {
-      this.copySourceBtn.setAttribute('title', 'Switch to the source to copy it to the clipboard');
+      this.copySourceBtn.setAttribute(
+        'title',
+        __('Switch to the source to copy the file contents'),
+      );
       this.copySourceBtn.classList.add('disabled');
     }
 
-    $(this.copySourceBtn).tooltip('fixTitle');
+    fixTitle($(this.copySourceBtn));
   }
 
   switchToViewer(name) {
@@ -108,42 +154,35 @@ export default class BlobViewer {
     this.activeViewer = newViewer;
 
     this.toggleCopyButtonState();
-
     BlobViewer.loadViewer(newViewer)
-    .then((viewer) => {
-      $(viewer).renderGFM();
+      .then(viewer => {
+        $(viewer).renderGFM();
 
-      this.$fileHolder.trigger('highlight:line');
-      gl.utils.handleLocationHash();
+        this.$fileHolder.trigger('highlight:line');
+        handleLocationHash();
 
-      this.toggleCopyButtonState();
-    })
-    .catch(() => new Flash('Error loading viewer'));
+        this.toggleCopyButtonState();
+      })
+      .catch(() => new Flash(__('Error loading viewer')));
   }
 
   static loadViewer(viewerParam) {
     const viewer = viewerParam;
     const url = viewer.getAttribute('data-url');
 
-    return new Promise((resolve, reject) => {
-      if (!url || viewer.getAttribute('data-loaded') || viewer.getAttribute('data-loading')) {
-        resolve(viewer);
-        return;
-      }
+    if (!url || viewer.getAttribute('data-loaded') || viewer.getAttribute('data-loading')) {
+      return Promise.resolve(viewer);
+    }
 
-      viewer.setAttribute('data-loading', 'true');
+    viewer.setAttribute('data-loading', 'true');
 
-      $.ajax({
-        url,
-        dataType: 'JSON',
-      })
-      .fail(reject)
-      .done((data) => {
-        viewer.innerHTML = data.html;
-        viewer.setAttribute('data-loaded', 'true');
+    return axios.get(url).then(({ data }) => {
+      viewer.innerHTML = data.html;
+      viewer.setAttribute('data-loaded', 'true');
 
-        resolve(viewer);
-      });
+      eventHub.$emit('showBlobInteractionZones', viewer.dataset.path);
+
+      return viewer;
     });
   }
 }

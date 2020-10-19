@@ -1,13 +1,13 @@
-require 'backup/files'
+# frozen_string_literal: true
 
 module Backup
-  class Uploads < Files
-    def initialize
-      super('uploads', Rails.root.join('public/uploads'))
-    end
+  class Uploads < Backup::Files
+    attr_reader :progress
 
-    def create_files_dir
-      Dir.mkdir(app_files_dir)
+    def initialize(progress)
+      @progress = progress
+
+      super('uploads', File.join(Gitlab.config.uploads.storage_path, "uploads"), excludes: ['tmp'])
     end
   end
 end

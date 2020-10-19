@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe PageLayoutHelper do
+require 'spec_helper'
+
+RSpec.describe PageLayoutHelper do
   describe 'page_description' do
     it 'defaults to nil' do
       expect(helper.page_description).to eq nil
@@ -38,23 +40,19 @@ describe PageLayoutHelper do
 
       expect(helper.page_description).to eq 'Bold Header'
     end
-  end
 
-  describe 'favicon' do
-    it 'defaults to favicon.ico' do
-      allow(Rails).to receive(:env).and_return(ActiveSupport::StringInquirer.new('production'))
-      expect(helper.favicon).to eq 'favicon.ico'
-    end
+    it 'truncates before sanitizing' do
+      helper.page_description('<b>Bold</b> <img> <img> <img> <h1>Header</h1> ' * 10)
 
-    it 'has blue favicon for development' do
-      allow(Rails).to receive(:env).and_return(ActiveSupport::StringInquirer.new('development'))
-      expect(helper.favicon).to eq 'favicon-blue.ico'
+      # 12 words because <img> was counted as a word
+      expect(helper.page_description)
+        .to eq('Bold    Header Bold    Header Bold    Header Bold    Header Bold    Header Bold    Header...')
     end
   end
 
   describe 'page_image' do
     it 'defaults to the GitLab logo' do
-      expect(helper.page_image).to end_with 'assets/gitlab_logo.png'
+      expect(helper.page_image).to match_asset_path 'assets/gitlab_logo.png'
     end
 
     %w(project user group).each do |type|
@@ -70,13 +68,13 @@ describe PageLayoutHelper do
           object = double(avatar_url: nil)
           assign(type, object)
 
-          expect(helper.page_image).to end_with 'assets/gitlab_logo.png'
+          expect(helper.page_image).to match_asset_path 'assets/gitlab_logo.png'
         end
       end
 
       context "with no assignments" do
         it 'falls back to the default' do
-          expect(helper.page_image).to end_with 'assets/gitlab_logo.png'
+          expect(helper.page_image).to match_asset_path 'assets/gitlab_logo.png'
         end
       end
     end
@@ -117,6 +115,21 @@ describe PageLayoutHelper do
       tags = helper.page_card_meta_tags
 
       expect(tags).to include(%q{content="foo&quot; http-equiv=&quot;refresh"})
+    end
+  end
+
+  describe '#search_context' do
+    subject(:search_context) { helper.search_context }
+
+    describe 'a bare controller' do
+      it 'returns an empty context' do
+        expect(search_context).to have_attributes(project: nil,
+                                                  group: nil,
+                                                  snippets: [],
+                                                  project_metadata: {},
+                                                  group_metadata: {},
+                                                  search_url: '/search')
+      end
     end
   end
 end

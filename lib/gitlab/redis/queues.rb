@@ -1,13 +1,15 @@
+# frozen_string_literal: true
+
 # please require all dependencies below:
 require_relative 'wrapper' unless defined?(::Gitlab::Redis::Wrapper)
 
 module Gitlab
   module Redis
     class Queues < ::Gitlab::Redis::Wrapper
-      SIDEKIQ_NAMESPACE = 'resque:gitlab'.freeze
-      MAILROOM_NAMESPACE = 'mail_room:gitlab'.freeze
-      DEFAULT_REDIS_QUEUES_URL = 'redis://localhost:6381'.freeze
-      REDIS_QUEUES_CONFIG_ENV_VAR_NAME = 'GITLAB_REDIS_QUEUES_CONFIG_FILE'.freeze
+      SIDEKIQ_NAMESPACE = 'resque:gitlab'
+      MAILROOM_NAMESPACE = 'mail_room:gitlab'
+      DEFAULT_REDIS_QUEUES_URL = 'redis://localhost:6381'
+      REDIS_QUEUES_CONFIG_ENV_VAR_NAME = 'GITLAB_REDIS_QUEUES_CONFIG_FILE'
 
       class << self
         def default_url
@@ -25,6 +27,10 @@ module Gitlab
 
           # this will force use of DEFAULT_REDIS_QUEUES_URL when config file is absent
           super
+        end
+
+        def instrumentation_class
+          ::Gitlab::Instrumentation::Redis::Queues
         end
       end
     end

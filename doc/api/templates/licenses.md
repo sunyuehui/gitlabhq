@@ -1,10 +1,19 @@
+---
+type: reference
+---
+
 # Licenses API
+
+In GitLab, there is an API endpoint available for working with various open
+source license templates. For more information on the terms of various
+licenses, see [this site](https://choosealicense.com/) or any of the many other
+resources available online.
 
 ## List license templates
 
 Get all license templates.
 
-```
+```plaintext
 GET /templates/licenses
 ```
 
@@ -12,7 +21,7 @@ GET /templates/licenses
 | --------- | ------- | -------- | --------------------- |
 | `popular` | boolean | no       | If passed, returns only popular licenses |
 
-```bash
+```shell
 curl https://gitlab.example.com/api/v4/templates/licenses?popular=1
 ```
 
@@ -101,7 +110,7 @@ Example response:
 Get a single license template. You can pass parameters to replace the license
 placeholder.
 
-```
+```plaintext
 GET /templates/licenses/:key
 ```
 
@@ -111,12 +120,12 @@ GET /templates/licenses/:key
 | `project`  | string | no       | The copyrighted project name |
 | `fullname` | string | no       | The full-name of the copyright holder |
 
->**Note:**
+NOTE: **Note:**
 If you omit the `fullname` parameter but authenticate your request, the name of
 the authenticated user will be used to replace the copyright holder placeholder.
 
-```bash
-curl --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/templates/licenses/mit?project=My+Cool+Project
+```shell
+curl --header "PRIVATE-TOKEN: <your_access_token>" https://gitlab.example.com/api/v4/templates/licenses/mit?project=My+Cool+Project
 ```
 
 Example response:
@@ -145,3 +154,15 @@ Example response:
     "content": "The MIT License (MIT)\n\nCopyright (c) 2016 John Doe\n [...]"
 }
 ```
+
+<!-- ## Troubleshooting
+
+Include any troubleshooting steps that you can foresee. If you know beforehand what issues
+one might have when setting this up, or when something is changed, or on upgrading, it's
+important to describe those, too. Think of things that may go wrong and include them here.
+This is important to minimize requests for support, and to avoid doc comments with
+questions that you know someone might ask.
+
+Each scenario can be a third-level heading, e.g. `### Getting error message X`.
+If you have none to add when creating a doc, leave this section in place
+but commented out to help encourage others to add to it in the future. -->

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Labels subscription' do
+RSpec.describe 'Labels subscription' do
   let(:user)     { create(:user) }
   let(:group)    { create(:group) }
   let(:project)  { create(:project, :public, namespace: group) }
@@ -9,11 +11,11 @@ feature 'Labels subscription' do
 
   context 'when signed in' do
     before do
-      project.team << [user, :developer]
+      project.add_developer(user)
       sign_in user
     end
 
-    scenario 'users can subscribe/unsubscribe to labels', js: true do
+    it 'users can subscribe/unsubscribe to labels', :js do
       visit project_labels_path(project)
 
       expect(page).to have_content('bug')
@@ -36,7 +38,7 @@ feature 'Labels subscription' do
       within "#group_label_#{feature.id}" do
         expect(page).not_to have_button 'Unsubscribe'
 
-        click_link_on_dropdown('Group level')
+        click_link_on_dropdown('Subscribe at group level')
 
         expect(page).not_to have_selector('.dropdown-group-label')
         expect(page).to have_button 'Unsubscribe'
@@ -45,7 +47,7 @@ feature 'Labels subscription' do
 
         expect(page).to have_selector('.dropdown-group-label')
 
-        click_link_on_dropdown('Project level')
+        click_link_on_dropdown('Subscribe at project level')
 
         expect(page).not_to have_selector('.dropdown-group-label')
         expect(page).to have_button 'Unsubscribe'
@@ -68,7 +70,7 @@ feature 'Labels subscription' do
     find('.dropdown-group-label').click
 
     page.within('.dropdown-group-label') do
-      find('a.js-subscribe-button', text: text).click
+      find('.js-subscribe-button', text: text).click
     end
   end
 end

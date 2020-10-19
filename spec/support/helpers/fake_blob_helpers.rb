@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module FakeBlobHelpers
   class FakeBlob
     include BlobLike
@@ -20,10 +22,14 @@ module FakeBlobHelpers
     alias_method :name, :path
 
     def id
-      0
+      "00000000"
     end
 
-    def binary?
+    def commit_id
+      "11111111"
+    end
+
+    def binary_in_repo?
       @binary
     end
 
@@ -35,6 +41,8 @@ module FakeBlobHelpers
   end
 
   def fake_blob(**kwargs)
-    Blob.decorate(FakeBlob.new(**kwargs), project)
+    container = kwargs.delete(:container) || project
+
+    Blob.decorate(FakeBlob.new(**kwargs), container)
   end
 end

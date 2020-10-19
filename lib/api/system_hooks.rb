@@ -1,5 +1,7 @@
+# frozen_string_literal: true
+
 module API
-  class SystemHooks < Grape::API
+  class SystemHooks < ::API::Base
     include PaginationParams
 
     before do
@@ -26,6 +28,7 @@ module API
         optional :token, type: String, desc: 'The token used to validate payloads'
         optional :push_events, type: Boolean, desc: "Trigger hook on push events"
         optional :tag_push_events, type: Boolean, desc: "Trigger hook on tag push events"
+        optional :merge_requests_events, type: Boolean, desc: "Trigger hook on tag push events"
         optional :enable_ssl_verification, type: Boolean, desc: "Do SSL verification when triggering the hook"
       end
       post do
@@ -62,13 +65,16 @@ module API
       params do
         requires :id, type: Integer, desc: 'The ID of the system hook'
       end
+      # rubocop: disable CodeReuse/ActiveRecord
       delete ":id" do
         hook = SystemHook.find_by(id: params[:id])
         not_found!('System hook') unless hook
 
-        status 204
-        hook.destroy
+        destroy_conditionally!(hook) do
+          WebHooks::DestroyService.new(current_user).execute(hook)
+        end
       end
+      # rubocop: enable CodeReuse/ActiveRecord
     end
   end
 end

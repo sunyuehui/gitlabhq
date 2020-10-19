@@ -1,12 +1,17 @@
+# frozen_string_literal: true
+
 module Projects
   module CycleAnalytics
     class EventsController < Projects::ApplicationController
       include CycleAnalyticsParams
+      include GracefulTimeoutHandling
 
       before_action :authorize_read_cycle_analytics!
       before_action :authorize_read_build!, only: [:test, :staging]
       before_action :authorize_read_issue!, only: [:issue, :production]
       before_action :authorize_read_merge_request!, only: [:code, :review]
+
+      feature_category :planning_analytics
 
       def issue
         render_events(cycle_analytics[:issue].events)
@@ -21,7 +26,7 @@ module Projects
       end
 
       def test
-        options(events_params)[:branch] = events_params[:branch_name]
+        options(cycle_analytics_project_params)[:branch] = cycle_analytics_project_params[:branch_name]
 
         render_events(cycle_analytics[:test].events)
       end
@@ -48,13 +53,7 @@ module Projects
       end
 
       def cycle_analytics
-        @cycle_analytics ||= ::CycleAnalytics.new(project, options(events_params))
-      end
-
-      def events_params
-        return {} unless params[:events].present?
-
-        params[:events].permit(:start_date, :branch_name)
+        @cycle_analytics ||= ::CycleAnalytics::ProjectLevel.new(project, options: options(cycle_analytics_project_params))
       end
     end
   end

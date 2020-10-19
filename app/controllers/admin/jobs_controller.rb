@@ -1,25 +1,23 @@
+# frozen_string_literal: true
+
 class Admin::JobsController < Admin::ApplicationController
+  BUILDS_PER_PAGE = 30
+
+  feature_category :continuous_integration
+
   def index
+    # We need all builds for tabs counters
+    @all_builds = Ci::JobsFinder.new(current_user: current_user).execute
+
     @scope = params[:scope]
-    @all_builds = Ci::Build
-    @builds = @all_builds.order('created_at DESC')
-    @builds =
-      case @scope
-      when 'pending'
-        @builds.pending.reverse_order
-      when 'running'
-        @builds.running.reverse_order
-      when 'finished'
-        @builds.finished
-      else
-        @builds
-      end
-    @builds = @builds.page(params[:page]).per(30)
+    @builds = Ci::JobsFinder.new(current_user: current_user, params: params).execute
+    @builds = @builds.eager_load_everything
+    @builds = @builds.page(params[:page]).per(BUILDS_PER_PAGE).without_count
   end
 
   def cancel_all
     Ci::Build.running_or_pending.each(&:cancel)
 
-    redirect_to admin_jobs_path
+    redirect_to admin_jobs_path, status: :see_other
   end
 end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe FlowdockService do
+RSpec.describe FlowdockService do
   describe "Associations" do
     it { is_expected.to belong_to :project }
     it { is_expected.to have_one :service_hook }
@@ -46,6 +48,7 @@ describe FlowdockService do
       @sample_data[:commits].each do |commit|
         # One request to Flowdock per new commit
         next if commit[:id] == @sample_data[:before]
+
         expect(WebMock).to have_requested(:post, @api_url).with(
           body: /#{commit[:id]}.*#{project.path}/
         ).once

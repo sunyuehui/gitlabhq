@@ -9,10 +9,10 @@ Rails.application.configure do
   config.action_controller.perform_caching = true
 
   # Disable Rails's static asset server (Apache or nginx will already do this)
-  config.serve_static_files = false
+  config.public_file_server.enabled = false
 
   # Compress JavaScripts and CSS.
-  config.assets.js_compressor = :uglifier
+  config.assets.js_compressor = :terser
   # config.assets.css_compressor = :sass
 
   # Don't fallback to assets pipeline if a precompiled asset is missed
@@ -52,6 +52,9 @@ Rails.application.configure do
   # Enable serving of images, stylesheets, and JavaScripts from an asset server
   config.action_controller.asset_host = ENV['GITLAB_CDN_HOST'] if ENV['GITLAB_CDN_HOST'].present?
 
+  # Do not dump schema after migrations.
+  config.active_record.dump_schema_after_migration = false
+
   # Precompile additional assets (application.js, application.css, and all non-JS/CSS are already added)
   # config.assets.precompile += %w( search.js )
 
@@ -60,10 +63,6 @@ Rails.application.configure do
 
   # Enable threaded mode
   # config.threadsafe! unless $rails_rake_task
-
-  # Enable locale fallbacks for I18n (makes lookups for any locale fall back to
-  # the I18n.default_locale when a translation can not be found)
-  config.i18n.fallbacks = true
 
   # Send deprecation notices to registered listeners
   config.active_support.deprecation = :notify
@@ -78,6 +77,4 @@ Rails.application.configure do
   config.action_mailer.raise_delivery_errors = true
 
   config.eager_load = true
-
-  config.allow_concurrency = false
 end

@@ -5,7 +5,7 @@ possible to add a group of users to a project with a single action.
 
 ## Groups as collections of users
 
-Groups are used primarily to [create collections of projects](../user/group/index.md), but you can also
+Groups are used primarily to [create collections of projects](../../group/index.md), but you can also
 take advantage of the fact that groups define collections of _users_, namely the group
 members.
 
@@ -13,29 +13,45 @@ members.
 
 The primary mechanism to give a group of users, say 'Engineering', access to a project,
 say 'Project Acme', in GitLab is to make the 'Engineering' group the owner of 'Project
-Acme'.  But what if 'Project Acme' already belongs to another group, say 'Open Source'?
+Acme'. But what if 'Project Acme' already belongs to another group, say 'Open Source'?
 This is where the group sharing feature can be of use.
 
-To share 'Project Acme' with the 'Engineering' group, go to the project settings page for 'Project Acme' and use the left navigation menu to go to the 'Groups' section.
+To share 'Project Acme' with the 'Engineering' group:
 
-![The 'Groups' section in the project settings screen](img/share_project_with_groups.png)
+1. For 'Project Acme' use the left navigation menu to go to **Members**
 
-Now you can add the 'Engineering' group with the maximum access level of your choice.
-After sharing 'Project Acme' with 'Engineering', the project is listed on the group dashboard.
+   ![share project with groups](img/share_project_with_groups.png)
 
-!['Project Acme' is listed as a shared project for 'Engineering'](img/other_group_sees_shared_project.png)
+1. Select the 'Share with group' tab
+1. Add the 'Engineering' group with the maximum access level of your choice
+1. Click **Share** to share it
+
+   ![share project with groups tab](img/share_project_with_groups_tab.png)
+
+1. After sharing 'Project Acme' with 'Engineering', the project will be listed
+   on the group dashboard
+
+   !['Project Acme' is listed as a shared project for 'Engineering'](img/other_group_sees_shared_project.png)
+
+Note that you can only share a project with:
+
+- groups for which you have an explicitly defined membership
+- groups that contain a nested subgroup or project for which you have an explicitly defined role
+
+Admins are able to share projects with any group in the system.
 
 ## Maximum access level
 
-!['Project Acme' is shared with 'Engineering' with a maximum access level of 'Developer'](img/max_access_level.png)
+In the example above, the maximum access level of 'Developer' for members from 'Engineering' means that users with higher access levels in 'Engineering' ('Maintainer' or 'Owner') will only have 'Developer' access to 'Project Acme'.
 
-In the screenshot above, the maximum access level of 'Developer' for members from 'Engineering' means that users with higher access levels in 'Engineering' ('Master' or 'Owner') will only have 'Developer' access to 'Project Acme'.
+## Sharing public project with private group
 
-## Share project with group lock (EES/EEP)
+When sharing a public project with a private group, owners and maintainers of the project will see the name of the group in the `members` page. Owners will also have the possibility to see members of the private group they don't have access to when mentioning them in the issue or merge request.
 
-In [GitLab Enterprise Edition Starter](https://about.gitlab.com/gitlab-ee/)
-it is possible to prevent projects in a group from [sharing
+## Share project with group lock
+
+It is possible to prevent projects in a group from [sharing
 a project with another group](../members/share_project_with_groups.md).
 This allows for tighter control over project access.
 
-Learn more about [Share with group lock](https://docs.gitlab.com/ee/user/group/index.html#share-with-group-lock-ees-eep).
+Learn more about [Share with group lock](../../group/index.md#share-with-group-lock).

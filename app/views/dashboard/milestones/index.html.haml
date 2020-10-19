@@ -1,16 +1,21 @@
 - @hide_top_links = true
-- page_title 'Milestones'
-- header_title 'Milestones', dashboard_milestones_path
+- page_title _('Milestones')
+- header_title _('Milestones'), dashboard_milestones_path
+- add_page_specific_style 'page_bundles/milestone'
 
-- if show_new_nav?
-  - content_for :breadcrumbs_extra do
-    = render 'shared/new_project_item_select', path: 'milestones/new', label: 'New milestone', include_groups: true
+.page-title-holder.d-flex.align-items-center
+  %h1.page-title= _('Milestones')
+
+  - if current_user
+    .page-title-controls
+      = render 'shared/new_project_item_select',
+        path: '-/milestones/new', label: 'New milestone',
+        include_groups: true, type: :milestones
 
 .top-area
   = render 'shared/milestones_filter', counts: @milestone_states
-
-  .nav-controls{ class: ("visible-xs" if show_new_nav?) }
-    = render 'shared/new_project_item_select', path: 'milestones/new', label: 'New milestone', include_groups: true
+  .nav-controls
+    = render 'shared/milestones/search_form'
 
 .milestones
   %ul.content-list

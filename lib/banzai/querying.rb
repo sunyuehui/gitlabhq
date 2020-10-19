@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Banzai
   module Querying
     module_function
@@ -52,8 +54,10 @@ module Banzai
 
         children.each do |child|
           next if child.text.blank?
+
           node = nodes.shift
           break unless node == child
+
           filtered_nodes << node
         end
       end

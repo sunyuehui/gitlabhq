@@ -1,13 +1,17 @@
+# frozen_string_literal: true
+
 module ServiceParams
   extend ActiveSupport::Concern
 
   ALLOWED_PARAMS_CE = [
     :active,
     :add_pusher,
+    :alert_events,
     :api_key,
     :api_url,
     :api_version,
     :bamboo_url,
+    :branches_to_be_notified,
     :build_key,
     :build_type,
     :ca_pem,
@@ -15,14 +19,19 @@ module ServiceParams
     :channels,
     :color,
     :colorize_messages,
+    :comment_on_event_enabled,
+    :comment_detail,
     :confidential_issues_events,
+    :confluence_url,
     :default_irc_uri,
-    :description,
     :device,
     :disable_diffs,
     :drone_url,
     :enable_ssl_verification,
     :external_wiki_url,
+    :google_iap_service_account_json,
+    :google_iap_audience_client_id,
+    :inherit_from_id,
     # We're using `issues_events` and `merge_requests_events`
     # in the view so we still need to explicitly state them
     # here. `Service#event_names` would only give
@@ -32,13 +41,13 @@ module ServiceParams
     :issues_events,
     :issues_url,
     :jira_issue_transition_id,
+    :manual_configuration,
     :merge_requests_events,
     :mock_service_url,
     :namespace,
     :new_issue_url,
     :notify,
     :notify_only_broken_pipelines,
-    :notify_only_default_branch,
     :password,
     :priority,
     :project_key,
@@ -53,7 +62,6 @@ module ServiceParams
     :sound,
     :subdomain,
     :teamcity_url,
-    :title,
     :token,
     :type,
     :url,
@@ -66,10 +74,10 @@ module ServiceParams
   FILTER_BLANK_PARAMS = [:password].freeze
 
   def service_params
-    dynamic_params = @service.event_channel_names + @service.event_names
-    service_params = params.permit(:id, service: ALLOWED_PARAMS_CE + dynamic_params)
+    dynamic_params = @service.event_channel_names + @service.event_names # rubocop:disable Gitlab/ModuleWithInstanceVariables
+    service_params = params.permit(:id, service: allowed_service_params + dynamic_params)
 
-    if service_params[:service].is_a?(Hash)
+    if service_params[:service].is_a?(ActionController::Parameters)
       FILTER_BLANK_PARAMS.each do |param|
         service_params[:service].delete(param) if service_params[:service][param].blank?
       end
@@ -77,4 +85,10 @@ module ServiceParams
 
     service_params
   end
+
+  def allowed_service_params
+    ALLOWED_PARAMS_CE
+  end
 end
+
+ServiceParams.prepend_if_ee('EE::ServiceParams')

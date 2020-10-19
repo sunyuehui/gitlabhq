@@ -1,11 +1,29 @@
+# frozen_string_literal: true
+
 module ProtectedBranches
   class CreateService < BaseService
-    attr_reader :protected_branch
+    def execute(skip_authorization: false)
+      raise Gitlab::Access::AccessDeniedError unless skip_authorization || authorized?
 
-    def execute
-      raise Gitlab::Access::AccessDeniedError unless can?(current_user, :admin_project, project)
+      save_protected_branch
 
-      project.protected_branches.create(params)
+      protected_branch
+    end
+
+    def authorized?
+      can?(current_user, :create_protected_branch, protected_branch)
+    end
+
+    private
+
+    def save_protected_branch
+      protected_branch.save
+    end
+
+    def protected_branch
+      @protected_branch ||= project.protected_branches.new(params)
     end
   end
 end
+
+ProtectedBranches::CreateService.prepend_if_ee('EE::ProtectedBranches::CreateService')

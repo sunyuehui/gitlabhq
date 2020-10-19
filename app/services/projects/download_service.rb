@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Projects
   class DownloadService < BaseService
     WHITELIST = [
@@ -9,7 +11,7 @@ module Projects
     end
 
     def execute
-      return nil unless valid_url?(@url)
+      return unless valid_url?(@url)
 
       uploader = FileUploader.new(@project)
       uploader.download!(@url)
@@ -25,7 +27,7 @@ module Projects
     end
 
     def http?(url)
-      url =~ /\A#{URI.regexp(%w(http https))}\z/
+      url =~ /\A#{URI::DEFAULT_PARSER.make_regexp(%w(http https))}\z/
     end
 
     def valid_domain?(url)

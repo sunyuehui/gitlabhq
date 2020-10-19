@@ -1,12 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'New Branch Ref Dropdown', :js do
+RSpec.describe 'New Branch Ref Dropdown', :js do
   let(:user) { create(:user) }
   let(:project) { create(:project, :public, :repository) }
   let(:toggle) { find('.create-from .dropdown-menu-toggle') }
 
   before do
-    project.add_master(user)
+    project.add_maintainer(user)
 
     sign_in(user)
     visit new_project_branch_path(project)

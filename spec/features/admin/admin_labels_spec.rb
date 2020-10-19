@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
 RSpec.describe 'admin issues labels' do
@@ -30,10 +32,10 @@ RSpec.describe 'admin issues labels' do
       end
     end
 
-    it 'deletes all labels', js: true do
+    it 'deletes all labels', :js do
       page.within '.labels' do
-        page.all('.btn-remove').each do |remove|
-          remove.click
+        page.all('.remove-row').each do |remove|
+          accept_confirm { remove.click }
           wait_for_requests
         end
       end

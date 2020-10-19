@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::CommitRangeReferenceFilter do
+RSpec.describe Banzai::Filter::CommitRangeReferenceFilter do
   include FilterSpecHelper
 
   let(:project) { create(:project, :public, :repository) }
@@ -53,13 +55,14 @@ describe Banzai::Filter::CommitRangeReferenceFilter do
       doc = reference_filter("See (#{reference}.)")
 
       exp = Regexp.escape(range.reference_link_text)
-      expect(doc.to_html).to match(/\(<a.+>#{exp}<\/a>\.\)/)
+      expect(doc.to_html).to match(%r{\(<a.+>#{exp}</a>\.\)})
     end
 
     it 'ignores invalid commit IDs' do
       exp = act = "See #{commit1.id.reverse}...#{commit2.id}"
 
       allow(project.repository).to receive(:commit).with(commit1.id.reverse)
+      allow(project.repository).to receive(:commit).with(commit2.id)
       expect(reference_filter(act).to_html).to eq exp
     end
 
@@ -204,7 +207,7 @@ describe Banzai::Filter::CommitRangeReferenceFilter do
   context 'cross-project URL reference' do
     let(:namespace) { create(:namespace) }
     let(:project2)  { create(:project, :public, :repository, namespace: namespace) }
-    let(:range)  { CommitRange.new("#{commit1.id}...master", project) }
+    let(:range) { CommitRange.new("#{commit1.id}...master", project) }
     let(:reference) { urls.project_compare_url(project2, from: commit1.id, to: 'master') }
 
     before do
@@ -222,15 +225,31 @@ describe Banzai::Filter::CommitRangeReferenceFilter do
       doc = reference_filter("Fixed (#{reference}.)")
 
       exp = Regexp.escape(range.reference_link_text(project))
-      expect(doc.to_html).to match(/\(<a.+>#{exp}<\/a>\.\)/)
+      expect(doc.to_html).to match(%r{\(<a.+>#{exp}</a>\.\)})
     end
 
     it 'ignores invalid commit IDs on the referenced project' do
-      exp = act = "Fixed #{project2.to_reference}@#{commit1.id.reverse}...#{commit2.id}"
+      exp = act = "Fixed #{project2.to_reference_base}@#{commit1.id.reverse}...#{commit2.id}"
       expect(reference_filter(act).to_html).to eq exp
 
-      exp = act = "Fixed #{project2.to_reference}@#{commit1.id}...#{commit2.id.reverse}"
+      exp = act = "Fixed #{project2.to_reference_base}@#{commit1.id}...#{commit2.id.reverse}"
       expect(reference_filter(act).to_html).to eq exp
+    end
+  end
+
+  context 'group context' do
+    let(:context) { { project: nil, group: create(:group) } }
+
+    it 'ignores internal references' do
+      exp = act = "See #{range.to_reference}"
+
+      expect(reference_filter(act, context).to_html).to eq exp
+    end
+
+    it 'links to a full-path reference' do
+      reference = "#{project.full_path}@#{commit1.short_id}...#{commit2.short_id}"
+
+      expect(reference_filter("See #{reference}", context).css('a').first.text).to eql(reference)
     end
   end
 end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::OtpKeyRotator do
+RSpec.describe Gitlab::OtpKeyRotator do
   let(:file) { Tempfile.new("otp-key-rotator-test") }
   let(:filename) { file.path }
   let(:old_key) { Gitlab::Application.secrets.otp_key_base }

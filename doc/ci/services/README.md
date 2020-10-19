@@ -1,9 +1,21 @@
-## GitLab CI Services
+---
+stage: Verify
+group: Runner
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see https://about.gitlab.com/handbook/engineering/ux/technical-writing/#designated-technical-writers
+comments: false
+type: index
+---
 
-GitLab CI uses the `services` keyword to define what docker containers should
-be linked with your base image. Below is a list of examples you may use.
+# GitLab CI services examples
+
+The [`services`](../docker/using_docker_images.md#what-is-a-service)
+keyword defines a Docker image that runs during a `job` linked to the
+Docker image that the image keyword defines. This allows you to access
+the service image during build time.
+
+The service image can run any application, but the most common use
+case is to run a database container, for example:
 
 - [Using MySQL](mysql.md)
 - [Using PostgreSQL](postgres.md)
 - [Using Redis](redis.md)
-- [Using Other Services](../docker/using_docker_images.md#how-to-use-other-images-as-services)

@@ -1,110 +1,253 @@
 <script>
-  import tooltip from '../../directives/tooltip';
-  import toolbarButton from './toolbar_button.vue';
+import $ from 'jquery';
+import { GlPopover, GlButton, GlTooltipDirective, GlIcon } from '@gitlab/ui';
+import { s__ } from '~/locale';
+import { getSelectedFragment } from '~/lib/utils/common_utils';
+import { CopyAsGFM } from '../../../behaviors/markdown/copy_as_gfm';
+import ToolbarButton from './toolbar_button.vue';
 
-  export default {
-    props: {
-      previewMarkdown: {
-        type: Boolean,
-        required: true,
-      },
+export default {
+  components: {
+    ToolbarButton,
+    GlIcon,
+    GlPopover,
+    GlButton,
+  },
+  directives: {
+    GlTooltip: GlTooltipDirective,
+  },
+  props: {
+    previewMarkdown: {
+      type: Boolean,
+      required: true,
     },
-    directives: {
-      tooltip,
+    lineContent: {
+      type: String,
+      required: false,
+      default: '',
     },
-    components: {
-      toolbarButton,
+    canSuggest: {
+      type: Boolean,
+      required: false,
+      default: true,
     },
-    methods: {
-      toggleMarkdownPreview(e, form) {
-        if (form && !form.find('.js-vue-markdown-field').length) {
-          return;
-        } else if (e.target.blur) {
-          e.target.blur();
-        }
+    showSuggestPopover: {
+      type: Boolean,
+      required: false,
+      default: false,
+    },
+  },
+  data() {
+    return {
+      tag: '> ',
+    };
+  },
+  computed: {
+    mdTable() {
+      return [
+        // False positive i18n lint: https://gitlab.com/gitlab-org/frontend/eslint-plugin-i18n/issues/26
+        '| header | header |', // eslint-disable-line @gitlab/require-i18n-strings
+        '| ------ | ------ |',
+        '| cell | cell |', // eslint-disable-line @gitlab/require-i18n-strings
+        '| cell | cell |', // eslint-disable-line @gitlab/require-i18n-strings
+      ].join('\n');
+    },
+    mdSuggestion() {
+      return ['```suggestion:-0+0', `{text}`, '```'].join('\n');
+    },
+    isMac() {
+      // Accessing properties using ?. to allow tests to use
+      // this component without setting up window.gl.client.
+      // In production, window.gl.client should always be present.
+      return Boolean(window.gl?.client?.isMac);
+    },
+    modifierKey() {
+      return this.isMac ? '⌘' : s__('KeyboardKey|Ctrl+');
+    },
+  },
+  mounted() {
+    $(document).on('markdown-preview:show.vue', this.previewMarkdownTab);
+    $(document).on('markdown-preview:hide.vue', this.writeMarkdownTab);
+  },
+  beforeDestroy() {
+    $(document).off('markdown-preview:show.vue', this.previewMarkdownTab);
+    $(document).off('markdown-preview:hide.vue', this.writeMarkdownTab);
+  },
+  methods: {
+    isValid(form) {
+      return (
+        !form ||
+        (form.find('.js-vue-markdown-field').length && $(this.$el).closest('form')[0] === form[0])
+      );
+    },
 
-        this.$emit('toggle-markdown');
-      },
+    previewMarkdownTab(event, form) {
+      if (event.target.blur) event.target.blur();
+      if (!this.isValid(form)) return;
+
+      this.$emit('preview-markdown');
     },
-    mounted() {
-      $(document).on('markdown-preview:show.vue', this.toggleMarkdownPreview);
-      $(document).on('markdown-preview:hide.vue', this.toggleMarkdownPreview);
+
+    writeMarkdownTab(event, form) {
+      if (event.target.blur) event.target.blur();
+      if (!this.isValid(form)) return;
+
+      this.$emit('write-markdown');
     },
-    beforeDestroy() {
-      $(document).on('markdown-preview:show.vue', this.toggleMarkdownPreview);
-      $(document).off('markdown-preview:hide.vue', this.toggleMarkdownPreview);
+    handleSuggestDismissed() {
+      this.$emit('handleSuggestDismissed');
     },
-  };
+    handleQuote() {
+      const documentFragment = getSelectedFragment();
+
+      if (!documentFragment || !documentFragment.textContent) {
+        this.tag = '> ';
+        return;
+      }
+      this.tag = '';
+
+      const transformed = CopyAsGFM.transformGFMSelection(documentFragment);
+      const area = this.$el.parentNode.querySelector('textarea');
+
+      CopyAsGFM.nodeToGFM(transformed)
+        .then(gfm => {
+          CopyAsGFM.insertPastedText(area, documentFragment.textContent, CopyAsGFM.quoted(gfm));
+        })
+        .catch(() => {});
+    },
+  },
+};
 </script>
 
 <template>
   <div class="md-header">
     <ul class="nav-links clearfix">
-      <li :class="{ active: !previewMarkdown }">
-        <a
-          href="#md-write-holder"
-          tabindex="-1"
-          @click.prevent="toggleMarkdownPreview($event)">
-          Write
-        </a>
+      <li :class="{ active: !previewMarkdown }" class="md-header-tab">
+        <button class="js-write-link" type="button" @click="writeMarkdownTab($event)">
+          {{ __('Write') }}
+        </button>
       </li>
-      <li :class="{ active: previewMarkdown }">
-        <a
-          href="#md-preview-holder"
-          tabindex="-1"
-          @click.prevent="toggleMarkdownPreview($event)">
-          Preview
-        </a>
+      <li :class="{ active: previewMarkdown }" class="md-header-tab">
+        <button
+          class="js-preview-link js-md-preview-button"
+          type="button"
+          @click="previewMarkdownTab($event)"
+        >
+          {{ __('Preview') }}
+        </button>
       </li>
-      <li class="pull-right">
-        <div class="toolbar-group">
+      <li :class="{ active: !previewMarkdown }" class="md-header-toolbar">
+        <div class="d-inline-block">
           <toolbar-button
             tag="**"
-            button-title="Add bold text"
-            icon="bold" />
+            :button-title="
+              sprintf(s__('MarkdownEditor|Add bold text (%{modifierKey}B)'), { modifierKey })
+            "
+            shortcuts="mod+b"
+            icon="bold"
+          />
           <toolbar-button
-            tag="*"
-            button-title="Add italic text"
-            icon="italic" />
+            tag="_"
+            :button-title="
+              sprintf(s__('MarkdownEditor|Add italic text (%{modifierKey}I)'), { modifierKey })
+            "
+            shortcuts="mod+i"
+            icon="italic"
+          />
           <toolbar-button
-            tag="> "
             :prepend="true"
-            button-title="Insert a quote"
-            icon="quote-right" />
-          <toolbar-button
-            tag="`"
-            tag-block="```"
-            button-title="Insert code"
-            icon="code" />
-          <toolbar-button
-            tag="* "
-            :prepend="true"
-            button-title="Add a bullet list"
-            icon="list-ul" />
-          <toolbar-button
-            tag="1. "
-            :prepend="true"
-            button-title="Add a numbered list"
-            icon="list-ol" />
-          <toolbar-button
-            tag="* [ ] "
-            :prepend="true"
-            button-title="Add a task list"
-            icon="check-square-o" />
+            :tag="tag"
+            :button-title="__('Insert a quote')"
+            icon="quote"
+            @click="handleQuote"
+          />
         </div>
-        <div class="toolbar-group">
+        <div class="d-inline-block ml-md-2 ml-0">
+          <template v-if="canSuggest">
+            <toolbar-button
+              ref="suggestButton"
+              :tag="mdSuggestion"
+              :prepend="true"
+              :button-title="__('Insert suggestion')"
+              :cursor-offset="4"
+              :tag-content="lineContent"
+              icon="doc-code"
+              class="js-suggestion-btn"
+              @click="handleSuggestDismissed"
+            />
+            <gl-popover
+              v-if="showSuggestPopover && $refs.suggestButton"
+              :target="$refs.suggestButton"
+              :css-classes="['diff-suggest-popover']"
+              placement="bottom"
+              :show="showSuggestPopover"
+            >
+              <strong>{{ __('New! Suggest changes directly') }}</strong>
+              <p class="mb-2">
+                {{
+                  __(
+                    'Suggest code changes which can be immediately applied in one click. Try it out!',
+                  )
+                }}
+              </p>
+              <gl-button
+                variant="info"
+                category="primary"
+                size="sm"
+                @click="handleSuggestDismissed"
+              >
+                {{ __('Got it') }}
+              </gl-button>
+            </gl-popover>
+          </template>
+          <toolbar-button tag="`" tag-block="```" :button-title="__('Insert code')" icon="code" />
+          <toolbar-button
+            tag="[{text}](url)"
+            tag-select="url"
+            :button-title="
+              sprintf(s__('MarkdownEditor|Add a link (%{modifierKey}K)'), { modifierKey })
+            "
+            shortcuts="mod+k"
+            icon="link"
+          />
+        </div>
+        <div class="d-inline-block ml-md-2 ml-0">
+          <toolbar-button
+            :prepend="true"
+            tag="- "
+            :button-title="__('Add a bullet list')"
+            icon="list-bulleted"
+          />
+          <toolbar-button
+            :prepend="true"
+            tag="1. "
+            :button-title="__('Add a numbered list')"
+            icon="list-numbered"
+          />
+          <toolbar-button
+            :prepend="true"
+            tag="- [ ] "
+            :button-title="__('Add a task list')"
+            icon="list-task"
+          />
+          <toolbar-button
+            :tag="mdTable"
+            :prepend="true"
+            :button-title="__('Add a table')"
+            icon="table"
+          />
+        </div>
+        <div class="d-inline-block ml-md-2 ml-0">
           <button
-            v-tooltip
-            aria-label="Go full screen"
-            class="toolbar-btn js-zen-enter"
+            v-gl-tooltip
+            :aria-label="__('Go full screen')"
+            class="toolbar-btn toolbar-fullscreen-btn js-zen-enter"
             data-container="body"
             tabindex="-1"
-            title="Go full screen"
-            type="button">
-            <i
-              aria-hidden="true"
-              class="fa fa-arrows-alt fa-fw">
-            </i>
+            :title="__('Go full screen')"
+            type="button"
+          >
+            <gl-icon name="maximize" />
           </button>
         </div>
       </li>

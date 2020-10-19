@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::RouteMap do
+RSpec.describe Gitlab::RouteMap do
   describe '#initialize' do
     context 'when the data is not YAML' do
       it 'raises an error' do
@@ -60,7 +62,7 @@ describe Gitlab::RouteMap do
 
       subject do
         map = described_class.new(<<-"MAP".strip_heredoc)
-        - source: '#{malicious_regexp}'
+        - source: '#{malicious_regexp_re2}'
           public: '/'
         MAP
 

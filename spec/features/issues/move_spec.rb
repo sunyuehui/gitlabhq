@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-feature 'issue move to another project' do
+require 'spec_helper'
+
+RSpec.describe 'issue move to another project' do
   let(:user) { create(:user) }
   let(:old_project) { create(:project, :repository) }
   let(:text) { 'Some issue description' }
@@ -9,17 +11,19 @@ feature 'issue move to another project' do
     create(:issue, description: text, project: old_project, author: user)
   end
 
-  background { sign_in(user) }
+  before do
+    sign_in(user)
+  end
 
   context 'user does not have permission to move issue' do
-    background do
-      old_project.team << [user, :guest]
+    before do
+      old_project.add_guest(user)
 
-      edit_issue(issue)
+      visit issue_path(issue)
     end
 
-    scenario 'moving issue to another project not allowed' do
-      expect(page).to have_no_selector('#move_to_project_id')
+    it 'moving issue to another project not allowed' do
+      expect(page).to have_no_selector('.js-sidebar-move-issue-block')
     end
   end
 
@@ -28,18 +32,20 @@ feature 'issue move to another project' do
     let(:new_project) { create(:project) }
     let(:new_project_search) { create(:project) }
     let(:text) { "Text with #{mr.to_reference}" }
-    let(:cross_reference) { old_project.to_reference(new_project) }
+    let(:cross_reference) { old_project.to_reference_base(new_project) }
 
-    background do
-      old_project.team << [user, :reporter]
-      new_project.team << [user, :reporter]
+    before do
+      old_project.add_reporter(user)
+      new_project.add_reporter(user)
 
-      edit_issue(issue)
+      visit issue_path(issue)
     end
 
-    scenario 'moving issue to another project', js: true do
-      find('#issuable-move', visible: false).set(new_project.id)
-      click_button('Save changes')
+    it 'moving issue to another project', :js do
+      find('.js-move-issue').click
+      wait_for_requests
+      all('.js-move-issue-dropdown-item')[0].click
+      find('.js-move-issue-confirmation-button').click
 
       expect(page).to have_content("Text with #{cross_reference}#{mr.to_reference}")
       expect(page).to have_content("moved from #{cross_reference}#{issue.to_reference}")
@@ -47,32 +53,34 @@ feature 'issue move to another project' do
       expect(page.current_path).to include project_path(new_project)
     end
 
-    scenario 'searching project dropdown', js: true do
-      new_project_search.team << [user, :reporter]
+    it 'searching project dropdown', :js do
+      new_project_search.add_reporter(user)
 
-      page.within '.detail-page-description' do
-        first('.select2-choice').click
-      end
+      find('.js-move-issue').click
+      wait_for_requests
 
-      fill_in('s2id_autogen1_search', with: new_project_search.name)
+      page.within '.js-sidebar-move-issue-block' do
+        fill_in('sidebar-move-issue-dropdown-search', with: new_project_search.name)
 
-      page.within '.select2-drop' do
         expect(page).to have_content(new_project_search.name)
         expect(page).not_to have_content(new_project.name)
       end
     end
 
-    context 'user does not have permission to move the issue to a project', js: true do
+    context 'user does not have permission to move the issue to a project', :js do
       let!(:private_project) { create(:project, :private) }
       let(:another_project) { create(:project) }
-      background { another_project.team << [user, :guest] }
 
-      scenario 'browsing projects in projects select' do
-        click_link 'Move to a different project'
+      before do
+        another_project.add_guest(user)
+      end
 
-        page.within '.select2-results' do
-          expect(page).to have_content 'No project'
-          expect(page).to have_content new_project.name_with_namespace
+      it 'browsing projects in projects select' do
+        find('.js-move-issue').click
+        wait_for_requests
+
+        page.within '.js-sidebar-move-issue-block' do
+          expect(page).to have_content new_project.full_name
         end
       end
     end
@@ -83,15 +91,49 @@ feature 'issue move to another project' do
         create(:issue, project: old_project, author: user, moved_to: new_issue)
       end
 
-      scenario 'user wants to move issue that has already been moved' do
+      it 'user wants to move issue that has already been moved' do
         expect(page).to have_no_selector('#move_to_project_id')
       end
     end
   end
 
-  def edit_issue(issue)
-    visit issue_path(issue)
-    page.within('.issuable-actions') { first(:link, 'Edit').click }
+  context 'service desk issue moved to a project with service desk disabled', :js do
+    let(:project_title) { 'service desk disabled project' }
+    let(:warning_selector) { '.js-alert-moved-from-service-desk-warning' }
+    let(:namespace) { create(:namespace) }
+    let(:regular_project) { create(:project, title: project_title, service_desk_enabled: false) }
+    let(:service_desk_project) { build(:project, :private, namespace: namespace, service_desk_enabled: true) }
+    let(:service_desk_issue) { create(:issue, project: service_desk_project, author: ::User.support_bot) }
+
+    before do
+      allow(Gitlab).to receive(:com?).and_return(true)
+      allow(Gitlab::IncomingEmail).to receive(:enabled?).and_return(true)
+      allow(Gitlab::IncomingEmail).to receive(:supports_wildcard?).and_return(true)
+
+      regular_project.add_reporter(user)
+      service_desk_project.add_reporter(user)
+
+      visit issue_path(service_desk_issue)
+
+      find('.js-move-issue').click
+      wait_for_requests
+      find('.js-move-issue-dropdown-item', text: project_title).click
+      find('.js-move-issue-confirmation-button').click
+    end
+
+    it 'shows an alert after being moved' do
+      expect(page).to have_content('This project does not have Service Desk enabled')
+    end
+
+    it 'does not show an alert after being dismissed' do
+      find("#{warning_selector} .js-close").click
+
+      expect(page).to have_no_selector(warning_selector)
+
+      page.refresh
+
+      expect(page).to have_no_selector(warning_selector)
+    end
   end
 
   def issue_path(issue)

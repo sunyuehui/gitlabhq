@@ -1,64 +1,65 @@
+# frozen_string_literal: true
+
 module API
   module Helpers
     module Runner
-      JOB_TOKEN_HEADER = 'HTTP_JOB_TOKEN'.freeze
+      include Gitlab::Utils::StrongMemoize
+
+      prepend_if_ee('EE::API::Helpers::Runner') # rubocop: disable Cop/InjectEnterpriseEditionModule
+
+      JOB_TOKEN_HEADER = 'HTTP_JOB_TOKEN'
       JOB_TOKEN_PARAM = :token
-      UPDATE_RUNNER_EVERY = 10 * 60
 
       def runner_registration_token_valid?
-        ActiveSupport::SecurityUtils.variable_size_secure_compare(params[:token],
-                                                                  current_application_settings.runners_registration_token)
-      end
-
-      def get_runner_version_from_params
-        return unless params['info'].present?
-        attributes_for_keys(%w(name version revision platform architecture), params['info'])
+        ActiveSupport::SecurityUtils.secure_compare(params[:token], Gitlab::CurrentSettings.runners_registration_token)
       end
 
       def authenticate_runner!
         forbidden! unless current_runner
+
+        current_runner
+          .heartbeat(get_runner_details_from_request)
+      end
+
+      def get_runner_details_from_request
+        return get_runner_ip unless params['info'].present?
+
+        attributes_for_keys(%w(name version revision platform architecture), params['info'])
+          .merge(get_runner_ip)
+      end
+
+      def get_runner_ip
+        { ip_address: ip_address }
       end
 
       def current_runner
-        @runner ||= ::Ci::Runner.find_by_token(params[:token].to_s)
+        strong_memoize(:current_runner) do
+          ::Ci::Runner.find_by_token(params[:token].to_s)
+        end
       end
 
-      def update_runner_info
-        return unless update_runner?
+      def authenticate_job!(require_running: true)
+        job = current_job
 
-        current_runner.contacted_at = Time.now
-        current_runner.assign_attributes(get_runner_version_from_params)
-        current_runner.save if current_runner.changed?
-      end
-
-      def update_runner?
-        # Use a random threshold to prevent beating DB updates.
-        # It generates a distribution between [40m, 80m].
-        #
-        contacted_at_max_age = UPDATE_RUNNER_EVERY + Random.rand(UPDATE_RUNNER_EVERY)
-
-        current_runner.contacted_at.nil? ||
-          (Time.now - current_runner.contacted_at) >= contacted_at_max_age
-      end
-
-      def validate_job!(job)
         not_found! unless job
+        forbidden! unless job_token_valid?(job)
 
-        yield if block_given?
-
-        project = job.project
-        forbidden!('Project has been deleted!') if project.nil? || project.pending_delete?
+        forbidden!('Project has been deleted!') if job.project.nil? || job.project.pending_delete?
         forbidden!('Job has been erased!') if job.erased?
-      end
 
-      def authenticate_job!
-        job = Ci::Build.find_by_id(params[:id])
-
-        validate_job!(job) do
-          forbidden! unless job_token_valid?(job)
+        if require_running
+          job_forbidden!(job, 'Job is not running') unless job.running?
         end
 
+        job.runner&.heartbeat(get_runner_ip)
+
         job
+      end
+
+      def current_job
+        strong_memoize(:current_job) do
+          ::Ci::Build.find_by_id(params[:id])
+        end
       end
 
       def job_token_valid?(job)
@@ -66,8 +67,9 @@ module API
         token && job.valid_token?(token)
       end
 
-      def max_artifacts_size
-        current_application_settings.max_artifacts_size.megabytes.to_i
+      def job_forbidden!(job, reason)
+        header 'Job-Status', job.status
+        forbidden!(reason)
       end
     end
   end

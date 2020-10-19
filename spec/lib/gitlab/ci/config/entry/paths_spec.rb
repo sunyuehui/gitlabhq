@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Config::Entry::Paths do
+RSpec.describe Gitlab::Ci::Config::Entry::Paths do
   let(:entry) { described_class.new(config) }
 
   describe 'validations' do

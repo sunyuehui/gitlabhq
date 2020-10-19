@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe TrendingProjectsWorker do
+RSpec.describe TrendingProjectsWorker do
   describe '#perform' do
     it 'refreshes the trending projects' do
       expect(TrendingProject).to receive(:refresh!)

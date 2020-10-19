@@ -1,26 +1,12 @@
-<template>
-  <div class="cell">
-    <code-cell
-      type="input"
-      :raw-code="rawInputCode"
-      :count="cell.execution_count"
-      :code-css-class="codeCssClass" />
-    <output-cell
-      v-if="hasOutput"
-      :count="cell.execution_count"
-      :output="output"
-      :code-css-class="codeCssClass" />
-  </div>
-</template>
-
 <script>
-import CodeCell from './code/index.vue';
+import CodeOutput from './code/index.vue';
 import OutputCell from './output/index.vue';
 
 export default {
+  name: 'CodeCell',
   components: {
-    'code-cell': CodeCell,
-    'output-cell': OutputCell,
+    CodeOutput,
+    OutputCell,
   },
   props: {
     cell: {
@@ -35,21 +21,39 @@ export default {
   },
   computed: {
     rawInputCode() {
-      if (this.cell.source) {
+      if (this.cell.source && Array.isArray(this.cell.source)) {
         return this.cell.source.join('');
       }
 
-      return '';
+      return this.cell.source || '';
     },
     hasOutput() {
       return this.cell.outputs.length;
     },
-    output() {
-      return this.cell.outputs[0];
+    outputs() {
+      return this.cell.outputs;
     },
   },
 };
 </script>
+
+<template>
+  <div class="cell">
+    <code-output
+      :raw-code="rawInputCode"
+      :count="cell.execution_count"
+      :code-css-class="codeCssClass"
+      type="input"
+    />
+    <output-cell
+      v-if="hasOutput"
+      :count="cell.execution_count"
+      :outputs="outputs"
+      :metadata="cell.metadata"
+      :code-css-class="codeCssClass"
+    />
+  </div>
+</template>
 
 <style scoped>
 .cell {

@@ -1,125 +1,227 @@
+---
+stage: Plan
+group: Project Management
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see https://about.gitlab.com/handbook/engineering/ux/technical-writing/#designated-technical-writers
+---
+
 # Issues
 
-The GitLab Issue Tracker is an advanced and complete tool
-for tracking the evolution of a new idea or the process
-of solving a problem.
+Issues are the fundamental medium for collaborating on ideas and planning work in GitLab.
 
-It allows you, your team, and your collaborators to share
-and discuss proposals before and while implementing them.
+## Overview
 
-Issues and the GitLab Issue Tracker are available in all
-[GitLab Products](https://about.gitlab.com/products/) as
-part of the [GitLab Workflow](https://about.gitlab.com/2016/10/25/gitlab-workflow-an-overview/).
+The GitLab issue tracker is an advanced tool for collaboratively developing ideas, solving problems,
+and planning work.
 
-## Use cases
+Issues can allow sharing and discussion of proposals before, and during,
+their implementation between:
 
-Issues can have endless applications. Just to exemplify, these are
-some cases for which creating issues are most used:
+- You and your team.
+- Outside collaborators.
+
+They can also be used for a variety of other purposes, customized to your
+needs and workflow.
+
+Issues are always associated with a specific project, but if you have multiple projects in a group,
+you can also view all the issues collectively at the group level.
+
+**Common use cases include:**
 
 - Discussing the implementation of a new idea
-- Submitting feature proposals
-- Asking questions
-- Reporting bugs and malfunction
-- Obtaining support
-- Elaborating new code implementations
+- Tracking tasks and work status
+- Accepting feature proposals, questions, support requests, or bug reports
+- Elaborating on new code implementations
 
-See also the blog post "[Always start a discussion with an issue](https://about.gitlab.com/2016/03/03/start-with-an-issue/)".
+See also [Always start a discussion with an issue](https://about.gitlab.com/blog/2016/03/03/start-with-an-issue/).
 
-### Keep private things private
+<i class="fa fa-youtube-play youtube" aria-hidden="true"></i>
+To learn how GitLab's Strategic Marketing department uses GitLab issues with [labels](../labels.md) and
+[issue boards](../issue_board.md), see the video on
+[Managing Commitments with Issues](https://www.youtube.com/watch?v=cuIHNintg1o&t=3).
 
-For instance, let's assume you have a public project but want to start a discussion on something
-you don't want to be public. With [Confidential Issues](#confidential-issues),
-you can discuss private matters among the project members, and still keep
-your project public, open to collaboration.
+## Parts of an issue
 
-### Streamline collaboration
+Issues contain a variety of content and metadata, enabling a large range of flexibility
+in how they are used. Each issue can contain the following attributes, though not all items
+must be set.
 
-With [Multiple Assignees for Issues](https://docs.gitlab.com/ee/user/project/issues/multiple_assignees_for_issues.html),
-available in [GitLab Enterprise Edition Starter](https://about.gitlab.com/gitlab-ee/)
-you can streamline collaboration and allow shared responsibilities to be clearly displayed.
-All assignees are shown across your workflows and receive notifications (as they
-would as single assignees), simplifying communication and ownership.
+<table class="borderless-table fixed-table">
+<tr>
+    <td>
+        <ul>
+            <li>Content</li>
+            <ul>
+                <li>Title</li>
+                <li>Description and tasks</li>
+                <li>Comments and other activity</li>
+            </ul>
+            <li>People</li>
+            <ul>
+                <li>Author</li>
+                <li>Assignee(s)</li>
+            </ul>
+            <li>State</li>
+            <ul>
+                <li>State (open or closed)</li>
+                <li>Health status (on track, needs attention, or at risk)</li>
+                <li>Confidentiality</li>
+                <li>Tasks (completed vs. outstanding)</li>
+            </ul>
+        </ul>
+    </td>
+    <td>
+        <ul>
+            <li>Planning and tracking</li>
+            <ul>
+                <li>Milestone</li>
+                <li>Due date</li>
+                <li>Weight</li>
+                <li>Time tracking</li>
+                <li>Labels</li>
+                <li>Votes</li>
+                <li>Reaction emoji</li>
+                <li>Linked issues</li>
+                <li>Assigned epic</li>
+                <li>Unique issue number and URL</li>
+            </ul>
+       </ul>
+    </td>
+</tr>
+</table>
 
-### Consistent collaboration
+## Viewing and managing issues
 
-Create [issue templates](#issue-templates) to make collaboration consistent and
-containing all information you need. For example, you can create a template
-for feature proposals and another one for bug reports.
+While you can view and manage the full details of an issue on the [issue page](#issue-page),
+you can also work with multiple issues at a time using the [Issues List](#issues-list),
+[Issue Boards](#issue-boards), Issue references, and [Epics](#epics)**(PREMIUM)**.
 
-## Issue Tracker
+Key actions for Issues include:
 
-The issue tracker is the collection of opened and closed issues created in a project.
+- [Creating issues](managing_issues.md#create-a-new-issue)
+- [Moving issues](managing_issues.md#moving-issues)
+- [Closing issues](managing_issues.md#closing-issues)
+- [Deleting issues](managing_issues.md#deleting-issues)
 
-![Issue tracker](img/issue_tracker.png)
-
-Find the issue tracker by navigating to your **Project's Dashboard** > **Issues**.
-
-## GitLab Issues Functionalities
-
-The image bellow illustrates how an issue looks like:
+### Issue page
 
 ![Issue view](img/issues_main_view.png)
 
-Learn more about it on the [GitLab Issues Functionalities documentation](issues_functionalities.md).
+On an issue's page, you can view [all aspects of the issue](issue_data_and_actions.md),
+and modify them if you have the necessary [permissions](../../permissions.md).
 
-## New issue
+#### Real-time sidebar **(CORE ONLY)**
 
-Read through the [documentation on creating issues](create_new_issue.md).
+> - [Introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/17589) in GitLab 13.3.
 
-## Closing issues
+Assignees in the sidebar are updated in real time. This feature is **disabled by default**.
+To enable, you need to enable [ActionCable in-app mode](https://docs.gitlab.com/omnibus/settings/actioncable.html).
 
-Learn distinct ways to [close issues](closing_issues.md) in GitLab.
+### Issues list
 
-## Create a merge request from an issue
+![Project issues list view](img/project_issues_list_view.png)
 
-Learn more about it on the [GitLab Issues Functionalities documentation](issues_functionalities.md#18-new-merge-request).
+On the Issues List, you can view all issues in the current project, or from multiple
+projects when opening the Issues List from the higher-level group context. Filter the
+issue list with a [search query](../../search/index.md#filtering-issue-and-merge-request-lists),
+including specific metadata, such as label(s), assignees(s), status, and more. From this
+view, you can also make certain changes [in bulk](../bulk_editing.md) to the displayed issues.
 
-## Search for an issue
+For more information, see the [Issue Data and Actions](issue_data_and_actions.md) page
+for a rundown of all the fields and information in an issue.
 
-Learn how to [find an issue](../../search/index.md) by searching for and filtering them.
+You can sort a list of issues in several ways, for example by issue creation date, milestone due date. For more information, see the [Sorting and Ordering Issue Lists](sorting_issue_lists.md) page.
 
-## Advanced features
-
-### Confidential Issues
-
-Whenever you want to keep the discussion presented in a
-issue within your team only, you can make that
-[issue confidential](confidential_issues.md). Even if your project
-is public, that issue will be preserved. The browser will
-respond with a 404 error whenever someone who is not a project
-member with at least [Reporter level](../../permissions.md#project) tries to
-access that issue's URL.
-
-Learn more about them on the [confidential issues documentation](confidential_issues.md).
-
-### Issue templates
-
-Create templates for every new issue. They will be available from
-the dropdown menu **Choose a template** when you create a new issue:
-
-![issue template](img/issue_template.png)
-
-Learn more about them on the [issue templates documentation](../../project/description_templates.md#creating-issue-templates).
-
-### Crosslinking issues
-
-Learn more about [crosslinking](crosslinking_issues.md) issues and merge requests.
-
-### Issue Board
-
-The [GitLab Issue Board](https://about.gitlab.com/features/issueboard/) is a way to
-enhance your workflow by organizing and prioritizing issues in GitLab.
+### Issue boards
 
 ![Issue board](img/issue_board.png)
 
-Find GitLab Issue Boards by navigating to your **Project's Dashboard** > **Issues** > **Board**.
+[Issue boards](../issue_board.md) are Kanban boards with columns that display issues based on their
+labels or their assignees**(PREMIUM)**. They offer the flexibility to manage issues using
+highly customizable workflows.
 
-Read through the documentation for [Issue Boards](../issue_board.md)
-to find out more about this feature.
+You can reorder issues within a column. If you drag an issue card to another column, its
+associated label or assignee will change to match that of the new column. The entire
+board can also be filtered to only include issues from a certain milestone or an overarching
+label.
 
-With [GitLab Enterprise Edition Starter](https://about.gitlab.com/gitlab-ee/), you can also
-create various boards per project with [Multiple Issue Boards](https://docs.gitlab.com/ee/user/project/issue_board.html#multiple-issue-boards).
+### Design Management
 
-### Issue's API
+With [Design Management](design_management.md), you can upload design
+assets to issues and view them all together to easily share and
+collaborate with your team.
 
-Read through the [API documentation](../../../api/issues.md).
+### Epics **(PREMIUM)**
+
+[Epics](../../group/epics/index.md) let you manage your portfolio of projects more
+efficiently and with less effort by tracking groups of issues that share a theme, across
+projects and milestones.
+
+### Related issues
+
+You can mark two issues as related, so that when viewing one, the other is always
+listed in its [Related Issues](related_issues.md) section. This can help display important
+context, such as past work, dependencies, or duplicates.
+
+Users on [GitLab Starter, GitLab Bronze, and higher tiers](https://about.gitlab.com/pricing/), can
+also mark issues as blocking or blocked by another issue.
+
+### Crosslinking issues
+
+You can [cross-link issues](crosslinking_issues.md) by referencing an issue from another
+issue or merge request by including its URL or ID. The referenced issue displays a
+message in the Activity stream about the reference, with a link to the other issue or MR.
+
+### Similar issues
+
+> [Introduced](https://gitlab.com/gitlab-org/gitlab-foss/-/merge_requests/22866) in GitLab 11.6.
+
+To prevent duplication of issues for the same topic, GitLab searches for similar issues
+when new issues are being created.
+
+When typing in the title in the **New Issue** page, GitLab searches titles and descriptions
+across all issues the user has access to in the current project. Up to five similar issues,
+sorted by most recently updated, are displayed below the title box. Note that this feature
+requires [GraphQL](../../../api/graphql/index.md) to be enabled.
+
+![Similar issues](img/similar_issues.png)
+
+### Health status **(ULTIMATE)**
+
+> - [Introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/36427) in [GitLab Ultimate](https://about.gitlab.com/pricing/) 12.10.
+> - Health status of closed issues [can't be edited](https://gitlab.com/gitlab-org/gitlab/-/issues/220867) in [GitLab Ultimate](https://about.gitlab.com/pricing/) 13.4 and later.
+To help you track the status of your issues, you can assign a status to each issue to flag work
+that's progressing as planned or needs attention to keep on schedule:
+
+- **On track** (green)
+- **Needs attention** (amber)
+- **At risk** (red)
+
+!["On track" health status on an issue](img/issue_health_status_dropdown_v12_10.png)
+
+After an issue is closed, its health status can't be edited and the "Edit" button becomes disabled
+until the issue is reopened.
+
+You can then see issue statuses on the
+[Epic tree](../../group/epics/index.md#issue-health-status-in-epic-tree).
+
+#### Disable issue health status
+
+This feature comes with the `:save_issuable_health_status` feature flag enabled by default. However, in some cases
+this feature is incompatible with old configuration. To turn off the feature while configuration is
+migrated, ask a GitLab administrator with Rails console access to run the following command:
+
+```ruby
+Feature.disable(:save_issuable_health_status)
+```
+
+## Other Issue actions
+
+- [Create an issue from a template](../../project/description_templates.md#using-the-templates)
+- [Set a due date](due_dates.md)
+- [Bulk edit issues](../bulk_editing.md) - From the Issues List, select multiple issues
+  in order to change their status, assignee, milestone, or labels in bulk.
+- [Import issues](csv_import.md)
+- [Export issues](csv_export.md)
+- [Issues API](../../../api/issues.md)
+- Configure an [external issue tracker](../../../integration/external-issue-tracker.md)
+  such as Jira, Redmine, Bugzilla, or EWM.

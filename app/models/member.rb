@@ -1,8 +1,17 @@
-class Member < ActiveRecord::Base
+# frozen_string_literal: true
+
+class Member < ApplicationRecord
+  include EachBatch
+  include AfterCommitQueue
   include Sortable
   include Importable
+  include CreatedAtFilterable
   include Expirable
   include Gitlab::Access
+  include Presentable
+  include Gitlab::Utils::StrongMemoize
+  include FromUnion
+  include UpdateHighestRole
 
   attr_accessor :raw_invite_token
 
@@ -12,23 +21,29 @@ class Member < ActiveRecord::Base
 
   delegate :name, :username, :email, to: :user, prefix: true
 
+  validates :expires_at, allow_blank: true, future_date: true
   validates :user, presence: true, unless: :invite?
   validates :source, presence: true
   validates :user_id, uniqueness: { scope: [:source_type, :source_id],
                                     message: "already exists in source",
                                     allow_nil: true }
-  validates :access_level, inclusion: { in: Gitlab::Access.all_values }, presence: true
+  validate :higher_access_level_than_group, unless: :importing?
   validates :invite_email,
     presence: {
       if: :invite?
     },
-    email: {
+    devise_email: {
       allow_nil: true
     },
     uniqueness: {
       scope: [:source_type, :source_id],
       allow_nil: true
     }
+  validates :user_id,
+    uniqueness: {
+      message: _('project bots cannot be added to other groups / projects')
+    },
+    if: :project_bot?
 
   # This scope encapsulates (most of) the conditions a row in the member table
   # must satisfy if it is a valid permission. Of particular note:
@@ -46,14 +61,17 @@ class Member < ActiveRecord::Base
     left_join_users
       .where(user_ok)
       .where(requested_at: nil)
+      .non_minimal_access
       .reorder(nil)
   end
 
   # Like active, but without invites. For when a User is required.
-  scope :active_without_invites, -> do
+  scope :active_without_invites_and_requests, -> do
     left_join_users
       .where(users: { state: 'active' })
-      .where(requested_at: nil)
+      .non_request
+      .non_invite
+      .non_minimal_access
       .reorder(nil)
   end
 
@@ -62,19 +80,33 @@ class Member < ActiveRecord::Base
   scope :request, -> { where.not(requested_at: nil) }
   scope :non_request, -> { where(requested_at: nil) }
 
+  scope :not_accepted_invitations, -> { invite.where(invite_accepted_at: nil) }
+  scope :not_accepted_invitations_by_user, -> (user) { not_accepted_invitations.where(created_by: user) }
+  scope :not_expired, -> (today = Date.current) { where(arel_table[:expires_at].gt(today).or(arel_table[:expires_at].eq(nil))) }
+  scope :last_ten_days_excluding_today, -> (today = Date.current) { where(created_at: (today - 10).beginning_of_day..(today - 1).end_of_day) }
+
   scope :has_access, -> { active.where('access_level > 0') }
 
   scope :guests, -> { active.where(access_level: GUEST) }
   scope :reporters, -> { active.where(access_level: REPORTER) }
   scope :developers, -> { active.where(access_level: DEVELOPER) }
-  scope :masters,  -> { active.where(access_level: MASTER) }
-  scope :owners,  -> { active.where(access_level: OWNER) }
-  scope :owners_and_masters,  -> { active.where(access_level: [OWNER, MASTER]) }
+  scope :maintainers, -> { active.where(access_level: MAINTAINER) }
+  scope :non_guests, -> { where('members.access_level > ?', GUEST) }
+  scope :non_minimal_access, -> { where('members.access_level > ?', MINIMAL_ACCESS) }
+  scope :owners, -> { active.where(access_level: OWNER) }
+  scope :owners_and_maintainers, -> { active.where(access_level: [OWNER, MAINTAINER]) }
+  scope :with_user, -> (user) { where(user: user) }
+  scope :preload_user_and_notification_settings, -> { preload(user: :notification_settings) }
+
+  scope :with_source_id, ->(source_id) { where(source_id: source_id) }
+  scope :including_source, -> { includes(:source) }
 
   scope :order_name_asc, -> { left_join_users.reorder(Gitlab::Database.nulls_last_order('users.name', 'ASC')) }
   scope :order_name_desc, -> { left_join_users.reorder(Gitlab::Database.nulls_last_order('users.name', 'DESC')) }
   scope :order_recent_sign_in, -> { left_join_users.reorder(Gitlab::Database.nulls_last_order('users.last_sign_in_at', 'DESC')) }
   scope :order_oldest_sign_in, -> { left_join_users.reorder(Gitlab::Database.nulls_last_order('users.last_sign_in_at', 'ASC')) }
+
+  scope :on_project_and_ancestors, ->(project) { where(source: [project] + project.ancestors) }
 
   before_validation :generate_invite_token, on: :create, if: -> (member) { member.invite_email.present? }
 
@@ -83,6 +115,7 @@ class Member < ActiveRecord::Base
   after_create :create_notification_setting, unless: [:pending?, :importing?]
   after_create :post_create_hook, unless: [:pending?, :importing?]
   after_update :post_update_hook, unless: [:pending?, :importing?]
+  after_destroy :destroy_notification_setting
   after_destroy :post_destroy_hook, unless: :pending?
   after_commit :refresh_member_authorized_projects
 
@@ -93,7 +126,22 @@ class Member < ActiveRecord::Base
       joins(:user).merge(User.search(query))
     end
 
-    def sort(method)
+    def search_invite_email(query)
+      invite.where(['invite_email ILIKE ?', "%#{query}%"])
+    end
+
+    def filter_by_2fa(value)
+      case value
+      when 'enabled'
+        left_join_users.merge(User.with_two_factor)
+      when 'disabled'
+        left_join_users.merge(User.without_two_factor)
+      else
+        all
+      end
+    end
+
+    def sort_by_attribute(method)
       case method.to_s
       when 'access_level_asc' then reorder(access_level: :asc)
       when 'access_level_desc' then reorder(access_level: :desc)
@@ -121,61 +169,68 @@ class Member < ActiveRecord::Base
       where(user_id: user_ids).has_access.pluck(:user_id, :access_level).to_h
     end
 
-    def find_by_invite_token(invite_token)
-      invite_token = Devise.token_generator.digest(self, :invite_token, invite_token)
+    def find_by_invite_token(raw_invite_token)
+      invite_token = Devise.token_generator.digest(self, :invite_token, raw_invite_token)
       find_by(invite_token: invite_token)
     end
 
-    def add_user(source, user, access_level, current_user: nil, expires_at: nil)
-      user = retrieve_user(user)
+    def add_user(source, user, access_level, existing_members: nil, current_user: nil, expires_at: nil, ldap: false)
+      # rubocop: disable CodeReuse/ServiceClass
+      # `user` can be either a User object, User ID or an email to be invited
+      member = retrieve_member(source, user, existing_members)
       access_level = retrieve_access_level(access_level)
-
-      # `user` can be either a User object or an email to be invited
-      member =
-        if user.is_a?(User)
-          source.members.find_by(user_id: user.id) ||
-            source.requesters.find_by(user_id: user.id) ||
-            source.members.build(user_id: user.id)
-        else
-          source.members.build(invite_email: user)
-        end
 
       return member unless can_update_member?(current_user, member)
 
-      member.attributes = {
-        created_by: member.created_by || current_user,
-        access_level: access_level,
-        expires_at: expires_at
-      }
+      set_member_attributes(
+        member,
+        access_level,
+        current_user: current_user,
+        expires_at: expires_at,
+        ldap: ldap
+      )
 
       if member.request?
         ::Members::ApproveAccessRequestService.new(
-          source,
           current_user,
-          id: member.id,
           access_level: access_level
-        ).execute
+        ).execute(
+          member,
+          skip_authorization: ldap,
+          skip_log_audit_event: ldap
+        )
       else
         member.save
       end
 
       member
+      # rubocop: enable CodeReuse/ServiceClass
+    end
+
+    # Populates the attributes of a member.
+    #
+    # This logic resides in a separate method so that EE can extend this logic,
+    # without having to patch the `add_user` method directly.
+    def set_member_attributes(member, access_level, current_user: nil, expires_at: nil, ldap: false)
+      member.attributes = {
+        created_by: member.created_by || current_user,
+        access_level: access_level,
+        expires_at: expires_at
+      }
     end
 
     def add_users(source, users, access_level, current_user: nil, expires_at: nil)
       return [] unless users.present?
 
-      # Collect all user ids into separate array
-      # so we can use single sql query to get user objects
-      user_ids = users.select { |user| user =~ /\A\d+\Z/ }
-      users = users - user_ids + User.where(id: user_ids)
+      emails, users, existing_members = parse_users_list(source, users)
 
       self.transaction do
-        users.map do |user|
+        (emails + users).map! do |user|
           add_user(
             source,
             user,
             access_level,
+            existing_members: existing_members,
             current_user: current_user,
             expires_at: expires_at
           )
@@ -189,12 +244,53 @@ class Member < ActiveRecord::Base
 
     private
 
+    def parse_users_list(source, list)
+      emails, user_ids, users = [], [], []
+      existing_members = {}
+
+      list.each do |item|
+        case item
+        when User
+          users << item
+        when Integer
+          user_ids << item
+        when /\A\d+\Z/
+          user_ids << item.to_i
+        when Devise.email_regexp
+          emails << item
+        end
+      end
+
+      if user_ids.present?
+        users.concat(User.where(id: user_ids))
+        existing_members = source.members_and_requesters.where(user_id: user_ids).index_by(&:user_id)
+      end
+
+      [emails, users, existing_members]
+    end
+
     # This method is used to find users that have been entered into the "Add members" field.
     # These can be the User objects directly, their IDs, their emails, or new emails to be invited.
     def retrieve_user(user)
       return user if user.is_a?(User)
 
-      User.find_by(id: user) || User.find_by(email: user) || user
+      return User.find_by(id: user) if user.is_a?(Integer)
+
+      User.find_by(email: user) || user
+    end
+
+    def retrieve_member(source, user, existing_members)
+      user = retrieve_user(user)
+
+      if user.is_a?(User)
+        if existing_members
+          existing_members[user.id] || source.members.build(user_id: user.id)
+        else
+          source.members_and_requesters.find_or_initialize_by(user_id: user.id)
+        end
+      else
+        source.members.build(invite_email: user)
+      end
     end
 
     def retrieve_access_level(access_level)
@@ -240,7 +336,7 @@ class Member < ActiveRecord::Base
     return false unless invite?
 
     self.invite_token = nil
-    self.invite_accepted_at = Time.now.utc
+    self.invite_accepted_at = Time.current.utc
 
     self.user = new_user
 
@@ -279,19 +375,46 @@ class Member < ActiveRecord::Base
     send_invite
   end
 
+  def send_invitation_reminder(reminder_index)
+    return unless invite?
+
+    generate_invite_token! unless @raw_invite_token
+
+    run_after_commit_or_now { notification_service.invite_member_reminder(self, @raw_invite_token, reminder_index) }
+  end
+
   def create_notification_setting
     user.notification_settings.find_or_create_for(source)
   end
 
-  def notification_setting
-    @notification_setting ||= user.notification_settings_for(source)
+  def destroy_notification_setting
+    notification_setting&.destroy
   end
 
+  def notification_setting
+    @notification_setting ||= user&.notification_settings_for(source)
+  end
+
+  # rubocop: disable CodeReuse/ServiceClass
   def notifiable?(type, opts = {})
     # always notify when there isn't a user yet
     return true if user.blank?
 
-    NotificationRecipientService.notifiable?(user, type, notifiable_options.merge(opts))
+    NotificationRecipients::BuildService.notifiable?(user, type, notifiable_options.merge(opts))
+  end
+  # rubocop: enable CodeReuse/ServiceClass
+
+  # Find the user's group member with a highest access level
+  def highest_group_member
+    strong_memoize(:highest_group_member) do
+      next unless user_id && source&.ancestors&.any?
+
+      GroupMember.where(source: source.ancestors, user_id: user_id).order(:access_level).last
+    end
+  end
+
+  def invite_to_unknown_user?
+    invite? && user_id.nil?
   end
 
   private
@@ -309,7 +432,7 @@ class Member < ActiveRecord::Base
   end
 
   def post_update_hook
-    # override in sub class
+    system_hook_service.execute_hooks_for(self, :update)
   end
 
   def post_destroy_hook
@@ -322,6 +445,7 @@ class Member < ActiveRecord::Base
   # in a transaction. Doing so can lead to the job running before the
   # transaction has been committed, resulting in the job either throwing an
   # error or not doing any meaningful work.
+  # rubocop: disable CodeReuse/ServiceClass
   def refresh_member_authorized_projects
     # If user/source is being destroyed, project access are going to be
     # destroyed eventually because of DB foreign keys, so we shouldn't bother
@@ -330,6 +454,7 @@ class Member < ActiveRecord::Base
 
     UserProjectAccessChangedService.new(user_id).execute
   end
+  # rubocop: enable CodeReuse/ServiceClass
 
   def after_accept_invite
     post_create_hook
@@ -343,15 +468,43 @@ class Member < ActiveRecord::Base
     post_create_hook
   end
 
+  # rubocop: disable CodeReuse/ServiceClass
   def system_hook_service
     SystemHooksService.new
   end
+  # rubocop: enable CodeReuse/ServiceClass
 
+  # rubocop: disable CodeReuse/ServiceClass
   def notification_service
     NotificationService.new
   end
+  # rubocop: enable CodeReuse/ServiceClass
 
   def notifiable_options
     {}
   end
+
+  def higher_access_level_than_group
+    if highest_group_member && highest_group_member.access_level > access_level
+      error_parameters = { access: highest_group_member.human_access, group_name: highest_group_member.group.name }
+
+      errors.add(:access_level, s_("should be greater than or equal to %{access} inherited membership from group %{group_name}") % error_parameters)
+    end
+  end
+
+  def update_highest_role?
+    return unless user_id.present?
+
+    previous_changes[:access_level].present?
+  end
+
+  def update_highest_role_attribute
+    user_id
+  end
+
+  def project_bot?
+    user&.project_bot?
+  end
 end
+
+Member.prepend_if_ee('EE::Member')

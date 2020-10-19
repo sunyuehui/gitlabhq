@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'erb'
 
 module Banzai
@@ -5,7 +7,7 @@ module Banzai
     # Text filter that escapes these HTML entities: & " < >
     class HtmlEntityFilter < HTML::Pipeline::TextFilter
       def call
-        ERB::Util.html_escape_once(text)
+        ERB::Util.html_escape(text)
       end
     end
   end

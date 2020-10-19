@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Banzai
   module ReferenceParser
     # Base class for reference parsing classes.
@@ -45,9 +47,13 @@ module Banzai
         @data_attribute ||= "data-#{reference_type.to_s.dasherize}"
       end
 
-      def initialize(project = nil, current_user = nil)
-        @project = project
-        @current_user = current_user
+      # context - An instance of `Banzai::RenderContext`.
+      def initialize(context)
+        @context = context
+      end
+
+      def project_for_node(node)
+        context.project_for_node(node)
       end
 
       # Returns all the nodes containing references that the user can refer to.
@@ -162,8 +168,9 @@ module Banzai
       # objects that have not yet been queried. For objects that have already
       # been queried the object is returned from the cache.
       def collection_objects_for_ids(collection, ids)
-        if RequestStore.active?
-          ids = ids.map(&:to_i)
+        if Gitlab::SafeRequestStore.active?
+          ids = ids.map(&:to_i).uniq
+
           cache = collection_cache[collection_cache_key(collection)]
           to_query = ids - cache.keys
 
@@ -171,7 +178,7 @@ module Banzai
             collection.where(id: to_query).each { |row| cache[row.id] = row }
           end
 
-          cache.values_at(*ids).compact
+          ids.uniq.map { |id| cache[id] }.compact
         else
           collection.where(id: ids)
         end
@@ -195,12 +202,14 @@ module Banzai
         gather_references(nodes)
       end
 
-      # Gathers the references for the given HTML nodes.
+      # Gathers the references for the given HTML nodes.  Returns visible
+      # references and a list of nodes which are not visible to the user
       def gather_references(nodes)
         nodes = nodes_user_can_reference(current_user, nodes)
-        nodes = nodes_visible_to_user(current_user, nodes)
+        visible = nodes_visible_to_user(current_user, nodes)
+        not_visible = nodes - visible
 
-        referenced_by(nodes)
+        { visible: referenced_by(visible), not_visible: not_visible }
       end
 
       # Returns a Hash containing the projects for a given list of HTML nodes.
@@ -211,7 +220,7 @@ module Banzai
       #
       def projects_for_nodes(nodes)
         @projects_for_nodes ||=
-          grouped_objects_for_nodes(nodes, Project, 'data-project')
+          grouped_objects_for_nodes(nodes, Project.includes(:project_feature), 'data-project')
       end
 
       def can?(user, permission, subject = :global)
@@ -224,7 +233,11 @@ module Banzai
 
       private
 
-      attr_reader :current_user, :project
+      attr_reader :context
+
+      def current_user
+        context.current_user
+      end
 
       # When a feature is disabled or visible only for
       # team members we should not allow team members
@@ -240,7 +253,7 @@ module Banzai
       end
 
       def collection_cache
-        RequestStore[:banzai_collection_cache] ||= Hash.new do |hash, key|
+        Gitlab::SafeRequestStore[:banzai_collection_cache] ||= Hash.new do |hash, key|
           hash[key] = {}
         end
       end

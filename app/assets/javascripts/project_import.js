@@ -1,13 +1,7 @@
-/* eslint-disable func-names, space-before-function-paren, wrap-iife, prefer-arrow-callback, max-len */
+import { visitUrl } from './lib/utils/url_utility';
 
-(function() {
-  this.ProjectImport = (function() {
-    function ProjectImport() {
-      setTimeout(function() {
-        return gl.utils.visitUrl(location.href);
-      }, 5000);
-    }
-
-    return ProjectImport;
-  })();
-}).call(window);
+export default function projectImport() {
+  setTimeout(() => {
+    visitUrl(window.location.href);
+  }, 5000);
+}

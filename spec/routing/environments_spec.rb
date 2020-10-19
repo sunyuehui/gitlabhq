@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'environments routing' do
+RSpec.describe 'environments routing' do
   let(:project) { create(:project) }
 
   let(:environment) do
@@ -9,7 +11,7 @@ describe 'environments routing' do
   end
 
   let(:environments_route) do
-    "#{project.namespace.name}/#{project.name}/environments/"
+    "#{project.full_path}/-/environments/"
   end
 
   describe 'routing environment folders' do
@@ -36,13 +38,12 @@ describe 'environments routing' do
   end
 
   def get_folder(folder)
-    get("#{project.namespace.name}/#{project.name}/" \
-        "environments/folders/#{folder}")
+    get("#{project.full_path}/-/environments/folders/#{folder}")
   end
 
   def folder_action(**opts)
-    options = { namespace_id: project.namespace.name,
-                project_id: project.name }
+    options = { namespace_id: project.namespace.path,
+                project_id: project.path }
 
     ['projects/environments#folder', options.merge(opts)]
   end

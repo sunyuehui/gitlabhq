@@ -1,10 +1,10 @@
 - @hide_top_links = true
-- page_title    "Snippets"
-- header_title  "Snippets", snippets_path
+- page_title    _("Snippets")
+- header_title  _("Snippets"), snippets_path
 
 - if current_user
   = render 'dashboard/snippets_head'
 - else
   = render 'explore/head'
 
-= render partial: 'snippets/snippets', locals: { link_project: true }
+= render partial: 'shared/snippets/list', locals: { link_project: true }

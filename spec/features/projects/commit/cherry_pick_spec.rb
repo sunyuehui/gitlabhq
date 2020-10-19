@@ -1,15 +1,17 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'Cherry-pick Commits' do
+RSpec.describe 'Cherry-pick Commits' do
   let(:user) { create(:user) }
   let(:group) { create(:group) }
   let(:project) { create(:project, :repository, namespace: group) }
-  let(:master_pickable_commit)  { project.commit('7d3b0f7cff5f37573aea97cebfd5692ea1689924') }
-  let(:master_pickable_merge)  { project.commit('e56497bb5f03a90a51293fc6d516788730953899') }
+  let(:master_pickable_commit) { project.commit('7d3b0f7cff5f37573aea97cebfd5692ea1689924') }
+  let(:master_pickable_merge) { project.commit('e56497bb5f03a90a51293fc6d516788730953899') }
 
   before do
     sign_in(user)
-    project.team << [user, :master]
+    project.add_maintainer(user)
     visit project_commit_path(project, master_pickable_commit.id)
   end
 
@@ -21,7 +23,7 @@ describe 'Cherry-pick Commits' do
         uncheck 'create_merge_request'
         click_button 'Cherry-pick'
       end
-      expect(page).to have_content('The commit has been successfully cherry-picked.')
+      expect(page).to have_content('The commit has been successfully cherry-picked into master.')
     end
   end
 
@@ -32,7 +34,7 @@ describe 'Cherry-pick Commits' do
         uncheck 'create_merge_request'
         click_button 'Cherry-pick'
       end
-      expect(page).to have_content('The commit has been successfully cherry-picked.')
+      expect(page).to have_content('The commit has been successfully cherry-picked into master.')
     end
   end
 
@@ -53,18 +55,22 @@ describe 'Cherry-pick Commits' do
     end
   end
 
-  context "I cherry-pick a commit in a new merge request" do
+  context "I cherry-pick a commit in a new merge request", :js do
     it do
+      find('.header-action-buttons a.dropdown-toggle').click
       find("a[href='#modal-cherry-pick-commit']").click
       page.within('#modal-cherry-pick-commit') do
         click_button 'Cherry-pick'
       end
-      expect(page).to have_content('The commit has been successfully cherry-picked. You can now submit a merge request to get this change into the original branch.')
+
+      wait_for_requests
+
+      expect(page).to have_content("The commit has been successfully cherry-picked into cherry-pick-#{master_pickable_commit.short_id}. You can now submit a merge request to get this change into the original branch.")
       expect(page).to have_content("From cherry-pick-#{master_pickable_commit.short_id} into master")
     end
   end
 
-  context "I cherry-pick a commit from a different branch", js: true do
+  context "I cherry-pick a commit from a different branch", :js do
     it do
       find('.header-action-buttons a.dropdown-toggle').click
       find(:css, "a[href='#modal-cherry-pick-commit']").click
@@ -86,7 +92,18 @@ describe 'Cherry-pick Commits' do
         click_button 'Cherry-pick'
       end
 
-      expect(page).to have_content('The commit has been successfully cherry-picked.')
+      expect(page).to have_content('The commit has been successfully cherry-picked into feature.')
+    end
+  end
+
+  context 'when the project is archived' do
+    let(:project) { create(:project, :repository, :archived, namespace: group) }
+
+    it 'does not show the cherry-pick link' do
+      find('.header-action-buttons a.dropdown-toggle').click
+
+      expect(page).not_to have_text("Cherry-pick")
+      expect(page).not_to have_css("a[href='#modal-cherry-pick-commit']")
     end
   end
 end

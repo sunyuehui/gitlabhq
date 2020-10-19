@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Auth
     Result = Struct.new(:actor, :project, :type, :authentication_abilities) do
@@ -22,3 +24,5 @@ module Gitlab
     end
   end
 end
+
+Gitlab::Auth::Result.prepend_if_ee('::EE::Gitlab::Auth::Result')

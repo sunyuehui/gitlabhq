@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ChatMessage
   class PushMessage < BaseMessage
     attr_reader :after
@@ -24,16 +26,8 @@ module ChatMessage
     end
 
     def activity
-      action = if new_branch?
-                 "created"
-               elsif removed_branch?
-                 "removed"
-               else
-                 "pushed to"
-               end
-
       {
-        title: "#{user_name} #{action} #{ref_type}",
+        title: humanized_action(short: true),
         subtitle: "in #{project_link}",
         text: compare_link,
         image: user_avatar
@@ -42,30 +36,19 @@ module ChatMessage
 
     private
 
+    def humanized_action(short: false)
+      action, ref_link, target_link = compose_action_details
+      text = [user_combined_name, action, ref_type, ref_link]
+      text << target_link unless short
+      text.join(' ')
+    end
+
     def message
-      if new_branch?
-        new_branch_message
-      elsif removed_branch?
-        removed_branch_message
-      else
-        push_message
-      end
+      humanized_action
     end
 
     def format(string)
-      Slack::Notifier::LinkFormatter.format(string)
-    end
-
-    def new_branch_message
-      "#{user_name} pushed new #{ref_type} #{branch_link} to #{project_link}"
-    end
-
-    def removed_branch_message
-      "#{user_name} removed #{ref_type} #{ref} from #{project_link}"
-    end
-
-    def push_message
-      "#{user_name} pushed to #{ref_type} #{branch_link} of #{project_link} (#{compare_link})"
+      Slack::Messenger::Util::LinkFormatter.format(string)
     end
 
     def commit_messages
@@ -79,10 +62,11 @@ module ChatMessage
     def compose_commit_message(commit)
       author = commit[:author][:name]
       id = Commit.truncate_sha(commit[:id])
-      message = commit[:message]
+      title = commit[:title]
+
       url = commit[:url]
 
-      "[#{id}](#{url}): #{message} - #{author}"
+      "[#{id}](#{url}): #{title} - #{author}"
     end
 
     def new_branch?
@@ -93,16 +77,20 @@ module ChatMessage
       Gitlab::Git.blank_ref?(after)
     end
 
-    def branch_url
-      "#{project_url}/commits/#{ref}"
+    def ref_url
+      if ref_type == 'tag'
+        "#{project_url}/-/tags/#{ref}"
+      else
+        "#{project_url}/commits/#{ref}"
+      end
     end
 
     def compare_url
       "#{project_url}/compare/#{before}...#{after}"
     end
 
-    def branch_link
-      "[#{ref}](#{branch_url})"
+    def ref_link
+      "[#{ref}](#{ref_url})"
     end
 
     def project_link
@@ -111,6 +99,16 @@ module ChatMessage
 
     def compare_link
       "[Compare changes](#{compare_url})"
+    end
+
+    def compose_action_details
+      if new_branch?
+        ['pushed new', ref_link, "to #{project_link}"]
+      elsif removed_branch?
+        ['removed', ref, "from #{project_link}"]
+      else
+        ['pushed to', ref_link, "of #{project_link} (#{compare_link})"]
+      end
     end
 
     def attachment_color

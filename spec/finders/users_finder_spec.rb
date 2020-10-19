@@ -1,11 +1,10 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe UsersFinder do
+RSpec.describe UsersFinder do
   describe '#execute' do
-    let!(:user1) { create(:user, username: 'johndoe') }
-    let!(:user2) { create(:user, :blocked, username: 'notsorandom') }
-    let!(:external_user) { create(:user, :external) }
-    let!(:omniauth_user) { create(:omniauth_user, provider: 'twitter', extern_uid: '123456') }
+    include_context 'UsersFinder#execute filter by project context'
 
     context 'with a normal user' do
       let(:user) { create(:user) }
@@ -13,37 +12,49 @@ describe UsersFinder do
       it 'returns all users' do
         users = described_class.new(user).execute
 
-        expect(users).to contain_exactly(user, user1, user2, omniauth_user)
+        expect(users).to contain_exactly(user, normal_user, blocked_user, omniauth_user, internal_user)
       end
 
       it 'filters by username' do
         users = described_class.new(user, username: 'johndoe').execute
 
-        expect(users).to contain_exactly(user1)
+        expect(users).to contain_exactly(normal_user)
+      end
+
+      it 'filters by id' do
+        users = described_class.new(user, id: normal_user.id).execute
+
+        expect(users).to contain_exactly(normal_user)
+      end
+
+      it 'filters by username (case insensitive)' do
+        users = described_class.new(user, username: 'joHNdoE').execute
+
+        expect(users).to contain_exactly(normal_user)
       end
 
       it 'filters by search' do
         users = described_class.new(user, search: 'orando').execute
 
-        expect(users).to contain_exactly(user2)
+        expect(users).to contain_exactly(blocked_user)
       end
 
       it 'filters by blocked users' do
         users = described_class.new(user, blocked: true).execute
 
-        expect(users).to contain_exactly(user2)
+        expect(users).to contain_exactly(blocked_user)
       end
 
       it 'filters by active users' do
         users = described_class.new(user, active: true).execute
 
-        expect(users).to contain_exactly(user, user1, omniauth_user)
+        expect(users).to contain_exactly(user, normal_user, omniauth_user)
       end
 
       it 'returns no external users' do
         users = described_class.new(user, external: true).execute
 
-        expect(users).to contain_exactly(user, user1, user2, omniauth_user)
+        expect(users).to contain_exactly(user, normal_user, blocked_user, omniauth_user, internal_user)
       end
 
       it 'filters by created_at' do
@@ -55,6 +66,27 @@ describe UsersFinder do
                                     created_before: Time.now + 2.days).execute
 
         expect(users.map(&:username)).not_to include([filtered_user_before.username, filtered_user_after.username])
+      end
+
+      it 'filters by non internal users' do
+        users = described_class.new(user, non_internal: true).execute
+
+        expect(users).to contain_exactly(user, normal_user, blocked_user, omniauth_user)
+      end
+
+      it 'does not filter by custom attributes' do
+        users = described_class.new(
+          user,
+          custom_attributes: { foo: 'bar' }
+        ).execute
+
+        expect(users).to contain_exactly(user, normal_user, blocked_user, omniauth_user, internal_user)
+      end
+
+      it 'orders returned results' do
+        users = described_class.new(user, sort: 'id_asc').execute
+
+        expect(users).to eq([normal_user, blocked_user, omniauth_user, internal_user, user])
       end
     end
 
@@ -70,7 +102,21 @@ describe UsersFinder do
       it 'returns all users' do
         users = described_class.new(admin).execute
 
-        expect(users).to contain_exactly(admin, user1, user2, external_user, omniauth_user)
+        expect(users).to contain_exactly(admin, normal_user, blocked_user, external_user, omniauth_user, internal_user)
+      end
+
+      it 'filters by custom attributes' do
+        create :user_custom_attribute, user: normal_user, key: 'foo', value: 'foo'
+        create :user_custom_attribute, user: normal_user, key: 'bar', value: 'bar'
+        create :user_custom_attribute, user: blocked_user, key: 'foo', value: 'foo'
+        create :user_custom_attribute, user: internal_user, key: 'foo', value: 'foo'
+
+        users = described_class.new(
+          admin,
+          custom_attributes: { foo: 'foo', bar: 'bar' }
+        ).execute
+
+        expect(users).to contain_exactly(normal_user)
       end
     end
   end

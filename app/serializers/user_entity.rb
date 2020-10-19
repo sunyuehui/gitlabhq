@@ -1,7 +1,4 @@
-class UserEntity < API::Entities::UserBasic
-  include RequestAwareEntity
+# frozen_string_literal: true
 
-  expose :path do |user|
-    user_path(user)
-  end
+class UserEntity < API::Entities::UserPath
 end

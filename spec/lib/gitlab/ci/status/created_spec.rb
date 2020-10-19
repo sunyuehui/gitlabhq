@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Status::Created do
+RSpec.describe Gitlab::Ci::Status::Created do
   subject do
     described_class.new(double('subject'), double('user'))
   end
@@ -14,7 +16,7 @@ describe Gitlab::Ci::Status::Created do
   end
 
   describe '#icon' do
-    it { expect(subject.icon).to eq 'icon_status_created' }
+    it { expect(subject.icon).to eq 'status_created' }
   end
 
   describe '#favicon' do
@@ -23,5 +25,9 @@ describe Gitlab::Ci::Status::Created do
 
   describe '#group' do
     it { expect(subject.group).to eq 'created' }
+  end
+
+  describe '#details_path' do
+    it { expect(subject.details_path).to be_nil }
   end
 end

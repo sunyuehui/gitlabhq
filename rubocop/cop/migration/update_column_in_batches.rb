@@ -18,7 +18,7 @@ module RuboCop
           spec_path = spec_filename(node)
 
           unless File.exist?(File.expand_path(spec_path, rails_root))
-            add_offense(node, :expression, format(MSG, spec_path))
+            add_offense(node, location: :expression, message: format(MSG, spec_path))
           end
         end
 
@@ -28,8 +28,8 @@ module RuboCop
           source_name = node.location.expression.source_buffer.name
           path = Pathname.new(source_name).relative_path_from(rails_root)
           dirname = File.dirname(path)
-            .sub(%r{\Adb/(migrate|post_migrate)}, 'spec/migrations')
-          filename = File.basename(source_name, '.rb').sub(%r{\A\d+_}, '')
+            .sub(%r{db/(migrate|post_migrate)}, 'spec/migrations')
+          filename = File.basename(source_name, '.rb').sub(/\A\d+_/, '')
 
           File.join(dirname, "#{filename}_spec.rb")
         end

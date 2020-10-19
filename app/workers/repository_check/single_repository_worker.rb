@@ -1,51 +1,70 @@
+# frozen_string_literal: true
+
 module RepositoryCheck
-  class SingleRepositoryWorker
-    include Sidekiq::Worker
+  class SingleRepositoryWorker # rubocop:disable Scalability/IdempotentWorker
+    include ApplicationWorker
     include RepositoryCheckQueue
 
     def perform(project_id)
       project = Project.find(project_id)
-      project.update_columns(
-        last_repository_check_failed: !check(project),
-        last_repository_check_at: Time.now
-      )
+      healthy = project_healthy?(project)
+
+      update_repository_check_status(project, healthy)
     end
 
     private
 
-    def check(project)
-      if has_pushes?(project) && !git_fsck(project.repository)
-        false
-      elsif project.wiki_enabled?
-        # Historically some projects never had their wiki repos initialized;
-        # this happens on project creation now. Let's initialize an empty repo
-        # if it is not already there.
-        begin
-          project.create_wiki
-        rescue Rugged::RepositoryError
-        end
+    def update_repository_check_status(project, healthy)
+      project.update_columns(
+        last_repository_check_failed: !healthy,
+        last_repository_check_at: Time.current
+      )
+    end
 
-        git_fsck(project.wiki.repository)
-      else
-        true
-      end
+    def project_healthy?(project)
+      repo_healthy?(project) && wiki_repo_healthy?(project)
+    end
+
+    def repo_healthy?(project)
+      return true unless has_changes?(project)
+
+      git_fsck(project.repository)
+    end
+
+    def wiki_repo_healthy?(project)
+      return true unless has_wiki_changes?(project)
+
+      git_fsck(project.wiki.repository)
     end
 
     def git_fsck(repository)
-      path = repository.path_to_repo
-      cmd = %W(nice git --git-dir=#{path} fsck)
-      output, status = Gitlab::Popen.popen(cmd)
+      return false unless repository.exists?
 
-      if status.zero?
-        true
-      else
-        Gitlab::RepositoryCheckLogger.error("command failed: #{cmd.join(' ')}\n#{output}")
-        false
-      end
+      repository.raw_repository.fsck
+
+      true
+    rescue Gitlab::Git::Repository::GitError => e
+      Gitlab::RepositoryCheckLogger.error(e.message)
+      false
     end
 
-    def has_pushes?(project)
+    # rubocop: disable CodeReuse/ActiveRecord
+    def has_changes?(project)
       Project.with_push.exists?(project.id)
+    end
+    # rubocop: enable CodeReuse/ActiveRecord
+
+    def has_wiki_changes?(project)
+      return false unless project.wiki_enabled?
+
+      # Historically some projects never had their wiki repos initialized;
+      # this happens on project creation now. Let's initialize an empty repo
+      # if it is not already there.
+      return false unless project.create_wiki
+
+      has_changes?(project)
     end
   end
 end
+
+RepositoryCheck::SingleRepositoryWorker.prepend_if_ee('::EE::RepositoryCheck::SingleRepositoryWorker')

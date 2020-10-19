@@ -1,189 +1,401 @@
-/* eslint-disable func-names, space-before-function-paren, wrap-iife, no-var, no-param-reassign, no-cond-assign, quotes, one-var, one-var-declaration-per-line, operator-assignment, no-else-return, prefer-template, prefer-arrow-callback, no-empty, max-len, consistent-return, no-unused-vars, no-return-assign, max-len, vars-on-top */
+import { isString, memoize } from 'lodash';
 
-import 'vendor/latinise';
+import {
+  TRUNCATE_WIDTH_DEFAULT_WIDTH,
+  TRUNCATE_WIDTH_DEFAULT_FONT_SIZE,
+} from '~/lib/utils/constants';
 
-var base;
-var w = window;
-if (w.gl == null) {
-  w.gl = {};
+/**
+ * Adds a , to a string composed by numbers, at every 3 chars.
+ *
+ * 2333 -> 2,333
+ * 232324 -> 232,324
+ *
+ * @param {String} text
+ * @returns {String}
+ */
+export const addDelimiter = text =>
+  text ? text.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') : text;
+
+/**
+ * Returns '99+' for numbers bigger than 99.
+ *
+ * @param {Number} count
+ * @return {Number|String}
+ */
+export const highCountTrim = count => (count > 99 ? '99+' : count);
+
+/**
+ * Converts first char to uppercase and replaces the given separator with spaces
+ * @param {String} string - The string to humanize
+ * @param {String} separator - The separator used to separate words (defaults to "_")
+ * @requires {String}
+ * @returns {String}
+ */
+export const humanize = (string, separator = '_') => {
+  const replaceRegex = new RegExp(separator, 'g');
+
+  return string.charAt(0).toUpperCase() + string.replace(replaceRegex, ' ').slice(1);
+};
+
+/**
+ * Replaces underscores with dashes
+ * @param {*} str
+ * @returns {String}
+ */
+export const dasherize = str => str.replace(/[_\s]+/g, '-');
+
+/**
+ * Replaces whitespace and non-sluggish characters with a given separator
+ * @param {String} str - The string to slugify
+ * @param {String=} separator - The separator used to separate words (defaults to "-")
+ * @returns {String}
+ */
+export const slugify = (str, separator = '-') => {
+  const slug = str
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-zA-Z0-9_.-]+/g, separator)
+    // Remove any duplicate separators or separator prefixes/suffixes
+    .split(separator)
+    .filter(Boolean)
+    .join(separator);
+
+  return slug === separator ? '' : slug;
+};
+
+/**
+ * Replaces whitespace and non-sluggish characters with underscores
+ * @param {String} str
+ * @returns {String}
+ */
+export const slugifyWithUnderscore = str => slugify(str, '_');
+
+/**
+ * Truncates given text
+ *
+ * @param {String} string
+ * @param {Number} maxLength
+ * @returns {String}
+ */
+export const truncate = (string, maxLength) => {
+  if (string.length - 1 > maxLength) {
+    return `${string.substr(0, maxLength - 1)}…`;
+  }
+
+  return string;
+};
+
+/**
+ * This function calculates the average char width. It does so by placing a string in the DOM and measuring the width.
+ * NOTE: This will cause a reflow and should be used sparsely!
+ * The default fontFamily is 'sans-serif' and 12px in ECharts, so that is the default basis for calculating the average with.
+ * https://echarts.apache.org/en/option.html#xAxis.nameTextStyle.fontFamily
+ * https://echarts.apache.org/en/option.html#xAxis.nameTextStyle.fontSize
+ * @param  {Object} options
+ * @param  {Number} options.fontSize style to size the text for measurement
+ * @param  {String} options.fontFamily style of font family to measure the text with
+ * @param  {String} options.chars string of chars to use as a basis for calculating average width
+ * @return {Number}
+ */
+const getAverageCharWidth = memoize(function getAverageCharWidth(options = {}) {
+  const {
+    fontSize = 12,
+    fontFamily = 'sans-serif',
+    // eslint-disable-next-line @gitlab/require-i18n-strings
+    chars = ' ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+  } = options;
+  const div = document.createElement('div');
+
+  div.style.fontFamily = fontFamily;
+  div.style.fontSize = `${fontSize}px`;
+  // Place outside of view
+  div.style.position = 'absolute';
+  div.style.left = -1000;
+  div.style.top = -1000;
+
+  div.innerHTML = chars;
+
+  document.body.appendChild(div);
+  const width = div.clientWidth;
+  document.body.removeChild(div);
+
+  return width / chars.length / fontSize;
+});
+
+/**
+ * This function returns a truncated version of `string` if its estimated rendered width is longer than `maxWidth`,
+ * otherwise it will return the original `string`
+ * Inspired by https://bl.ocks.org/tophtucker/62f93a4658387bb61e4510c37e2e97cf
+ * @param  {String} string text to truncate
+ * @param  {Object} options
+ * @param  {Number} options.maxWidth largest rendered width the text may have
+ * @param  {Number} options.fontSize size of the font used to render the text
+ * @return {String} either the original string or a truncated version
+ */
+export const truncateWidth = (string, options = {}) => {
+  const {
+    maxWidth = TRUNCATE_WIDTH_DEFAULT_WIDTH,
+    fontSize = TRUNCATE_WIDTH_DEFAULT_FONT_SIZE,
+  } = options;
+  const { truncateIndex } = string.split('').reduce(
+    (memo, char, index) => {
+      let newIndex = index;
+      if (memo.width > maxWidth) {
+        newIndex = memo.truncateIndex;
+      }
+      return { width: memo.width + getAverageCharWidth() * fontSize, truncateIndex: newIndex };
+    },
+    { width: 0, truncateIndex: 0 },
+  );
+
+  return truncate(string, truncateIndex);
+};
+
+/**
+ * Truncate SHA to 8 characters
+ *
+ * @param {String} sha
+ * @returns {String}
+ */
+export const truncateSha = sha => sha.substring(0, 8);
+
+const ELLIPSIS_CHAR = '…';
+export const truncatePathMiddleToLength = (text, maxWidth) => {
+  let returnText = text;
+  let ellipsisCount = 0;
+
+  while (returnText.length >= maxWidth) {
+    const textSplit = returnText.split('/').filter(s => s !== ELLIPSIS_CHAR);
+
+    if (textSplit.length === 0) {
+      // There are n - 1 path separators for n segments, so 2n - 1 <= maxWidth
+      const maxSegments = Math.floor((maxWidth + 1) / 2);
+      return new Array(maxSegments).fill(ELLIPSIS_CHAR).join('/');
+    }
+
+    const middleIndex = Math.floor(textSplit.length / 2);
+
+    returnText = textSplit
+      .slice(0, middleIndex)
+      .concat(
+        new Array(ellipsisCount + 1).fill().map(() => ELLIPSIS_CHAR),
+        textSplit.slice(middleIndex + 1),
+      )
+      .join('/');
+
+    ellipsisCount += 1;
+  }
+
+  return returnText;
+};
+
+/**
+ * Capitalizes first character
+ *
+ * @param {String} text
+ * @return {String}
+ */
+export function capitalizeFirstCharacter(text) {
+  return `${text[0].toUpperCase()}${text.slice(1)}`;
 }
-if ((base = w.gl).text == null) {
-  base.text = {};
+
+/**
+ * Returns the first character capitalized
+ *
+ * If falsey, returns empty string.
+ *
+ * @param {String} text
+ * @return {String}
+ */
+export function getFirstCharacterCapitalized(text) {
+  return text ? text.charAt(0).toUpperCase() : '';
 }
-gl.text.addDelimiter = function(text) {
-  return text ? text.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",") : text;
-};
-gl.text.highCountTrim = function(count) {
-  return count > 99 ? '99+' : count;
-};
-gl.text.randomString = function() {
-  return Math.random().toString(36).substring(7);
-};
-gl.text.replaceRange = function(s, start, end, substitute) {
-  return s.substring(0, start) + substitute + s.substring(end);
-};
-gl.text.getTextWidth = function(text, font) {
-  /**
-  * Uses canvas.measureText to compute and return the width of the given text of given font in pixels.
-  *
-  * @param {String} text The text to be rendered.
-  * @param {String} font The css font descriptor that text is to be rendered with (e.g. "bold 14px verdana").
-  *
-  * @see http://stackoverflow.com/questions/118241/calculate-text-width-with-javascript/21015393#21015393
-  */
-  // re-use canvas object for better performance
-  var canvas = gl.text.getTextWidth.canvas || (gl.text.getTextWidth.canvas = document.createElement('canvas'));
-  var context = canvas.getContext('2d');
-  context.font = font;
-  return context.measureText(text).width;
-};
-gl.text.selectedText = function(text, textarea) {
-  return text.substring(textarea.selectionStart, textarea.selectionEnd);
-};
-gl.text.lineBefore = function(text, textarea) {
-  var split;
-  split = text.substring(0, textarea.selectionStart).trim().split('\n');
-  return split[split.length - 1];
-};
-gl.text.lineAfter = function(text, textarea) {
-  return text.substring(textarea.selectionEnd).trim().split('\n')[0];
-};
-gl.text.blockTagText = function(text, textArea, blockTag, selected) {
-  var lineAfter, lineBefore;
-  lineBefore = this.lineBefore(text, textArea);
-  lineAfter = this.lineAfter(text, textArea);
-  if (lineBefore === blockTag && lineAfter === blockTag) {
-    // To remove the block tag we have to select the line before & after
-    if (blockTag != null) {
-      textArea.selectionStart = textArea.selectionStart - (blockTag.length + 1);
-      textArea.selectionEnd = textArea.selectionEnd + (blockTag.length + 1);
-    }
-    return selected;
-  } else {
-    return blockTag + "\n" + selected + "\n" + blockTag;
-  }
-};
-gl.text.insertText = function(textArea, text, tag, blockTag, selected, wrap) {
-  var insertText, inserted, selectedSplit, startChar, removedLastNewLine, removedFirstNewLine, currentLineEmpty, lastNewLine;
-  removedLastNewLine = false;
-  removedFirstNewLine = false;
-  currentLineEmpty = false;
 
-  // Remove the first newline
-  if (selected.indexOf('\n') === 0) {
-    removedFirstNewLine = true;
-    selected = selected.replace(/\n+/, '');
-  }
+/**
+ * Replaces all html tags from a string with the given replacement.
+ *
+ * @param {String} string
+ * @param {*} replace
+ * @returns {String}
+ */
+export const stripHtml = (string, replace = '') => {
+  if (!string) return string;
 
-  // Remove the last newline
-  if (textArea.selectionEnd - textArea.selectionStart > selected.replace(/\n$/, '').length) {
-    removedLastNewLine = true;
-    selected = selected.replace(/\n$/, '');
-  }
-
-  selectedSplit = selected.split('\n');
-
-  if (!wrap) {
-    lastNewLine = textArea.value.substr(0, textArea.selectionStart).lastIndexOf('\n');
-
-    // Check whether the current line is empty or consists only of spaces(=handle as empty)
-    if (/^\s*$/.test(textArea.value.substring(lastNewLine, textArea.selectionStart))) {
-      currentLineEmpty = true;
-    }
-  }
-
-  startChar = !wrap && !currentLineEmpty && textArea.selectionStart > 0 ? '\n' : '';
-
-  if (selectedSplit.length > 1 && (!wrap || (blockTag != null && blockTag !== ''))) {
-    if (blockTag != null && blockTag !== '') {
-      insertText = this.blockTagText(text, textArea, blockTag, selected);
-    } else {
-      insertText = selectedSplit.map(function(val) {
-        if (val.indexOf(tag) === 0) {
-          return "" + (val.replace(tag, ''));
-        } else {
-          return "" + tag + val;
-        }
-      }).join('\n');
-    }
-  } else {
-    insertText = "" + startChar + tag + selected + (wrap ? tag : ' ');
-  }
-
-  if (removedFirstNewLine) {
-    insertText = '\n' + insertText;
-  }
-
-  if (removedLastNewLine) {
-    insertText += '\n';
-  }
-
-  if (document.queryCommandSupported('insertText')) {
-    inserted = document.execCommand('insertText', false, insertText);
-  }
-  if (!inserted) {
-    try {
-      document.execCommand("ms-beginUndoUnit");
-    } catch (error) {}
-    textArea.value = this.replaceRange(text, textArea.selectionStart, textArea.selectionEnd, insertText);
-    try {
-      document.execCommand("ms-endUndoUnit");
-    } catch (error) {}
-  }
-  return this.moveCursor(textArea, tag, wrap, removedLastNewLine);
+  return string.replace(/<[^>]*>/g, replace);
 };
-gl.text.moveCursor = function(textArea, tag, wrapped, removedLastNewLine) {
-  var pos;
-  if (!textArea.setSelectionRange) {
-    return;
-  }
-  if (textArea.selectionStart === textArea.selectionEnd) {
-    if (wrapped) {
-      pos = textArea.selectionStart - tag.length;
-    } else {
-      pos = textArea.selectionStart;
-    }
 
-    if (removedLastNewLine) {
-      pos -= 1;
-    }
+/**
+ * Converts a snake_cased string to camelCase.
+ * Leading and trailing underscores are ignored.
+ *
+ * @param {String} string The snake_cased string to convert
+ * @returns {String} A camelCased version of the string
+ *
+ * @example
+ *
+ * // returns "aSnakeCasedString"
+ * convertToCamelCase('a_snake_cased_string')
+ *
+ * // returns "_leadingUnderscore"
+ * convertToCamelCase('_leading_underscore')
+ *
+ * // returns "trailingUnderscore_"
+ * convertToCamelCase('trailing_underscore_')
+ */
+export const convertToCamelCase = string =>
+  string.replace(/([a-z0-9])_([a-z0-9])/gi, (match, p1, p2) => `${p1}${p2.toUpperCase()}`);
 
-    return textArea.setSelectionRange(pos, pos);
-  }
+/**
+ * Converts camelCase string to snake_case
+ *
+ * @param {*} string
+ */
+export const convertToSnakeCase = string =>
+  slugifyWithUnderscore((string.match(/([a-zA-Z][^A-Z]*)/g) || [string]).join(' '));
+
+/**
+ * Converts a sentence to lower case from the second word onwards
+ * e.g. Hello World => Hello world
+ *
+ * @param {*} string
+ */
+export const convertToSentenceCase = string => {
+  const splitWord = string.split(' ').map((word, index) => (index > 0 ? word.toLowerCase() : word));
+
+  return splitWord.join(' ');
 };
-gl.text.updateText = function(textArea, tag, blockTag, wrap) {
-  var $textArea, selected, text;
-  $textArea = $(textArea);
-  textArea = $textArea.get(0);
-  text = $textArea.val();
-  selected = this.selectedText(text, textArea);
-  $textArea.focus();
-  return this.insertText(textArea, text, tag, blockTag, selected, wrap);
-};
-gl.text.init = function(form) {
-  var self;
-  self = this;
-  return $('.js-md', form).off('click').on('click', function() {
-    var $this;
-    $this = $(this);
-    return self.updateText($this.closest('.md-area').find('textarea'), $this.data('md-tag'), $this.data('md-block'), !$this.data('md-prepend'));
+
+/**
+ * Converts a sentence to title case
+ * e.g. Hello world => Hello World
+ *
+ * @param {String} string
+ * @returns {String}
+ */
+export const convertToTitleCase = string => string.replace(/\b[a-z]/g, s => s.toUpperCase());
+
+const unicodeConversion = [
+  [/[ÀÁÂÃÅĀĂĄ]/g, 'A'],
+  [/[Æ]/g, 'AE'],
+  [/[ÇĆĈĊČ]/g, 'C'],
+  [/[ÈÉÊËĒĔĖĘĚ]/g, 'E'],
+  [/[ÌÍÎÏĨĪĬĮİ]/g, 'I'],
+  [/[Ððĥħ]/g, 'h'],
+  [/[ÑŃŅŇŉ]/g, 'N'],
+  [/[ÒÓÔÕØŌŎŐ]/g, 'O'],
+  [/[ÙÚÛŨŪŬŮŰŲ]/g, 'U'],
+  [/[ÝŶŸ]/g, 'Y'],
+  [/[Þñþńņň]/g, 'n'],
+  [/[ßŚŜŞŠ]/g, 'S'],
+  [/[àáâãåāăąĸ]/g, 'a'],
+  [/[æ]/g, 'ae'],
+  [/[çćĉċč]/g, 'c'],
+  [/[èéêëēĕėęě]/g, 'e'],
+  [/[ìíîïĩīĭį]/g, 'i'],
+  [/[òóôõøōŏő]/g, 'o'],
+  [/[ùúûũūŭůűų]/g, 'u'],
+  [/[ýÿŷ]/g, 'y'],
+  [/[ĎĐ]/g, 'D'],
+  [/[ďđ]/g, 'd'],
+  [/[ĜĞĠĢ]/g, 'G'],
+  [/[ĝğġģŊŋſ]/g, 'g'],
+  [/[ĤĦ]/g, 'H'],
+  [/[ıśŝşš]/g, 's'],
+  [/[Ĳ]/g, 'IJ'],
+  [/[ĳ]/g, 'ij'],
+  [/[Ĵ]/g, 'J'],
+  [/[ĵ]/g, 'j'],
+  [/[Ķ]/g, 'K'],
+  [/[ķ]/g, 'k'],
+  [/[ĹĻĽĿŁ]/g, 'L'],
+  [/[ĺļľŀł]/g, 'l'],
+  [/[Œ]/g, 'OE'],
+  [/[œ]/g, 'oe'],
+  [/[ŔŖŘ]/g, 'R'],
+  [/[ŕŗř]/g, 'r'],
+  [/[ŢŤŦ]/g, 'T'],
+  [/[ţťŧ]/g, 't'],
+  [/[Ŵ]/g, 'W'],
+  [/[ŵ]/g, 'w'],
+  [/[ŹŻŽ]/g, 'Z'],
+  [/[źżž]/g, 'z'],
+  [/ö/g, 'oe'],
+  [/ü/g, 'ue'],
+  [/ä/g, 'ae'],
+  // eslint-disable-next-line @gitlab/require-i18n-strings
+  [/Ö/g, 'Oe'],
+  // eslint-disable-next-line @gitlab/require-i18n-strings
+  [/Ü/g, 'Ue'],
+  // eslint-disable-next-line @gitlab/require-i18n-strings
+  [/Ä/g, 'Ae'],
+];
+
+/**
+ * Converts each non-ascii character in a string to
+ * it's ascii equivalent (if defined).
+ *
+ * e.g. "Dĭd söméònê äšk fœŕ Ůnĭċődę?" => "Did someone aesk foer Unicode?"
+ *
+ * @param {String} string
+ * @returns {String}
+ */
+export const convertUnicodeToAscii = string => {
+  let convertedString = string;
+
+  unicodeConversion.forEach(([regex, replacer]) => {
+    convertedString = convertedString.replace(regex, replacer);
   });
+
+  return convertedString;
 };
-gl.text.removeListeners = function(form) {
-  return $('.js-md', form).off('click');
+
+/**
+ * Splits camelCase or PascalCase words
+ * e.g. HelloWorld => Hello World
+ *
+ * @param {*} string
+ */
+export const splitCamelCase = string =>
+  string
+    .replace(/([A-Z]+)([A-Z][a-z])/g, ' $1 $2')
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .trim();
+
+/**
+ * Intelligently truncates an item's namespace by doing two things:
+ * 1. Only include group names in path by removing the item name
+ * 2. Only include the first and last group names in the path
+ *    when the namespace includes more than 2 groups
+ *
+ * @param {String} string A string namespace,
+ *      i.e. "My Group / My Subgroup / My Project"
+ */
+export const truncateNamespace = (string = '') => {
+  if (string === null || !isString(string)) {
+    return '';
+  }
+
+  const namespaceArray = string.split(' / ');
+
+  if (namespaceArray.length === 1) {
+    return string;
+  }
+
+  namespaceArray.splice(-1, 1);
+  let namespace = namespaceArray.join(' / ');
+
+  if (namespaceArray.length > 2) {
+    namespace = `${namespaceArray[0]} / ... / ${namespaceArray.pop()}`;
+  }
+
+  return namespace;
 };
-gl.text.humanize = function(string) {
-  return string.charAt(0).toUpperCase() + string.replace(/_/g, ' ').slice(1);
-};
-gl.text.pluralize = function(str, count) {
-  return str + (count > 1 || count === 0 ? 's' : '');
-};
-gl.text.truncate = function(string, maxLength) {
-  return string.substr(0, (maxLength - 3)) + '...';
-};
-gl.text.dasherize = function(str) {
-  return str.replace(/[_\s]+/g, '-');
-};
-gl.text.slugify = function(str) {
-  return str.trim().toLowerCase().latinise();
-};
+
+/**
+ * Tests that the input is a String and has at least
+ * one non-whitespace character
+ * @param {String} obj The object to test
+ * @returns {Boolean}
+ */
+export const hasContent = obj => isString(obj) && obj.trim() !== '';

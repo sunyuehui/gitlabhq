@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ChatMessage
   class IssueMessage < BaseMessage
     attr_reader :title
@@ -29,7 +31,7 @@ module ChatMessage
 
     def activity
       {
-        title: "Issue #{state} by #{user_name}",
+        title: "Issue #{state} by #{user_combined_name}",
         subtitle: "in #{project_link}",
         text: issue_link,
         image: user_avatar
@@ -39,10 +41,10 @@ module ChatMessage
     private
 
     def message
-      if state == 'opened'
-        "[#{project_link}] Issue #{state} by #{user_name}"
+      if opened_issue?
+        "[#{project_link}] Issue #{state} by #{user_combined_name}"
       else
-        "[#{project_link}] Issue #{issue_link} #{state} by #{user_name}"
+        "[#{project_link}] Issue #{issue_link} #{state} by #{user_combined_name}"
       end
     end
 

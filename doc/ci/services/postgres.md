@@ -1,3 +1,10 @@
+---
+stage: Verify
+group: Runner
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see https://about.gitlab.com/handbook/engineering/ux/technical-writing/#designated-technical-writers
+type: reference
+---
+
 # Using PostgreSQL
 
 As many applications depend on PostgreSQL as their database, you will
@@ -6,38 +13,45 @@ do this with the Docker and Shell executors of GitLab Runner.
 
 ## Use PostgreSQL with the Docker executor
 
-If you are using [GitLab Runner](../runners/README.md) with the Docker executor
+If you're using [GitLab Runner](../runners/README.md) with the Docker executor,
 you basically have everything set up already.
 
 First, in your `.gitlab-ci.yml` add:
 
 ```yaml
 services:
-  - postgres:latest
+  - postgres:12.2-alpine
 
 variables:
   POSTGRES_DB: nice_marmot
   POSTGRES_USER: runner
   POSTGRES_PASSWORD: ""
+  POSTGRES_HOST_AUTH_METHOD: trust
 ```
+
+To set values for the `POSTGRES_DB`, `POSTGRES_USER`,
+`POSTGRES_PASSWORD` and `POSTGRES_HOST_AUTH_METHOD`,
+[assign them to a variable in the user interface](../variables/README.md#create-a-custom-variable-in-the-ui),
+then assign that variable to the corresponding variable in your
+`.gitlab-ci.yml` file.
 
 And then configure your application to use the database, for example:
 
 ```yaml
 Host: postgres
 User: runner
-Password:
+Password: ''
 Database: nice_marmot
 ```
 
-If you are wondering why we used `postgres` for the `Host`, read more at
-[How is service linked to the job](../docker/using_docker_images.md#how-is-service-linked-to-the-job).
+If you're wondering why we used `postgres` for the `Host`, read more at
+[How services are linked to the job](../docker/using_docker_images.md#how-services-are-linked-to-the-job).
 
-You can also use any other docker image available on [Docker Hub][hub-pg].
-For example, to use PostgreSQL 9.3 the service becomes `postgres:9.3`.
+You can also use any other Docker image available on [Docker Hub](https://hub.docker.com/_/postgres).
+For example, to use PostgreSQL 9.3, the service becomes `postgres:9.3`.
 
-The `postgres` image can accept some environment variables. For more details
-check the documentation on [Docker Hub][hub-pg].
+The `postgres` image can accept some environment variables. For more details,
+see the documentation on [Docker Hub](https://hub.docker.com/_/postgres).
 
 ## Use PostgreSQL with the Shell executor
 
@@ -46,51 +60,53 @@ GitLab Runner with the Shell executor.
 
 First install the PostgreSQL server:
 
-```bash
+```shell
 sudo apt-get install -y postgresql postgresql-client libpq-dev
 ```
 
-The next step is to create a user, so login to PostgreSQL:
+The next step is to create a user, so sign in to PostgreSQL:
 
-```bash
+```shell
 sudo -u postgres psql -d template1
 ```
 
 Then create a user (in our case `runner`) which will be used by your
 application. Change `$password` in the command below to a real strong password.
 
-*__Note:__ Do not type `template1=#`, this is part of the PostgreSQL prompt.*
+NOTE: **Note:**
+Be sure to not enter `template1=#` in the following commands, as that's part of
+the PostgreSQL prompt.
 
-```bash
+```shell
 template1=# CREATE USER runner WITH PASSWORD '$password' CREATEDB;
 ```
 
-*__Note:__ Notice that we created the user with the privilege to be able to
-create databases (`CREATEDB`). In the following steps we will create a database 
-explicitly for that user but having that privilege can be useful if in your
-testing framework you have tools that drop and create databases.*
+The created user has the privilege to create databases (`CREATEDB`). The
+following steps describe how to create a database explicitly for that user, but
+having that privilege can be useful if in your testing framework you have tools
+that drop and create databases.
 
-Create the database and grant all privileges on it for the user `runner`:
+Create the database and grant all privileges to it for the user `runner`:
 
-```bash
+```shell
 template1=# CREATE DATABASE nice_marmot OWNER runner;
 ```
 
-If all went well you can now quit the database session:
+If all went well, you can now quit the database session:
 
-```bash
+```shell
 template1=# \q
 ```
 
 Now, try to connect to the newly created database with the user `runner` to
 check that everything is in place.
 
-```bash
+```shell
 psql -U runner -h localhost -d nice_marmot -W
 ```
 
-*__Note:__ We are explicitly telling `psql` to connect to localhost in order
-to use the md5 authentication. If you omit this step you will be denied access.*
+This command explicitly directs `psql` to connect to localhost to use the md5
+authentication. If you omit this step, you'll be denied access.
 
 Finally, configure your application to use the database, for example:
 
@@ -103,12 +119,9 @@ Database: nice_marmot
 
 ## Example project
 
-We have set up an [Example PostgreSQL Project][postgres-example-repo] for your
+We have set up an [Example PostgreSQL Project](https://gitlab.com/gitlab-examples/postgres) for your
 convenience that runs on [GitLab.com](https://gitlab.com) using our publicly
 available [shared runners](../runners/README.md).
 
-Want to hack on it? Simply fork it, commit and push  your changes. Within a few
+Want to hack on it? Fork it, commit, and push your changes. Within a few
 moments the changes will be picked by a public runner and the job will begin.
-
-[hub-pg]: https://hub.docker.com/r/_/postgres/
-[postgres-example-repo]: https://gitlab.com/gitlab-examples/postgres

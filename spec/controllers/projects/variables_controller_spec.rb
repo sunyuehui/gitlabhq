@@ -1,57 +1,105 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Projects::VariablesController do
+RSpec.describe Projects::VariablesController do
   let(:project) { create(:project) }
   let(:user) { create(:user) }
 
   before do
     sign_in(user)
-    project.team << [user, :master]
+    project.add_maintainer(user)
   end
 
-  describe 'POST #create' do
-    context 'variable is valid' do
-      it 'shows a success flash message' do
-        post :create, namespace_id: project.namespace.to_param, project_id: project,
-                      variable: { key: "one", value: "two" }
+  describe 'GET #show' do
+    let!(:variable) { create(:ci_variable, project: project) }
 
-        expect(flash[:notice]).to include 'Variable was successfully created.'
-        expect(response).to redirect_to(project_settings_ci_cd_path(project))
-      end
+    subject do
+      get :show, params: { namespace_id: project.namespace.to_param, project_id: project }, format: :json
     end
 
-    context 'variable is invalid' do
-      it 'renders show' do
-        post :create, namespace_id: project.namespace.to_param, project_id: project,
-                      variable: { key: "..one", value: "two" }
-
-        expect(response).to render_template("projects/variables/show")
-      end
-    end
+    include_examples 'GET #show lists all variables'
   end
 
-  describe 'POST #update' do
-    let(:variable) { create(:ci_variable) }
+  describe 'PATCH #update' do
+    let!(:variable) { create(:ci_variable, project: project) }
+    let(:owner) { project }
 
-    context 'updating a variable with valid characters' do
-      before do
-        project.variables << variable
+    subject do
+      patch :update,
+        params: {
+          namespace_id: project.namespace.to_param,
+          project_id: project,
+          variables_attributes: variables_attributes
+        },
+        format: :json
+    end
+
+    include_examples 'PATCH #update updates variables'
+
+    context 'with environment scope' do
+      let!(:variable) { create(:ci_variable, project: project, environment_scope: 'custom_scope') }
+
+      let(:variable_attributes) do
+        { id: variable.id,
+          key: variable.key,
+          secret_value: variable.value,
+          protected: variable.protected?.to_s,
+          environment_scope: variable.environment_scope }
       end
 
-      it 'shows a success flash message' do
-        post :update, namespace_id: project.namespace.to_param, project_id: project,
-                      id: variable.id, variable: { key: variable.key, value: 'two' }
-
-        expect(flash[:notice]).to include 'Variable was successfully updated.'
-        expect(response).to redirect_to(project_variables_path(project))
+      let(:new_variable_attributes) do
+        { key: 'new_key',
+          secret_value: 'dummy_value',
+          protected: 'false',
+          environment_scope: 'new_scope' }
       end
 
-      it 'renders the action #show if the variable key is invalid' do
-        post :update, namespace_id: project.namespace.to_param, project_id: project,
-                      id: variable.id, variable: { key: '?', value: variable.value }
+      context 'with same key and different environment scope' do
+        let(:variables_attributes) do
+          [
+            variable_attributes,
+            new_variable_attributes.merge(key: variable.key)
+          ]
+        end
 
-        expect(response).to have_http_status(200)
-        expect(response).to render_template :show
+        it 'does not update the existing variable' do
+          expect { subject }.not_to change { variable.reload.value }
+        end
+
+        it 'creates the new variable' do
+          expect { subject }.to change { owner.variables.count }.by(1)
+        end
+
+        it 'returns a successful response including all variables' do
+          subject
+
+          expect(response).to have_gitlab_http_status(:ok)
+          expect(response).to match_response_schema('variables')
+        end
+      end
+
+      context 'with same key and same environment scope' do
+        let(:variables_attributes) do
+          [
+            variable_attributes,
+            new_variable_attributes.merge(key: variable.key, environment_scope: variable.environment_scope)
+          ]
+        end
+
+        it 'does not update the existing variable' do
+          expect { subject }.not_to change { variable.reload.value }
+        end
+
+        it 'does not create the new variable' do
+          expect { subject }.not_to change { owner.variables.count }
+        end
+
+        it 'returns a bad request response' do
+          subject
+
+          expect(response).to have_gitlab_http_status(:bad_request)
+        end
       end
     end
   end

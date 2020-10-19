@@ -1,7 +1,10 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ChatTeam do
-  subject { create(:chat_team) }
+RSpec.describe ChatTeam do
+  let_it_be(:chat_team) { create(:chat_team) }
+  subject { chat_team }
 
   # Associations
   it { is_expected.to belong_to(:namespace) }

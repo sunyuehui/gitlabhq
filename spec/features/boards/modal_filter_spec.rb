@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe 'Issue Boards add issue modal filtering', :js do
+require 'spec_helper'
+
+RSpec.describe 'Issue Boards add issue modal filtering', :js do
   let(:project) { create(:project, :public) }
   let(:board) { create(:board, project: project) }
   let(:planning) { create(:label, project: project, name: 'Planning') }
@@ -10,7 +12,7 @@ describe 'Issue Boards add issue modal filtering', :js do
   let!(:issue1) { create(:issue, project: project) }
 
   before do
-    project.team << [user, :master]
+    project.add_maintainer(user)
 
     sign_in(user)
   end
@@ -38,7 +40,7 @@ describe 'Issue Boards add issue modal filtering', :js do
     page.within('.add-issues-modal') do
       wait_for_requests
 
-      expect(page).to have_selector('.card', count: 0)
+      expect(page).to have_selector('.board-card', count: 0)
 
       click_button 'Cancel'
     end
@@ -48,7 +50,7 @@ describe 'Issue Boards add issue modal filtering', :js do
     page.within('.add-issues-modal') do
       wait_for_requests
 
-      expect(page).to have_selector('.card', count: 1)
+      expect(page).to have_selector('.board-card', count: 1)
     end
   end
 
@@ -62,13 +64,13 @@ describe 'Issue Boards add issue modal filtering', :js do
     page.within('.add-issues-modal') do
       wait_for_requests
 
-      expect(page).to have_selector('.card', count: 0)
+      expect(page).to have_selector('.board-card', count: 0)
 
       find('.clear-search').click
 
       wait_for_requests
 
-      expect(page).to have_selector('.card', count: 1)
+      expect(page).to have_selector('.board-card', count: 1)
     end
   end
 
@@ -76,7 +78,7 @@ describe 'Issue Boards add issue modal filtering', :js do
     let!(:issue) { create(:issue, project: project, author: user2) }
 
     before do
-      project.team << [user2, :developer]
+      project.add_developer(user2)
 
       visit_board
     end
@@ -90,7 +92,7 @@ describe 'Issue Boards add issue modal filtering', :js do
         wait_for_requests
 
         expect(page).to have_selector('.js-visual-token', text: user2.name)
-        expect(page).to have_selector('.card', count: 1)
+        expect(page).to have_selector('.board-card', count: 1)
       end
     end
   end
@@ -99,21 +101,21 @@ describe 'Issue Boards add issue modal filtering', :js do
     let!(:issue) { create(:issue, project: project, assignees: [user2]) }
 
     before do
-      project.team << [user2, :developer]
+      project.add_developer(user2)
 
       visit_board
     end
 
     it 'filters by unassigned' do
       set_filter('assignee')
-      click_filter_link('No Assignee')
+      click_filter_link('None')
       submit_filter
 
       page.within('.add-issues-modal') do
         wait_for_requests
 
-        expect(page).to have_selector('.js-visual-token', text: 'none')
-        expect(page).to have_selector('.card', count: 1)
+        expect(page).to have_selector('.js-visual-token', text: 'None')
+        expect(page).to have_selector('.board-card', count: 1)
       end
     end
 
@@ -126,7 +128,7 @@ describe 'Issue Boards add issue modal filtering', :js do
         wait_for_requests
 
         expect(page).to have_selector('.js-visual-token', text: user2.name)
-        expect(page).to have_selector('.card', count: 1)
+        expect(page).to have_selector('.board-card', count: 1)
       end
     end
   end
@@ -147,8 +149,8 @@ describe 'Issue Boards add issue modal filtering', :js do
       page.within('.add-issues-modal') do
         wait_for_requests
 
-        expect(page).to have_selector('.js-visual-token', text: 'upcoming')
-        expect(page).to have_selector('.card', count: 0)
+        expect(page).to have_selector('.js-visual-token', text: 'Upcoming')
+        expect(page).to have_selector('.board-card', count: 0)
       end
     end
 
@@ -161,7 +163,7 @@ describe 'Issue Boards add issue modal filtering', :js do
         wait_for_requests
 
         expect(page).to have_selector('.js-visual-token', text: milestone.name)
-        expect(page).to have_selector('.card', count: 1)
+        expect(page).to have_selector('.board-card', count: 1)
       end
     end
   end
@@ -176,14 +178,14 @@ describe 'Issue Boards add issue modal filtering', :js do
 
     it 'filters by no label' do
       set_filter('label')
-      click_filter_link('No Label')
+      click_filter_link('None')
       submit_filter
 
       page.within('.add-issues-modal') do
         wait_for_requests
 
-        expect(page).to have_selector('.js-visual-token', text: 'none')
-        expect(page).to have_selector('.card', count: 1)
+        expect(page).to have_selector('.js-visual-token', text: 'None')
+        expect(page).to have_selector('.board-card', count: 1)
       end
     end
 
@@ -196,7 +198,7 @@ describe 'Issue Boards add issue modal filtering', :js do
         wait_for_requests
 
         expect(page).to have_selector('.js-visual-token', text: label.title)
-        expect(page).to have_selector('.card', count: 1)
+        expect(page).to have_selector('.board-card', count: 1)
       end
     end
   end
@@ -209,7 +211,7 @@ describe 'Issue Boards add issue modal filtering', :js do
   end
 
   def set_filter(type, text = '')
-    find('.add-issues-modal .filtered-search').native.send_keys("#{type}:#{text}")
+    find('.add-issues-modal .filtered-search').native.send_keys("#{type}:=#{text}")
   end
 
   def submit_filter

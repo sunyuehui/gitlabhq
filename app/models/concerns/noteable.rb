@@ -1,6 +1,33 @@
+# frozen_string_literal: true
+
 module Noteable
-  # Names of all implementers of `Noteable` that support resolvable notes.
-  RESOLVABLE_TYPES = %w(MergeRequest).freeze
+  extend ActiveSupport::Concern
+
+  # This object is used to gather noteable meta data for list displays
+  # avoiding n+1 queries and improving performance.
+  NoteableMeta = Struct.new(:user_notes_count)
+
+  MAX_NOTES_LIMIT = 5_000
+
+  class_methods do
+    # `Noteable` class names that support replying to individual notes.
+    def replyable_types
+      %w(Issue MergeRequest)
+    end
+
+    # `Noteable` class names that support resolvable notes.
+    def resolvable_types
+      %w(MergeRequest DesignManagement::Design)
+    end
+  end
+
+  # The timestamp of the note (e.g. the :created_at or :updated_at attribute if provided via
+  # API call)
+  def system_note_timestamp
+    @system_note_timestamp || Time.current # rubocop:disable Gitlab/ModuleWithInstanceVariables
+  end
+
+  attr_writer :system_note_timestamp
 
   def base_class_name
     self.class.base_class.name
@@ -17,11 +44,31 @@ module Noteable
   end
 
   def supports_resolvable_notes?
-    RESOLVABLE_TYPES.include?(base_class_name)
+    self.class.resolvable_types.include?(base_class_name)
   end
 
   def supports_discussions?
-    DiscussionNote::NOTEABLE_TYPES.include?(base_class_name)
+    DiscussionNote.noteable_types.include?(base_class_name)
+  end
+
+  def supports_replying_to_individual_notes?
+    supports_discussions? && self.class.replyable_types.include?(base_class_name)
+  end
+
+  def supports_suggestion?
+    false
+  end
+
+  def discussions_rendered_on_frontend?
+    false
+  end
+
+  def preloads_discussion_diff_highlighting?
+    false
+  end
+
+  def has_any_diff_note_positions?
+    notes.any? && DiffNotePosition.where(note: notes).exists?
   end
 
   def discussion_notes
@@ -36,12 +83,23 @@ module Noteable
       .discussions(self)
   end
 
+  def discussion_ids_relation
+    notes.select(:discussion_id)
+      .group(:discussion_id)
+      .order('MIN(created_at), MIN(id)')
+  end
+
+  def capped_notes_count(max)
+    notes.limit(max).count
+  end
+
   def grouped_diff_discussions(*args)
     # Doesn't use `discussion_notes`, because this may include commit diff notes
-    # besides MR diff notes, that we do no want to display on the MR Changes tab.
+    # besides MR diff notes, that we do not want to display on the MR Changes tab.
     notes.inc_relations_for_view.grouped_diff_discussions(*args)
   end
 
+  # rubocop:disable Gitlab/ModuleWithInstanceVariables
   def resolvable_discussions
     @resolvable_discussions ||=
       if defined?(@discussions)
@@ -50,6 +108,7 @@ module Noteable
         discussion_notes.resolvable.discussions(self)
       end
   end
+  # rubocop:enable Gitlab/ModuleWithInstanceVariables
 
   def discussions_resolvable?
     resolvable_discussions.any?(&:resolvable?)
@@ -59,10 +118,6 @@ module Noteable
     discussions_resolvable? && resolvable_discussions.none?(&:to_be_resolved?)
   end
 
-  def discussions_to_be_resolved?
-    discussions_resolvable? && !discussions_resolved?
-  end
-
   def discussions_to_be_resolved
     @discussions_to_be_resolved ||= resolvable_discussions.select(&:to_be_resolved?)
   end
@@ -70,4 +125,42 @@ module Noteable
   def discussions_can_be_resolved_by?(user)
     discussions_to_be_resolved.all? { |discussion| discussion.can_resolve?(user) }
   end
+
+  def lockable?
+    [MergeRequest, Issue].include?(self.class)
+  end
+
+  def etag_caching_enabled?
+    false
+  end
+
+  def expire_note_etag_cache
+    return unless discussions_rendered_on_frontend?
+    return unless etag_caching_enabled?
+
+    Gitlab::EtagCaching::Store.new.touch(note_etag_key)
+  end
+
+  def note_etag_key
+    return Gitlab::Routing.url_helpers.designs_project_issue_path(project, issue, { vueroute: filename }) if self.is_a?(DesignManagement::Design)
+
+    Gitlab::Routing.url_helpers.project_noteable_notes_path(
+      project,
+      target_type: self.class.name.underscore,
+      target_id: id
+    )
+  end
+
+  def after_note_created(_note)
+    # no-op
+  end
+
+  def after_note_destroyed(_note)
+    # no-op
+  end
 end
+
+Noteable.extend(Noteable::ClassMethods)
+
+Noteable::ClassMethods.prepend_if_ee('EE::Noteable::ClassMethods')
+Noteable.prepend_if_ee('EE::Noteable')

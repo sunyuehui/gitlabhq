@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::CommitReferenceFilter do
+RSpec.describe Banzai::Filter::CommitReferenceFilter do
   include FilterSpecHelper
 
   let(:project) { create(:project, :public, :repository) }
@@ -42,7 +44,7 @@ describe Banzai::Filter::CommitReferenceFilter do
     it 'links with adjacent text' do
       doc = reference_filter("See (#{reference}.)")
 
-      expect(doc.to_html).to match(/\(<a.+>#{commit.short_id}<\/a>\.\)/)
+      expect(doc.to_html).to match(%r{\(<a.+>#{commit.short_id}</a>\.\)})
     end
 
     it 'ignores invalid commit IDs' do
@@ -58,7 +60,9 @@ describe Banzai::Filter::CommitReferenceFilter do
     end
 
     it 'escapes the title attribute' do
-      allow_any_instance_of(Commit).to receive(:title).and_return(%{"></a>whatever<a title="})
+      allow_next_instance_of(Commit) do |instance|
+        allow(instance).to receive(:title).and_return(%{"></a>whatever<a title="})
+      end
 
       doc = reference_filter("See #{reference}")
       expect(doc.text).to eq "See #{commit.short_id}"
@@ -91,6 +95,29 @@ describe Banzai::Filter::CommitReferenceFilter do
 
       expect(link).not_to match %r(https?://)
       expect(link).to eq urls.project_commit_url(project, reference, only_path: true)
+    end
+
+    context "in merge request context" do
+      let(:noteable) { create(:merge_request, target_project: project, source_project: project) }
+      let(:commit) { noteable.commits.first }
+
+      it 'handles merge request contextual commit references' do
+        url = urls.diffs_project_merge_request_url(project, noteable, commit_id: commit.id)
+        doc = reference_filter("See #{reference}", noteable: noteable)
+
+        expect(doc.css('a').first[:href]).to eq(url)
+      end
+
+      context "a doc with many (29) strings that could be SHAs" do
+        let!(:oids) { noteable.commits.collect(&:id) }
+
+        it 'makes only a single request to Gitaly' do
+          expect(Gitlab::GitalyClient).to receive(:allow_n_plus_1_calls).exactly(0).times
+          expect(Gitlab::Git::Commit).to receive(:batch_by_oid).once.and_call_original
+
+          reference_filter("A big list of SHAs #{oids.join(", ")}", noteable: noteable)
+        end
+      end
     end
   end
 
@@ -187,12 +214,59 @@ describe Banzai::Filter::CommitReferenceFilter do
     it 'links with adjacent text' do
       doc = reference_filter("Fixed (#{reference}.)")
 
-      expect(doc.to_html).to match(/\(<a.+>#{commit.reference_link_text(project)}<\/a>\.\)/)
+      expect(doc.to_html).to match(%r{\(<a.+>#{commit.reference_link_text(project)}</a>\.\)})
     end
 
     it 'ignores invalid commit IDs on the referenced project' do
       act = "Committed #{invalidate_reference(reference)}"
-      expect(reference_filter(act).to_html).to match(/<a.+>#{Regexp.escape(invalidate_reference(reference))}<\/a>/)
+      expect(reference_filter(act).to_html).to match(%r{<a.+>#{Regexp.escape(invalidate_reference(reference))}</a>})
+    end
+  end
+
+  context 'URL reference for a commit patch' do
+    let(:namespace) { create(:namespace) }
+    let(:project2)  { create(:project, :public, :repository, namespace: namespace) }
+    let(:commit)    { project2.commit }
+    let(:link)      { urls.project_commit_url(project2, commit.id) }
+    let(:extension) { '.patch' }
+    let(:reference) { link + extension }
+
+    it 'links to a valid reference' do
+      doc = reference_filter("See #{reference}")
+
+      expect(doc.css('a').first.attr('href'))
+        .to eq reference
+    end
+
+    it 'has valid text' do
+      doc = reference_filter("See #{reference}")
+
+      expect(doc.text).to eq("See #{commit.reference_link_text(project)} (patch)")
+    end
+
+    it 'does not link to patch when extension match is after the path' do
+      invalidate_commit_reference = reference_filter("#{link}/builds.patch")
+
+      doc = reference_filter("See (#{invalidate_commit_reference})")
+
+      expect(doc.css('a').first.attr('href')).to eq "#{link}/builds"
+      expect(doc.text).to eq("See (#{commit.reference_link_text(project)} (builds).patch)")
+    end
+  end
+
+  context 'group context' do
+    let(:context) { { project: nil, group: create(:group) } }
+
+    it 'ignores internal references' do
+      exp = act = "See #{commit.id}"
+
+      expect(reference_filter(act, context).to_html).to eq exp
+    end
+
+    it 'links to a valid reference' do
+      act = "See #{project.full_path}@#{commit.id}"
+
+      expect(reference_filter(act, context).css('a').first.text).to eql("#{project.full_path}@#{commit.short_id}")
     end
   end
 end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe RootController do
+RSpec.describe RootController do
   describe 'GET index' do
     context 'when user is not logged in' do
       it 'redirects to the sign-in page' do
@@ -90,11 +92,59 @@ describe RootController do
         end
       end
 
+      context 'who has customized their dashboard setting for assigned issues' do
+        before do
+          user.dashboard = 'issues'
+        end
+
+        it 'redirects to their assigned issues' do
+          get :index
+
+          expect(response).to redirect_to issues_dashboard_path(assignee_username: user.username)
+        end
+      end
+
+      context 'who has customized their dashboard setting for assigned merge requests' do
+        before do
+          user.dashboard = 'merge_requests'
+        end
+
+        it 'redirects to their assigned merge requests' do
+          get :index
+
+          expect(response).to redirect_to merge_requests_dashboard_path(assignee_username: user.username)
+        end
+      end
+
       context 'who uses the default dashboard setting' do
         it 'renders the default dashboard' do
           get :index
 
           expect(response).to render_template 'dashboard/projects/index'
+        end
+
+        context 'when experiment is enabled' do
+          before do
+            stub_experiment_for_user(customize_homepage: true)
+          end
+
+          it 'renders the default dashboard' do
+            get :index
+
+            expect(assigns[:customize_homepage]).to be true
+          end
+        end
+
+        context 'when experiment not enabled' do
+          before do
+            stub_experiment(customize_homepage: false)
+          end
+
+          it 'renders the default dashboard' do
+            get :index
+
+            expect(assigns[:customize_homepage]).to be false
+          end
         end
       end
     end

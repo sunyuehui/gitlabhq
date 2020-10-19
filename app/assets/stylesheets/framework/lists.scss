@@ -2,7 +2,7 @@
  * Well styled list
  *
  */
-.well-list {
+.hover-list {
   position: relative;
   margin: 0;
   padding: 0;
@@ -12,15 +12,20 @@
     padding: 10px 15px;
     min-height: 20px;
     border-bottom: 1px solid $list-border;
+    word-wrap: break-word;
 
     &::after {
-      content: " ";
+      content: ' ';
       display: table;
       clear: both;
     }
 
     &.disabled {
-      color: $list-text-disabled-color;
+      color: $gl-text-color-tertiary;
+    }
+
+    &:not(.ui-sort-disabled):hover {
+      background: $blue-50;
     }
 
     &.unstyled {
@@ -29,20 +34,10 @@
       }
     }
 
-    &.warning-row {
-      background-color: $list-warning-row-bg;
-      border-color: $list-warning-row-border;
-      color: $list-warning-row-color;
-    }
-
     &.smoke { background-color: $gray-light; }
 
-    &:not(.ui-sort-disabled):hover {
-      background: $row-hover;
-    }
-
     &:last-child {
-      border-bottom: none;
+      border-bottom: 0;
 
       &.bottom {
         background: $gray-light;
@@ -66,8 +61,8 @@
       }
     }
 
-    .well-title {
-      font-size: $list-font-size;
+    .card.card-body-title {
+      font-size: $gl-font-size;
       line-height: 18px;
     }
   }
@@ -92,7 +87,14 @@ ul.unstyled-list {
 }
 
 ul.unstyled-list > li {
-  border-bottom: none;
+  border-bottom: 0;
+}
+
+ul.list-items-py-2 {
+  > li {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
 }
 
 // Generic content list
@@ -103,8 +105,9 @@ ul.content-list {
 
   li {
     border-color: $white-normal;
-    font-size: $list-font-size;
-    color: $list-text-color;
+    font-size: $gl-font-size;
+    color: $gl-text-color;
+    word-break: break-word;
 
     &.no-description {
       .title {
@@ -113,22 +116,19 @@ ul.content-list {
     }
 
     .title {
-      font-weight: 600;
+      font-weight: $gl-font-weight-bold;
     }
 
     a {
       color: $gl-text-color;
-    }
 
-    .member-group-link {
-      color: $blue-600;
+      &.inline-link {
+        color: $blue-600;
+      }
     }
 
     .description {
-      p {
-        @include str-truncated;
-        margin-bottom: 0;
-      }
+      @include str-truncated;
     }
 
     .controls {
@@ -151,32 +151,30 @@ ul.content-list {
         margin-top: 3px;
         margin-bottom: 4px;
 
+        &.btn-ldap-override {
+          @include media-breakpoint-up(sm) {
+            margin-bottom: 0;
+          }
+        }
+
         &.has-tooltip,
         &:last-child {
           margin-right: 0;
 
-          @media(max-width: $screen-xs-max) {
+          @include media-breakpoint-down(xs) {
             margin: 0 auto;
           }
         }
       }
 
       .no-comments {
-        opacity: .5;
-      }
-    }
-
-    .member-controls {
-      float: none;
-
-      @media (min-width: $screen-sm-min) {
-        float: right;
+        opacity: 0.5;
       }
     }
 
     // When dragging a list item
     &.ui-sortable-helper {
-      border-bottom: none;
+      border-bottom: 0;
     }
 
     &.list-placeholder {
@@ -191,11 +189,14 @@ ul.content-list {
 // Content list using flexbox
 .flex-list {
   .flex-row {
-    display: -webkit-flex;
-    display: -ms-flexbox;
     display: flex;
     align-items: center;
     white-space: nowrap;
+
+    // Override style that allows the flex-row text to wrap.
+    &.allow-wrap {
+      white-space: normal;
+    }
   }
 
   .row-main-content {
@@ -210,7 +211,7 @@ ul.content-list {
   }
 
   .row-title {
-    font-weight: 600;
+    font-weight: $gl-font-weight-bold;
   }
 
   .row-second-line {
@@ -224,12 +225,16 @@ ul.content-list {
     }
   }
 
-  .label-default {
+  .badge-secondary {
     color: $gl-text-color-secondary;
+  }
+
+  .avatar-cell {
+    align-self: flex-start;
   }
 }
 
-.panel > .content-list > li {
+.card > .content-list > li {
   padding: $gl-padding-top $gl-padding;
 }
 
@@ -251,9 +256,7 @@ ul.controls {
       margin-right: 0;
     }
 
-    .author_link {
-      display: inline-block;
-
+    .author-link {
       .avatar-inline {
         margin-left: 0;
         margin-right: 0;
@@ -263,8 +266,7 @@ ul.controls {
   }
 
   .issuable-pipeline-broken a,
-  .issuable-pipeline-status a,
-  .author_link {
+  .author-link {
     display: flex;
   }
 }
@@ -273,112 +275,30 @@ ul.indent-list {
   padding: 10px 0 0 30px;
 }
 
-
 // Specific styles for tree list
-.group-list-tree {
-  .folder-toggle-wrap {
-    float: left;
-    line-height: $list-text-height;
-    font-size: 0;
+@keyframes spin-avatar {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
-    span {
-      font-size: $gl-font-size;
-    }
-  }
-
-  .folder-caret,
-  .folder-icon {
-    display: inline-block;
-  }
-
-  .folder-caret {
-    width: 15px;
-  }
-
-  .folder-icon {
-    width: 20px;
-  }
-
-  > .group-row:not(.has-subgroups) {
-    .folder-caret .fa {
-      opacity: 0;
-    }
-  }
-
-  .content-list li:last-child {
-    padding-bottom: 0;
-  }
-
-  .group-list-tree {
-    margin-bottom: 0;
-    margin-left: 30px;
-    position: relative;
-
-    &::before {
-      content: '';
-      display: block;
-      width: 0;
-      position: absolute;
-      top: 5px;
-      bottom: 0;
-      left: -16px;
-      border-left: 2px solid $border-white-normal;
-    }
-
-    .group-row {
-      position: relative;
-
-      &::before {
-        content: "";
-        display: block;
-        width: 10px;
-        height: 0;
-        border-top: 2px solid $border-white-normal;
-        position: absolute;
-        top: 30px;
-        left: -16px;
-      }
-
-      &:last-child::before {
-        background: $white-light;
-        height: auto;
-        top: 30px;
-        bottom: 0;
-      }
-    }
-  }
-
-  .group-row {
-    padding: 0;
-    border: none;
-
-    &:last-of-type {
-      .group-row-contents:not(:hover) {
-        border-bottom: 1px solid transparent;
-      }
-    }
-  }
-
-  .group-row-contents {
-    padding: 10px 10px 8px;
-    border-top: solid 1px transparent;
-    border-bottom: solid 1px $white-normal;
-
-    &:hover {
-      border-color: $row-hover-border;
-      background-color: $row-hover;
-      cursor: pointer;
-    }
-
-    .avatar-container > a {
-      width: 100%;
-    }
+.namespace-title {
+  .tooltip-inner {
+    max-width: 350px;
   }
 }
 
-.js-groups-list-holder {
-  .groups-list-loading {
-    font-size: 34px;
-    text-align: center;
+.horizontal-list {
+  padding-left: 0;
+  list-style: none;
+
+  > li {
+    float: left;
+  }
+
+  &.list-items-separated {
+    > li:not(:last-child)::after {
+      content: '\00b7';
+      margin: 0 $gl-padding-4;
+    }
   }
 }

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
@@ -12,11 +14,15 @@ module Gitlab
           end
 
           def action_icon
-            'icon_action_play'
+            'play'
           end
 
           def action_title
             'Play'
+          end
+
+          def action_button_title
+            _('Trigger this manual action')
           end
 
           def action_path

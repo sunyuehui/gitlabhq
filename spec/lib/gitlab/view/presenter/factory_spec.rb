@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::View::Presenter::Factory do
+RSpec.describe Gitlab::View::Presenter::Factory do
   let(:build) { Ci::Build.new }
 
   describe '#initialize' do
@@ -26,6 +28,14 @@ describe Gitlab::View::Presenter::Factory do
       presenter = described_class.new(build).fabricate!
 
       expect(presenter).to be_a(Ci::BuildPresenter)
+    end
+
+    it 'uses the presenter_class if given on #initialize' do
+      my_custom_presenter = Class.new(described_class)
+
+      presenter = described_class.new(build, presenter_class: my_custom_presenter).fabricate!
+
+      expect(presenter).to be_a(my_custom_presenter)
     end
   end
 end

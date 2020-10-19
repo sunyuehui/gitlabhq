@@ -1,26 +1,6 @@
-.documentation-index {
-  h1 {
-    margin: 0;
-  }
-
-  h2 {
-    font-size: 20px;
-  }
-
-  li {
-    line-height: 24px;
-    color: $document-index-color;
-
-    a {
-      margin-right: 3px;
-    }
-  }
-}
-
-
 .shortcut-mappings {
   font-size: 12px;
-  color: $help-shortcut-mapping-color;
+  color: $gray-700;
 
   tbody:first-child tr:first-child {
     padding-top: 0;
@@ -42,27 +22,26 @@
 
   .shortcut {
     padding-right: 10px;
-    color: $help-shortcut-color;
+    color: $gray-300;
     text-align: right;
     white-space: nowrap;
   }
 
   .key {
-    @extend .label;
-    @extend .label-inverse;
-    font: 11px Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    @extend .badge.badge-pill;
+    background-color: $label-inverse-bg;
+    font: 11px Consolas, 'Liberation Mono', Menlo, Courier, monospace;
     padding: 3px 5px;
   }
 }
 
 .documentation {
   padding: 7px;
+  font-size: $gl-font-size-large;
+}
 
-  // Border around images in the help pages.
-  img:not(.emoji) {
-    border: 1px solid $white-normal;
-    padding: 5px;
-    margin: 5px;
-    max-height: calc(100vh - 100px);
+.card.links-card {
+  a {
+    color: $blue-600;
   }
 }

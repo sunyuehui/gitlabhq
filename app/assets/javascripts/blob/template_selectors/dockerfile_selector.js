@@ -1,15 +1,15 @@
-import Api from '../../api';
-
 import FileTemplateSelector from '../file_template_selector';
+import { __ } from '~/locale';
+import initDeprecatedJQueryDropdown from '~/deprecated_jquery_dropdown';
 
 export default class DockerfileSelector extends FileTemplateSelector {
   constructor({ mediator }) {
     super(mediator);
     this.config = {
       key: 'dockerfile',
-      name: 'Dockerfile',
+      name: __('Dockerfile'),
       pattern: /(Dockerfile)/,
-      endpoint: Api.dockerfileYml,
+      type: 'dockerfiles',
       dropdown: '.js-dockerfile-selector',
       wrapper: '.js-dockerfile-selector-wrap',
     };
@@ -17,11 +17,10 @@ export default class DockerfileSelector extends FileTemplateSelector {
 
   initDropdown() {
     // maybe move to super class as well
-    this.$dropdown.glDropdown({
+    initDeprecatedJQueryDropdown(this.$dropdown, {
       data: this.$dropdown.data('data'),
       filterable: true,
       selectable: true,
-      toggleLabel: item => item.name,
       search: {
         fields: ['name'],
       },

@@ -1,15 +1,21 @@
+# frozen_string_literal: true
+
 module Projects
   class DestroyService < BaseService
     include Gitlab::ShellAdapter
 
     DestroyError = Class.new(StandardError)
 
-    DELETED_FLAG = '+deleted'.freeze
-
     def async_execute
       project.update_attribute(:pending_delete, true)
+
+      # Ensure no repository +deleted paths are kept,
+      # regardless of any issue with the ProjectDestroyWorker
+      # job process.
+      schedule_stale_repos_removal
+
       job_id = ProjectDestroyWorker.perform_async(project.id, current_user.id, params)
-      Rails.logger.info("User #{current_user.id} scheduled destruction of project #{project.full_path} with job ID #{job_id}")
+      log_info("User #{current_user.id} scheduled destruction of project #{project.full_path} with job ID #{job_id}")
     end
 
     def execute
@@ -22,10 +28,12 @@ module Projects
 
       Projects::UnlinkForkService.new(project, current_user).execute
 
-      attempt_destroy_transaction(project)
+      attempt_destroy(project)
 
       system_hook_service.execute_hooks_for(project, :destroy)
-      log_info("Project \"#{project.full_path}\" was removed")
+      log_info("Project \"#{project.full_path}\" was deleted")
+
+      current_user.invalidate_personal_projects_count
 
       true
     rescue => error
@@ -39,63 +47,100 @@ module Projects
 
     private
 
-    def repo_path
-      project.disk_path
-    end
-
-    def wiki_path
-      repo_path + '.wiki'
-    end
-
-    def trash_repositories!
-      unless remove_repository(repo_path)
-        raise_error('Failed to remove project repository. Please try again or contact administrator.')
+    def trash_project_repositories!
+      unless remove_repository(project.repository)
+        raise_error(s_('DeleteProject|Failed to remove project repository. Please try again or contact administrator.'))
       end
 
-      unless remove_repository(wiki_path)
-        raise_error('Failed to remove wiki repository. Please try again or contact administrator.')
+      unless remove_repository(project.wiki.repository)
+        raise_error(s_('DeleteProject|Failed to remove wiki repository. Please try again or contact administrator.'))
       end
     end
 
-    def remove_repository(path)
-      # Skip repository removal. We use this flag when remove user or group
-      return true if params[:skip_repo] == true
+    def trash_relation_repositories!
+      unless remove_snippets
+        raise_error(s_('DeleteProject|Failed to remove project snippets. Please try again or contact administrator.'))
+      end
+    end
 
-      # There is a possibility project does not have repository or wiki
-      return true unless gitlab_shell.exists?(project.repository_storage_path, path + '.git')
+    def remove_snippets
+      response = ::Snippets::BulkDestroyService.new(current_user, project.snippets).execute
 
-      new_path = removal_path(path)
+      response.success?
+    end
 
-      if gitlab_shell.mv_repository(project.repository_storage_path, path, new_path)
-        log_info("Repository \"#{path}\" moved to \"#{new_path}\"")
+    def remove_repository(repository)
+      return true unless repository
 
-        project.run_after_commit do
-          # self is now project
-          GitlabShellWorker.perform_in(5.minutes, :remove_repository, self.repository_storage_path, new_path)
-        end
-      else
-        false
+      result = Repositories::DestroyService.new(repository).execute
+
+      result[:status] == :success
+    end
+
+    def schedule_stale_repos_removal
+      repos = [project.repository, project.wiki.repository]
+
+      repos.each do |repository|
+        next unless repository
+
+        Repositories::ShellDestroyService.new(repository).execute(Repositories::ShellDestroyService::STALE_REMOVAL_DELAY)
       end
     end
 
     def attempt_rollback(project, message)
       return unless project
 
-      project.update_attributes(delete_error: message, pending_delete: false)
+      # It's possible that the project was destroyed, but some after_commit
+      # hook failed and caused us to end up here. A destroyed model will be a frozen hash,
+      # which cannot be altered.
+      project.update(delete_error: message, pending_delete: false) unless project.destroyed?
+
       log_error("Deletion failed on #{project.full_path} with the following message: #{message}")
     end
 
-    def attempt_destroy_transaction(project)
-      Project.transaction do
-        unless remove_legacy_registry_tags
-          raise_error('Failed to remove some tags in project container registry. Please try again or contact administrator.')
-        end
-
-        trash_repositories!
-
-        project.team.truncate
-        project.destroy!
+    def attempt_destroy(project)
+      unless remove_registry_tags
+        raise_error(s_('DeleteProject|Failed to remove some tags in project container registry. Please try again or contact administrator.'))
       end
+
+      project.leave_pool_repository
+
+      if Gitlab::Ci::Features.project_transactionless_destroy?(project)
+        destroy_project_related_records(project)
+      else
+        Project.transaction { destroy_project_related_records(project) }
+      end
+    end
+
+    def destroy_project_related_records(project)
+      log_destroy_event
+      trash_relation_repositories!
+      trash_project_repositories!
+
+      # Rails attempts to load all related records into memory before
+      # destroying: https://github.com/rails/rails/issues/22510
+      # This ensures we delete records in batches.
+      #
+      # Exclude container repositories because its before_destroy would be
+      # called multiple times, and it doesn't destroy any database records.
+      project.destroy_dependent_associations_in_batches(exclude: [:container_repositories, :snippets])
+      project.destroy!
+    end
+
+    def log_destroy_event
+      log_info("Attempting to destroy #{project.full_path} (#{project.id})")
+    end
+
+    def remove_registry_tags
+      return true unless Gitlab.config.registry.enabled
+      return false unless remove_legacy_registry_tags
+
+      project.container_repositories.find_each do |container_repository|
+        service = Projects::ContainerRepository::DestroyService.new(project, current_user)
+        service.execute(container_repository)
+      end
+
+      true
     end
 
     ##
@@ -105,8 +150,8 @@ module Projects
     def remove_legacy_registry_tags
       return true unless Gitlab.config.registry.enabled
 
-      ContainerRepository.build_root_repository(project).tap do |repository|
-        return repository.has_tags? ? repository.delete_tags! : true
+      ::ContainerRepository.build_root_repository(project).tap do |repository|
+        break repository.has_tags? ? repository.delete_tags! : true
       end
     end
 
@@ -114,22 +159,10 @@ module Projects
       raise DestroyError.new(message)
     end
 
-    # Build a path for removing repositories
-    # We use `+` because its not allowed by GitLab so user can not create
-    # project with name cookies+119+deleted and capture someone stalled repository
-    #
-    # gitlab/cookies.git -> gitlab/cookies+119+deleted.git
-    #
-    def removal_path(path)
-      "#{path}+#{project.id}#{DELETED_FLAG}"
-    end
-
     def flush_caches(project)
-      project.repository.before_delete
-
-      Repository.new(wiki_path, project, disk_path: repo_path).before_delete
-
       Projects::ForksCountService.new(project).delete_cache
     end
   end
 end
+
+Projects::DestroyService.prepend_if_ee('EE::Projects::DestroyService')

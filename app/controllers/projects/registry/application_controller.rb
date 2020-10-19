@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Projects
   module Registry
     class ApplicationController < Projects::ApplicationController
@@ -5,6 +7,8 @@ module Projects
 
       before_action :verify_registry_enabled!
       before_action :authorize_read_container_image!
+
+      feature_category :container_registry
 
       private
 

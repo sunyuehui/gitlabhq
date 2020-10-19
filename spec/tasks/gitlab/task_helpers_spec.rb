@@ -1,11 +1,12 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
-require 'tasks/gitlab/task_helpers'
 
 class TestHelpersTest
   include Gitlab::TaskHelpers
 end
 
-describe Gitlab::TaskHelpers do
+RSpec.describe Gitlab::TaskHelpers do
   subject { TestHelpersTest.new }
 
   let(:repo) { 'https://gitlab.com/gitlab-org/gitlab-test.git' }
@@ -19,25 +20,15 @@ describe Gitlab::TaskHelpers do
     end
 
     it 'checkout the version and reset to it' do
+      expect(subject).to receive(:get_version).with(version).and_call_original
       expect(subject).to receive(:checkout_version).with(tag, clone_path)
 
       subject.checkout_or_clone_version(version: version, repo: repo, target_dir: clone_path)
     end
 
-    context 'with a branch version' do
-      let(:version) { '=branch_name' }
-      let(:branch) { 'branch_name' }
-
-      it 'checkout the version and reset to it with a branch name' do
-        expect(subject).to receive(:checkout_version).with(branch, clone_path)
-
-        subject.checkout_or_clone_version(version: version, repo: repo, target_dir: clone_path)
-      end
-    end
-
     context "target_dir doesn't exist" do
       it 'clones the repo' do
-        expect(subject).to receive(:clone_repo).with(repo, clone_path)
+        expect(subject).to receive(:clone_repo).with(repo, clone_path, clone_opts: [])
 
         subject.checkout_or_clone_version(version: version, repo: repo, target_dir: clone_path)
       end
@@ -54,6 +45,12 @@ describe Gitlab::TaskHelpers do
         subject.checkout_or_clone_version(version: version, repo: repo, target_dir: clone_path)
       end
     end
+
+    it 'accepts clone_opts' do
+      expect(subject).to receive(:clone_repo).with(repo, clone_path, clone_opts: %w[--depth 1])
+
+      subject.checkout_or_clone_version(version: version, repo: repo, target_dir: clone_path, clone_opts: %w[--depth 1])
+    end
   end
 
   describe '#clone_repo' do
@@ -62,6 +59,13 @@ describe Gitlab::TaskHelpers do
         .to receive(:run_command!).with(%W[#{Gitlab.config.git.bin_path} clone -- #{repo} #{clone_path}])
 
       subject.clone_repo(repo, clone_path)
+    end
+
+    it 'accepts clone_opts' do
+      expect(subject)
+        .to receive(:run_command!).with(%W[#{Gitlab.config.git.bin_path} clone --depth 1 -- #{repo} #{clone_path}])
+
+      subject.clone_repo(repo, clone_path, clone_opts: %w[--depth 1])
     end
   end
 
@@ -73,6 +77,41 @@ describe Gitlab::TaskHelpers do
         .to receive(:run_command!).with(%W[#{Gitlab.config.git.bin_path} -C #{clone_path} checkout -f --quiet FETCH_HEAD --])
 
       subject.checkout_version(tag, clone_path)
+    end
+  end
+
+  describe '#run_command' do
+    it 'runs command and return the output' do
+      expect(subject.run_command(%w(echo it works!))).to eq("it works!\n")
+    end
+
+    it 'returns empty string when command doesnt exist' do
+      expect(subject.run_command(%w(nonexistentcommand with arguments))).to eq('')
+    end
+  end
+
+  describe '#run_command!' do
+    it 'runs command and return the output' do
+      expect(subject.run_command!(%w(echo it works!))).to eq("it works!\n")
+    end
+
+    it 'returns and exception when command exit with non zero code' do
+      expect { subject.run_command!(['bash', '-c', 'exit 1']) }.to raise_error Gitlab::TaskFailedError
+    end
+  end
+
+  describe '#get_version' do
+    using RSpec::Parameterized::TableSyntax
+
+    where(:version, :result) do
+      '1.1.1'                                    | 'v1.1.1'
+      'master'                                   | 'master'
+      '12.4.0-rc7'                               | 'v12.4.0-rc7'
+      '594c3ea3e0e5540e5915bd1c49713a0381459dd6' | '594c3ea3e0e5540e5915bd1c49713a0381459dd6'
+    end
+
+    with_them do
+      it { expect(subject.get_version(version)).to eq(result) }
     end
   end
 end

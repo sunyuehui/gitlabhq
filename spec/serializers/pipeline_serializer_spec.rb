@@ -1,10 +1,13 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe PipelineSerializer do
-  let(:user) { create(:user) }
+RSpec.describe PipelineSerializer do
+  let_it_be(:project) { create(:project, :repository) }
+  let_it_be(:user) { create(:user) }
 
   let(:serializer) do
-    described_class.new(current_user: user)
+    described_class.new(current_user: user, project: project)
   end
 
   subject { serializer.represent(resource) }
@@ -16,7 +19,7 @@ describe PipelineSerializer do
       end
 
       context 'when a single object is being serialized' do
-        let(:resource) { create(:ci_empty_pipeline) }
+        let(:resource) { create(:ci_empty_pipeline, project: project) }
 
         it 'serializers the pipeline object' do
           expect(subject[:id]).to eq resource.id
@@ -24,7 +27,7 @@ describe PipelineSerializer do
       end
 
       context 'when multiple objects are being serialized' do
-        let(:resource) { create_list(:ci_pipeline, 2) }
+        let(:resource) { create_list(:ci_pipeline, 2, project: project) }
 
         it 'serializers the array of pipelines' do
           expect(subject).not_to be_empty
@@ -33,15 +36,9 @@ describe PipelineSerializer do
     end
 
     context 'when used with pagination' do
-      let(:request) { spy('request') }
+      let(:request) { double(url: "#{Gitlab.config.gitlab.url}:8080/api/v4/projects?#{query.to_query}", query_parameters: query) }
       let(:response) { spy('response') }
-      let(:pagination) { {} }
-
-      before do
-        allow(request)
-          .to receive(:query_parameters)
-          .and_return(pagination)
-      end
+      let(:query) { {} }
 
       let(:serializer) do
         described_class.new(current_user: user)
@@ -55,7 +52,7 @@ describe PipelineSerializer do
       context 'when resource is not paginatable' do
         context 'when a single pipeline object is being serialized' do
           let(:resource) { create(:ci_empty_pipeline) }
-          let(:pagination) { { page: 1, per_page: 1 } }
+          let(:query) { { page: 1, per_page: 1 } }
 
           it 'raises error' do
             expect { subject }.to raise_error(
@@ -66,7 +63,7 @@ describe PipelineSerializer do
 
       context 'when resource is paginatable relation' do
         let(:resource) { Ci::Pipeline.all }
-        let(:pagination) { { page: 1, per_page: 2 } }
+        let(:query) { { page: 1, per_page: 2 } }
 
         context 'when a single pipeline object is present in relation' do
           before do
@@ -98,28 +95,71 @@ describe PipelineSerializer do
       end
     end
 
-    context 'number of queries' do
+    context 'when there are pipelines for merge requests' do
       let(:resource) { Ci::Pipeline.all }
-      let(:project) { create(:project) }
 
-      before do
-        Ci::Pipeline::AVAILABLE_STATUSES.each do |status|
-          create_pipeline(status)
-        end
+      let!(:merge_request_1) do
+        create(:merge_request,
+          :with_detached_merge_request_pipeline,
+          target_project: project,
+          target_branch: 'master',
+          source_project: project,
+          source_branch: 'feature')
       end
 
-      shared_examples 'no N+1 queries' do
-        it 'verifies number of queries', :request_store do
-          recorded = ActiveRecord::QueryRecorder.new { subject }
-          expect(recorded.count).to be_within(1).of(57)
-          expect(recorded.cached_count).to eq(0)
+      let!(:merge_request_2) do
+        create(:merge_request,
+          :with_detached_merge_request_pipeline,
+          target_project: project,
+          target_branch: 'master',
+          source_project: project,
+          source_branch: '2-mb-file')
+      end
+
+      before do
+        project.add_developer(user)
+      end
+
+      it 'includes merge requests information' do
+        expect(subject.all? { |entry| entry[:merge_request].present? }).to be_truthy
+      end
+
+      it 'preloads related merge requests' do
+        recorded = ActiveRecord::QueryRecorder.new { subject }
+        expected_query = "SELECT \"merge_requests\".* FROM \"merge_requests\" " \
+        "WHERE \"merge_requests\".\"id\" IN (#{merge_request_1.id}, #{merge_request_2.id})"
+
+        expect(recorded.log).to include(a_string_starting_with(expected_query))
+      end
+    end
+
+    describe 'number of queries when preloaded' do
+      subject { serializer.represent(resource, preload: true) }
+
+      let(:resource) { Ci::Pipeline.all }
+
+      before do
+        # Since RequestStore.active? is true we have to allow the
+        # gitaly calls in this block
+        # Issue: https://gitlab.com/gitlab-org/gitlab-foss/issues/37772
+        Gitlab::GitalyClient.allow_n_plus_1_calls do
+          Ci::Pipeline::COMPLETED_STATUSES.each do |status|
+            create_pipeline(status)
+          end
         end
+        Gitlab::GitalyClient.reset_counts
       end
 
       context 'with the same ref' do
         let(:ref) { 'feature' }
 
-        it_behaves_like 'no N+1 queries'
+        it 'verifies number of queries', :request_store do
+          recorded = ActiveRecord::QueryRecorder.new { subject }
+          expected_queries = Gitlab.ee? ? 39 : 36
+
+          expect(recorded.count).to be_within(2).of(expected_queries)
+          expect(recorded.cached_count).to eq(0)
+        end
       end
 
       context 'with different refs' do
@@ -129,7 +169,44 @@ describe PipelineSerializer do
           "feature-#{@sequence}"
         end
 
-        it_behaves_like 'no N+1 queries'
+        it 'verifies number of queries', :request_store do
+          recorded = ActiveRecord::QueryRecorder.new { subject }
+
+          # For each ref there is a permission check if maintainer can update
+          # pipeline. With the same ref this check is cached but if refs are
+          # different then there is an extra query per ref
+          # https://gitlab.com/gitlab-org/gitlab-foss/issues/46368
+          expected_queries = Gitlab.ee? ? 42 : 39
+
+          expect(recorded.count).to be_within(2).of(expected_queries)
+          expect(recorded.cached_count).to eq(0)
+        end
+      end
+
+      context 'with triggered pipelines' do
+        let(:ref) { 'feature' }
+
+        before do
+          pipeline_1 = create(:ci_pipeline)
+          build_1 = create(:ci_build, pipeline: pipeline_1)
+          create(:ci_sources_pipeline, source_job: build_1)
+
+          pipeline_2 = create(:ci_pipeline)
+          build_2 = create(:ci_build, pipeline: pipeline_2)
+          create(:ci_sources_pipeline, source_job: build_2)
+        end
+
+        it 'verifies number of queries', :request_store do
+          recorded = ActiveRecord::QueryRecorder.new { subject }
+
+          # Existing numbers are high and require performance optimization
+          # Ongoing issue:
+          # https://gitlab.com/gitlab-org/gitlab/-/issues/225156
+          expected_queries = Gitlab.ee? ? 85 : 76
+
+          expect(recorded.count).to be_within(2).of(expected_queries)
+          expect(recorded.cached_count).to eq(0)
+        end
       end
 
       def create_pipeline(status)
@@ -162,7 +239,7 @@ describe PipelineSerializer do
         expect(subject[:text]).to eq(status.text)
         expect(subject[:label]).to eq(status.label)
         expect(subject[:icon]).to eq(status.icon)
-        expect(subject[:favicon]).to eq("/assets/ci_favicons/#{status.favicon}.ico")
+        expect(subject[:favicon]).to match_asset_path("/assets/ci_favicons/#{status.favicon}.png")
       end
     end
   end

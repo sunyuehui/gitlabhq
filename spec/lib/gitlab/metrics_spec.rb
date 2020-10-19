@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Metrics do
+RSpec.describe Gitlab::Metrics do
   include StubENV
 
   describe '.settings' do
@@ -20,7 +22,7 @@ describe Gitlab::Metrics do
 
     context 'prometheus metrics enabled in config' do
       before do
-        allow(described_class).to receive(:current_application_settings).and_return(prometheus_metrics_enabled: true)
+        allow(Gitlab::CurrentSettings).to receive(:prometheus_metrics_enabled).and_return(true)
       end
 
       context 'when metrics folder is present' do
@@ -51,60 +53,6 @@ describe Gitlab::Metrics do
     end
   end
 
-  describe '.influx_metrics_enabled?' do
-    it 'returns a boolean' do
-      expect(described_class.influx_metrics_enabled?).to be_in([true, false])
-    end
-  end
-
-  describe '.submit_metrics' do
-    it 'prepares and writes the metrics to InfluxDB' do
-      connection = double(:connection)
-      pool       = double(:pool)
-
-      expect(pool).to receive(:with).and_yield(connection)
-      expect(connection).to receive(:write_points).with(an_instance_of(Array))
-      expect(described_class).to receive(:pool).and_return(pool)
-
-      described_class.submit_metrics([{ 'series' => 'kittens', 'tags' => {} }])
-    end
-  end
-
-  describe '.prepare_metrics' do
-    it 'returns a Hash with the keys as Symbols' do
-      metrics = described_class
-        .prepare_metrics([{ 'values' => {}, 'tags' => {} }])
-
-      expect(metrics).to eq([{ values: {}, tags: {} }])
-    end
-
-    it 'escapes tag values' do
-      metrics = described_class.prepare_metrics([
-        { 'values' => {}, 'tags' => { 'foo' => 'bar=' } }
-      ])
-
-      expect(metrics).to eq([{ values: {}, tags: { 'foo' => 'bar\\=' } }])
-    end
-
-    it 'drops empty tags' do
-      metrics = described_class.prepare_metrics([
-        { 'values' => {}, 'tags' => { 'cats' => '', 'dogs' => nil } }
-      ])
-
-      expect(metrics).to eq([{ values: {}, tags: {} }])
-    end
-  end
-
-  describe '.escape_value' do
-    it 'escapes an equals sign' do
-      expect(described_class.escape_value('foo=')).to eq('foo\\=')
-    end
-
-    it 'casts values to Strings' do
-      expect(described_class.escape_value(10)).to eq('10')
-    end
-  end
-
   describe '.measure' do
     context 'without a transaction' do
       it 'returns the return value of the block' do
@@ -115,7 +63,7 @@ describe Gitlab::Metrics do
     end
 
     context 'with a transaction' do
-      let(:transaction) { Gitlab::Metrics::Transaction.new }
+      let(:transaction) { Gitlab::Metrics::WebTransaction.new({}) }
 
       before do
         allow(described_class).to receive(:current_transaction)
@@ -123,14 +71,9 @@ describe Gitlab::Metrics do
       end
 
       it 'adds a metric to the current transaction' do
-        expect(transaction).to receive(:increment)
-          .with('foo_real_time', a_kind_of(Numeric))
+        expect(transaction).to receive(:observe).with(:gitlab_foo_real_duration_seconds, a_kind_of(Numeric))
 
-        expect(transaction).to receive(:increment)
-          .with('foo_cpu_time', a_kind_of(Numeric))
-
-        expect(transaction).to receive(:increment)
-          .with('foo_call_count', 1)
+        expect(transaction).to receive(:observe).with(:gitlab_foo_cpu_duration_seconds, a_kind_of(Numeric))
 
         described_class.measure(:foo) { 10 }
       end
@@ -139,55 +82,6 @@ describe Gitlab::Metrics do
         val = described_class.measure(:foo) { 10 }
 
         expect(val).to eq(10)
-      end
-    end
-  end
-
-  describe '.tag_transaction' do
-    context 'without a transaction' do
-      it 'does nothing' do
-        expect_any_instance_of(Gitlab::Metrics::Transaction)
-          .not_to receive(:add_tag)
-
-        described_class.tag_transaction(:foo, 'bar')
-      end
-    end
-
-    context 'with a transaction' do
-      let(:transaction) { Gitlab::Metrics::Transaction.new }
-
-      it 'adds the tag to the transaction' do
-        expect(described_class).to receive(:current_transaction)
-          .and_return(transaction)
-
-        expect(transaction).to receive(:add_tag)
-          .with(:foo, 'bar')
-
-        described_class.tag_transaction(:foo, 'bar')
-      end
-    end
-  end
-
-  describe '.action=' do
-    context 'without a transaction' do
-      it 'does nothing' do
-        expect_any_instance_of(Gitlab::Metrics::Transaction)
-          .not_to receive(:action=)
-
-        described_class.action = 'foo'
-      end
-    end
-
-    context 'with a transaction' do
-      it 'sets the action of a transaction' do
-        trans = Gitlab::Metrics::Transaction.new
-
-        expect(described_class).to receive(:current_transaction)
-          .and_return(trans)
-
-        expect(trans).to receive(:action=).with('foo')
-
-        described_class.action = 'foo'
       end
     end
   end
@@ -210,7 +104,7 @@ describe Gitlab::Metrics do
 
     context 'with a transaction' do
       it 'adds an event' do
-        transaction = Gitlab::Metrics::Transaction.new
+        transaction = Gitlab::Metrics::WebTransaction.new({})
 
         expect(transaction).to receive(:add_event).with(:meow)
 
@@ -224,7 +118,7 @@ describe Gitlab::Metrics do
 
   shared_examples 'prometheus metrics API' do
     describe '#counter' do
-      subject { described_class.counter(:couter, 'doc') }
+      subject { described_class.counter(:counter, 'doc') }
 
       describe '#increment' do
         it 'successfully calls #increment without arguments' do
@@ -280,7 +174,7 @@ describe Gitlab::Metrics do
     it_behaves_like 'prometheus metrics API'
 
     describe '#null_metric' do
-      subject { described_class.provide_metric(:test) }
+      subject { described_class.send(:provide_metric, :test) }
 
       it { is_expected.to be_a(Gitlab::Metrics::NullMetric) }
     end
@@ -321,7 +215,7 @@ describe Gitlab::Metrics do
     it_behaves_like 'prometheus metrics API'
 
     describe '#null_metric' do
-      subject { described_class.provide_metric(:test) }
+      subject { described_class.send(:provide_metric, :test) }
 
       it { is_expected.to be_nil }
     end

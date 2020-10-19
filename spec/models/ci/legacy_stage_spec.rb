@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Ci::LegacyStage do
+RSpec.describe Ci::LegacyStage do
   let(:stage) { build(:ci_stage) }
   let(:pipeline) { stage.pipeline }
   let(:stage_name) { stage.name }
@@ -114,7 +116,7 @@ describe Ci::LegacyStage do
         let!(:new_build) { create_job(:ci_build, status: :success) }
 
         before do
-          stage_build.update(retried: true)
+          stage_build.update!(retried: true)
         end
 
         it "returns status of latest build" do
@@ -133,7 +135,7 @@ describe Ci::LegacyStage do
       let!(:stage_build) { create_job(:ci_build, status: :created) }
 
       it 'returns detailed status for created stage' do
-        expect(subject.text).to eq 'created'
+        expect(subject.text).to eq s_('CiStatusText|created')
       end
     end
 
@@ -141,7 +143,7 @@ describe Ci::LegacyStage do
       let!(:stage_build) { create_job(:ci_build, status: :pending) }
 
       it 'returns detailed status for pending stage' do
-        expect(subject.text).to eq 'pending'
+        expect(subject.text).to eq s_('CiStatusText|pending')
       end
     end
 
@@ -149,7 +151,7 @@ describe Ci::LegacyStage do
       let!(:stage_build) { create_job(:ci_build, status: :running) }
 
       it 'returns detailed status for running stage' do
-        expect(subject.text).to eq 'running'
+        expect(subject.text).to eq s_('CiStatus|running')
       end
     end
 
@@ -157,7 +159,7 @@ describe Ci::LegacyStage do
       let!(:stage_build) { create_job(:ci_build, status: :success) }
 
       it 'returns detailed status for successful stage' do
-        expect(subject.text).to eq 'passed'
+        expect(subject.text).to eq s_('CiStatusText|passed')
       end
     end
 
@@ -165,7 +167,7 @@ describe Ci::LegacyStage do
       let!(:stage_build) { create_job(:ci_build, status: :failed) }
 
       it 'returns detailed status for failed stage' do
-        expect(subject.text).to eq 'failed'
+        expect(subject.text).to eq s_('CiStatusText|failed')
       end
     end
 
@@ -173,7 +175,7 @@ describe Ci::LegacyStage do
       let!(:stage_build) { create_job(:ci_build, status: :canceled) }
 
       it 'returns detailed status for canceled stage' do
-        expect(subject.text).to eq 'canceled'
+        expect(subject.text).to eq s_('CiStatusText|canceled')
       end
     end
 
@@ -181,7 +183,7 @@ describe Ci::LegacyStage do
       let!(:stage_build) { create_job(:ci_build, status: :skipped) }
 
       it 'returns detailed status for skipped stage' do
-        expect(subject.text).to eq 'skipped'
+        expect(subject.text).to eq s_('CiStatusText|skipped')
       end
     end
   end
@@ -214,7 +216,7 @@ describe Ci::LegacyStage do
     context 'when stage has warnings' do
       context 'when using memoized warnings flag' do
         context 'when there are warnings' do
-          let(:stage) { build(:ci_stage, warnings: 2) }
+          let(:stage) { build(:ci_stage, warnings: true) }
 
           it 'returns true using memoized value' do
             expect(stage).not_to receive(:statuses)
@@ -223,19 +225,10 @@ describe Ci::LegacyStage do
         end
 
         context 'when there are no warnings' do
-          let(:stage) { build(:ci_stage, warnings: 0) }
+          let(:stage) { build(:ci_stage, warnings: false) }
 
           it 'returns false using memoized value' do
             expect(stage).not_to receive(:statuses)
-            expect(stage).not_to have_warnings
-          end
-        end
-
-        context 'when number of warnings is not a valid value' do
-          let(:stage) { build(:ci_stage, warnings: true) }
-
-          it 'calculates statuses using database queries' do
-            expect(stage).to receive(:statuses).and_call_original
             expect(stage).not_to have_warnings
           end
         end
@@ -270,4 +263,6 @@ describe Ci::LegacyStage do
   def create_job(type, status: 'success', stage: stage_name, **opts)
     create(type, pipeline: pipeline, stage: stage, status: status, **opts)
   end
+
+  it_behaves_like 'manual playable stage', :ci_stage
 end

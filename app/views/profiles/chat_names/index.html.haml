@@ -1,13 +1,12 @@
-- page_title 'Chat'
+- page_title _('Chat')
 - @content_class = "limit-container-width" unless fluid_layout
-= render 'profiles/head'
 
-.row.prepend-top-default
+.row.gl-mt-3
   .col-lg-4.profile-settings-sidebar
-    %h4.prepend-top-0
+    %h4.gl-mt-0
       = page_title
     %p
-      You can see your Chat accounts.
+      = _('You can see your chat accounts.')
 
   .col-lg-8
     %h5 Active chat names (#{@chat_names.size})
@@ -17,15 +16,15 @@
         %table.table.chat-names
           %thead
             %tr
-              %th Project
-              %th Service
-              %th Team domain
-              %th Nickname
-              %th Last used
+              %th= _('Project')
+              %th= _('Service')
+              %th= _('Team domain')
+              %th= _('Nickname')
+              %th= _('Last used')
               %th
           %tbody
             = render @chat_names
 
     - else
       .settings-message.text-center
-        You don't have any active chat names.
+        = _("You don't have any active chat names.")

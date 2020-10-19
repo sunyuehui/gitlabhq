@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Recaptcha
     def self.load_configurations!
-      if current_application_settings.recaptcha_enabled
+      if Gitlab::CurrentSettings.recaptcha_enabled || enabled_on_login?
         ::Recaptcha.configure do |config|
-          config.public_key  = current_application_settings.recaptcha_site_key
-          config.private_key = current_application_settings.recaptcha_private_key
+          config.site_key = Gitlab::CurrentSettings.recaptcha_site_key
+          config.secret_key = Gitlab::CurrentSettings.recaptcha_private_key
         end
 
         true
@@ -12,7 +14,11 @@ module Gitlab
     end
 
     def self.enabled?
-      current_application_settings.recaptcha_enabled
+      Gitlab::CurrentSettings.recaptcha_enabled
+    end
+
+    def self.enabled_on_login?
+      Gitlab::CurrentSettings.login_recaptcha_protection_enabled
     end
   end
 end

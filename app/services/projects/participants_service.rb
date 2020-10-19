@@ -1,48 +1,75 @@
+# frozen_string_literal: true
+
 module Projects
   class ParticipantsService < BaseService
-    attr_reader :noteable
+    include Users::ParticipableService
 
     def execute(noteable)
       @noteable = noteable
 
-      project_members = sorted(project.team.members)
-      participants = noteable_owner + participants_in_noteable + all_members + groups + project_members
+      participants =
+        noteable_owner +
+        participants_in_noteable +
+        all_members +
+        groups +
+        project_members
+
       participants.uniq
     end
 
-    def noteable_owner
-      return [] unless noteable && noteable.author.present?
-
-      [{
-        name: noteable.author.name,
-        username: noteable.author.username,
-        avatar_url: noteable.author.avatar_url
-      }]
+    def project_members
+      @project_members ||= sorted(get_project_members)
     end
 
-    def participants_in_noteable
-      return [] unless noteable
+    def get_project_members
+      members = Member.from_union([project_members_through_ancestral_groups,
+                                   project_members_through_invited_groups,
+                                   individual_project_members])
 
-      users = noteable.participants(current_user)
-      sorted(users)
-    end
-
-    def sorted(users)
-      users.uniq.to_a.compact.sort_by(&:username).map do |user|
-        { username: user.username, name: user.name, avatar_url: user.avatar_url }
-      end
-    end
-
-    def groups
-      current_user.authorized_groups.sort_by(&:path).map do |group|
-        count = group.users.count
-        { username: group.full_path, name: group.full_name, count: count, avatar_url: group.avatar_url }
-      end
+      User.id_in(members.select(:user_id))
     end
 
     def all_members
-      count = project.team.members.flatten.count
-      [{ username: "all", name: "All Project and Group Members", count: count }]
+      [{ username: "all", name: "All Project and Group Members", count: project_members.count }]
+    end
+
+    private
+
+    def project_members_through_invited_groups
+      groups_with_ancestors_ids = Gitlab::ObjectHierarchy
+        .new(visible_groups)
+        .base_and_ancestors
+        .pluck_primary_key
+
+      GroupMember
+        .active_without_invites_and_requests
+        .with_source_id(groups_with_ancestors_ids)
+    end
+
+    def visible_groups
+      visible_groups = project.invited_groups
+
+      unless project_owner?
+        visible_groups = visible_groups.public_or_visible_to_user(current_user)
+      end
+
+      visible_groups
+    end
+
+    def project_members_through_ancestral_groups
+      project.group.present? ? project.group.members_with_parents : Member.none
+    end
+
+    def individual_project_members
+      project.project_members
+    end
+
+    def project_owner?
+      if project.group.present?
+        project.group.owners.include?(current_user)
+      else
+        project.namespace.owner == current_user
+      end
     end
   end
 end

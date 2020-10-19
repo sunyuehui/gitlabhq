@@ -1,30 +1,30 @@
-.wiki h1,
-.wiki h2,
-.wiki h3,
-.wiki h4,
-.wiki h5,
-.wiki h6 {
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
   margin-top: 17px;
 }
 
-.wiki h1 {
+.md h1 {
   font-size: 30px;
 }
 
-.wiki h2 {
+.md h2 {
   font-size: 22px;
 }
 
-.wiki h3 {
+.md h3 {
   font-size: 18px;
-  font-weight: bold;
+  font-weight: 600;
 }
 
 header,
 nav,
-nav.main-nav,
 nav.navbar-collapse,
 nav.navbar-collapse.collapse,
+.nav-sidebar,
 .profiler-results,
 .tree-ref-holder,
 .tree-holder .breadcrumb,
@@ -36,7 +36,10 @@ ul.notes-form,
 .gutter-toggle,
 .issuable-details .content-block-small,
 .edit-link,
-.note-action-button {
+.note-action-button,
+.right-sidebar,
+.flash-container,
+#js-peek {
   display: none !important;
 }
 
@@ -52,4 +55,8 @@ pre {
 
 .right-sidebar {
   top: 0;
+}
+
+a[href]::after {
+  content: none !important;
 }

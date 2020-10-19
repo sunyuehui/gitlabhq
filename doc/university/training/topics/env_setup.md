@@ -1,43 +1,44 @@
+---
+comments: false
+---
+
 # Configure your environment
 
-----------
 ## Install
 
 - **Windows**
-  - Install 'Git for Windows' from https://git-for-windows.github.io
+  - Install 'Git for Windows' from <https://gitforwindows.org>
 
 - **Mac**
   - Type '`git`' in the Terminal application.
   - If it's not installed, it will prompt you to install it.
 
 - **Linux**
-  ```bash
-    sudo yum install git-all
-  ```
-  ```bash
-    sudo apt-get install git-all
+
+  ```shell
+  sudo yum install git-all
   ```
 
-----------
+  ```shell
+  sudo apt-get install git-all
+  ```
 
 ## Configure Git
 
 One-time configuration of the Git client
 
-```bash
+```shell
 git config --global user.name "Your Name"
 git config --global user.email you@example.com
 ```
 
-----------
-
 ## Configure SSH Key
 
-```bash
+```shell
 ssh-keygen -t rsa -b 4096 -C "you@computer-name"
 ```
 
-```bash
+```shell
 # You will be prompted for the following information. Press enter to accept the defaults. Defaults appear in parentheses.
 Generating public/private rsa key pair.
 Enter file in which to save the key (/Users/you/.ssh/id_rsa):
@@ -51,10 +52,10 @@ The key fingerprint is:
 
 Copy your public key and add it to your GitLab profile
 
-```bash
+```shell
 cat ~/.ssh/id_rsa.pub
 ```
 
-```bash
+```shell
 ssh-rsa AAAAB3NzaC1yc2EAAAADAQEL17Ufacg8cDhlQMS5NhV8z3GHZdhCrZbl4gz you@example.com
 ```

@@ -1,78 +1,104 @@
-/* eslint-disable comma-dangle, func-names, no-new, space-before-function-paren, one-var,
-   promise/catch-or-return */
-import _ from 'underscore';
+/* eslint-disable func-names, no-new */
 
-window.gl = window.gl || {};
-window.gl.issueBoards = window.gl.issueBoards || {};
+import $ from 'jquery';
+import { __ } from '~/locale';
+import axios from '~/lib/utils/axios_utils';
+import { deprecatedCreateFlash as flash } from '~/flash';
+import CreateLabelDropdown from '../../create_label';
+import boardsStore from '../stores/boards_store';
+import { fullLabelId } from '../boards_util';
+import store from '~/boards/stores';
+import initDeprecatedJQueryDropdown from '~/deprecated_jquery_dropdown';
 
-const Store = gl.issueBoards.BoardsStore;
+function shouldCreateListGraphQL(label) {
+  return store.getters.shouldUseGraphQL && !store.getters.getListByLabelId(fullLabelId(label));
+}
 
-$(document).off('created.label').on('created.label', (e, label) => {
-  Store.new({
-    title: label.title,
-    position: Store.state.lists.length - 2,
-    list_type: 'label',
-    label: {
-      id: label.id,
-      title: label.title,
-      color: label.color
+$(document)
+  .off('created.label')
+  .on('created.label', (e, label, addNewList) => {
+    if (!addNewList) {
+      return;
+    }
+
+    if (shouldCreateListGraphQL(label)) {
+      store.dispatch('createList', { labelId: fullLabelId(label) });
+    } else {
+      boardsStore.new({
+        title: label.title,
+        position: boardsStore.state.lists.length - 2,
+        list_type: 'label',
+        label: {
+          id: label.id,
+          title: label.title,
+          color: label.color,
+        },
+      });
     }
   });
-});
 
-gl.issueBoards.newListDropdownInit = () => {
-  $('.js-new-board-list').each(function () {
-    const $this = $(this);
-    new gl.CreateLabelDropdown($this.closest('.dropdown').find('.dropdown-new-label'), $this.data('namespace-path'), $this.data('project-path'));
+export default function initNewListDropdown() {
+  $('.js-new-board-list').each(function() {
+    const $dropdownToggle = $(this);
+    const $dropdown = $dropdownToggle.closest('.dropdown');
+    new CreateLabelDropdown(
+      $dropdown.find('.dropdown-new-label'),
+      $dropdownToggle.data('namespacePath'),
+      $dropdownToggle.data('projectPath'),
+    );
 
-    $this.glDropdown({
+    initDeprecatedJQueryDropdown($dropdownToggle, {
       data(term, callback) {
-        $.get($this.attr('data-labels'))
-          .then((resp) => {
-            callback(resp);
+        axios
+          .get($dropdownToggle.attr('data-list-labels-path'))
+          .then(({ data }) => callback(data))
+          .catch(() => {
+            $dropdownToggle.data('bs.dropdown').hide();
+            flash(__('Error fetching labels.'));
           });
       },
-      renderRow (label) {
-        const active = Store.findList('title', label.title);
+      renderRow(label) {
+        const active = boardsStore.findListByLabelId(label.id);
         const $li = $('<li />');
         const $a = $('<a />', {
-          class: (active ? `is-active js-board-list-${active.id}` : ''),
+          class: active ? `is-active js-board-list-${active.id}` : '',
           text: label.title,
-          href: '#'
+          href: '#',
         });
         const $labelColor = $('<span />', {
           class: 'dropdown-label-box',
-          style: `background-color: ${label.color}`
+          style: `background-color: ${label.color}`,
         });
 
         return $li.append($a.prepend($labelColor));
       },
       search: {
-        fields: ['title']
+        fields: ['title'],
       },
       filterable: true,
       selectable: true,
       multiSelect: true,
-      clicked (options) {
+      containerSelector: '.js-tab-container-labels .dropdown-page-one .dropdown-content',
+      clicked(options) {
         const { e } = options;
         const label = options.selectedObj;
         e.preventDefault();
 
-        if (!Store.findList('title', label.title)) {
-          Store.new({
+        if (shouldCreateListGraphQL(label)) {
+          store.dispatch('createList', { labelId: fullLabelId(label) });
+        } else if (!boardsStore.findListByLabelId(label.id)) {
+          boardsStore.new({
             title: label.title,
-            position: Store.state.lists.length - 2,
+            position: boardsStore.state.lists.length - 2,
             list_type: 'label',
             label: {
               id: label.id,
               title: label.title,
-              color: label.color
-            }
+              color: label.color,
+            },
           });
-
-          Store.state.lists = _.sortBy(Store.state.lists, 'position');
         }
-      }
+      },
     });
   });
-};
+}

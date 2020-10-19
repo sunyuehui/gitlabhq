@@ -1,27 +1,34 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Projects::LabelsController do
-  let(:group)   { create(:group) }
-  let(:project) { create(:project, namespace: group) }
-  let(:user)    { create(:user) }
+RSpec.describe Projects::LabelsController do
+  let_it_be(:group)   { create(:group) }
+  let_it_be(:project, reload: true) { create(:project, namespace: group) }
+  let_it_be(:user)    { create(:user) }
 
   before do
-    project.team << [user, :master]
+    project.add_maintainer(user)
 
     sign_in(user)
   end
 
   describe 'GET #index' do
-    let!(:label_1) { create(:label, project: project, priority: 1, title: 'Label 1') }
-    let!(:label_2) { create(:label, project: project, priority: 3, title: 'Label 2') }
-    let!(:label_3) { create(:label, project: project, priority: 1, title: 'Label 3') }
-    let!(:label_4) { create(:label, project: project, title: 'Label 4') }
-    let!(:label_5) { create(:label, project: project, title: 'Label 5') }
+    let_it_be(:label_1) { create(:label, project: project, priority: 1, title: 'Label 1') }
+    let_it_be(:label_2) { create(:label, project: project, priority: 3, title: 'Label 2') }
+    let_it_be(:label_3) { create(:label, project: project, priority: 1, title: 'Label 3') }
+    let_it_be(:label_4) { create(:label, project: project, title: 'Label 4') }
+    let_it_be(:label_5) { create(:label, project: project, title: 'Label 5') }
 
-    let!(:group_label_1) { create(:group_label, group: group, title: 'Group Label 1') }
-    let!(:group_label_2) { create(:group_label, group: group, title: 'Group Label 2') }
-    let!(:group_label_3) { create(:group_label, group: group, title: 'Group Label 3') }
-    let!(:group_label_4) { create(:group_label, group: group, title: 'Group Label 4') }
+    let_it_be(:group_label_1) { create(:group_label, group: group, title: 'Group Label 1') }
+    let_it_be(:group_label_2) { create(:group_label, group: group, title: 'Group Label 2') }
+    let_it_be(:group_label_3) { create(:group_label, group: group, title: 'Group Label 3') }
+    let_it_be(:group_label_4) { create(:group_label, group: group, title: 'Group Label 4') }
+
+    let_it_be(:group_labels) { [group_label_3, group_label_4]}
+    let_it_be(:project_labels) { [label_4, label_5]}
+    let_it_be(:group_priority_labels) { [group_label_1, group_label_2]}
+    let_it_be(:project_priority_labels) { [label_1, label_2, label_3]}
 
     before do
       create(:label_priority, project: project, label: group_label_1, priority: 3)
@@ -66,27 +73,81 @@ describe Projects::LabelsController do
       end
     end
 
+    context 'with subgroups' do
+      let_it_be(:subgroup) { create(:group, parent: group) }
+      let_it_be(:subgroup_label_1) { create(:group_label, group: subgroup, title: 'subgroup_label_1') }
+      let_it_be(:subgroup_label_2) { create(:group_label, group: subgroup, title: 'subgroup_label_2') }
+
+      before do
+        project.update!(namespace: subgroup)
+        subgroup.add_owner(user)
+        create(:label_priority, project: project, label: subgroup_label_2, priority: 1)
+      end
+
+      RSpec.shared_examples 'returns ancestor group labels' do
+        it 'returns ancestor group labels', :aggregate_failures do
+          get :index, params: params
+
+          expect(assigns(:labels)).to match_array([subgroup_label_1] + group_labels + project_labels)
+          expect(assigns(:prioritized_labels)).to match_array([subgroup_label_2] + group_priority_labels + project_priority_labels)
+        end
+      end
+
+      context 'when show_inherited_labels disabled' do
+        before do
+          stub_feature_flags(show_inherited_labels: false)
+        end
+
+        context 'when include_ancestor_groups false' do
+          let(:params) { { namespace_id: project.namespace.to_param, project_id: project } }
+
+          it 'does not return ancestor group labels', :aggregate_failures do
+            get :index, params: params
+
+            expect(assigns(:labels)).to match_array([subgroup_label_1] + project_labels)
+            expect(assigns(:prioritized_labels)).to match_array([subgroup_label_2] + project_priority_labels)
+          end
+        end
+
+        context 'when include_ancestor_groups true' do
+          let(:params) { { namespace_id: project.namespace.to_param, project_id: project, include_ancestor_groups: true } }
+
+          it_behaves_like 'returns ancestor group labels'
+        end
+      end
+
+      context 'when show_inherited_labels enabled' do
+        let(:params) { { namespace_id: project.namespace.to_param, project_id: project } }
+
+        before do
+          stub_feature_flags(show_inherited_labels: true)
+        end
+
+        it_behaves_like 'returns ancestor group labels'
+      end
+    end
+
     def list_labels
-      get :index, namespace_id: project.namespace.to_param, project_id: project
+      get :index, params: { namespace_id: project.namespace.to_param, project_id: project }
     end
   end
 
   describe 'POST #generate' do
     context 'personal project' do
-      let(:personal_project) { create(:project, namespace: user.namespace) }
+      let_it_be(:personal_project) { create(:project, namespace: user.namespace) }
 
       it 'creates labels' do
-        post :generate, namespace_id: personal_project.namespace.to_param, project_id: personal_project
+        post :generate, params: { namespace_id: personal_project.namespace.to_param, project_id: personal_project }
 
-        expect(response).to have_http_status(302)
+        expect(response).to have_gitlab_http_status(:found)
       end
     end
 
     context 'project belonging to a group' do
       it 'creates labels' do
-        post :generate, namespace_id: project.namespace.to_param, project_id: project
+        post :generate, params: { namespace_id: project.namespace.to_param, project_id: project }
 
-        expect(response).to have_http_status(302)
+        expect(response).to have_gitlab_http_status(:found)
       end
     end
   end
@@ -97,7 +158,7 @@ describe Projects::LabelsController do
 
       toggle_subscription(label)
 
-      expect(response).to have_http_status(200)
+      expect(response).to have_gitlab_http_status(:ok)
     end
 
     it 'allows user to toggle subscription on group labels' do
@@ -105,23 +166,23 @@ describe Projects::LabelsController do
 
       toggle_subscription(group_label)
 
-      expect(response).to have_http_status(200)
+      expect(response).to have_gitlab_http_status(:ok)
     end
 
     def toggle_subscription(label)
-      post :toggle_subscription, namespace_id: project.namespace.to_param, project_id: project, id: label.to_param
+      post :toggle_subscription, params: { namespace_id: project.namespace.to_param, project_id: project, id: label.to_param }
     end
   end
 
   describe 'POST #promote' do
-    let!(:promoted_label_name) { "Promoted Label" }
-    let!(:label_1) { create(:label, title: promoted_label_name, project: project) }
+    let_it_be(:promoted_label_name) { "Promoted Label" }
+    let_it_be(:label_1) { create(:label, title: promoted_label_name, project: project) }
 
     context 'not group reporters' do
       it 'denies access' do
-        post :promote, namespace_id: project.namespace.to_param, project_id: project, id: label_1.to_param
+        post :promote, params: { namespace_id: project.namespace.to_param, project_id: project, id: label_1.to_param }
 
-        expect(response).to have_http_status(404)
+        expect(response).to have_gitlab_http_status(:not_found)
       end
     end
 
@@ -131,16 +192,24 @@ describe Projects::LabelsController do
       end
 
       it 'gives access' do
-        post :promote, namespace_id: project.namespace.to_param, project_id: project, id: label_1.to_param
+        post :promote, params: { namespace_id: project.namespace.to_param, project_id: project, id: label_1.to_param }
 
         expect(response).to redirect_to(namespace_project_labels_path)
       end
 
       it 'promotes the label' do
-        post :promote, namespace_id: project.namespace.to_param, project_id: project, id: label_1.to_param
+        post :promote, params: { namespace_id: project.namespace.to_param, project_id: project, id: label_1.to_param }
 
         expect(Label.where(id: label_1.id)).to be_empty
         expect(GroupLabel.find_by(title: promoted_label_name)).not_to be_nil
+      end
+
+      it 'renders label name without parsing it as HTML' do
+        label_1.update!(name: 'CCC&lt;img src=x onerror=alert(document.domain)&gt;')
+
+        post :promote, params: { namespace_id: project.namespace.to_param, project_id: project, id: label_1.to_param }
+
+        expect(flash[:notice]).to eq("CCC&lt;img src=x onerror=alert(document.domain)&gt; promoted to <a href=\"#{group_labels_path(project.group)}\"><u>group label</u></a>.")
       end
 
       context 'service raising InvalidRecord' do
@@ -151,7 +220,7 @@ describe Projects::LabelsController do
         end
 
         it 'returns to label list' do
-          post :promote, namespace_id: project.namespace.to_param, project_id: project, id: label_1.to_param
+          post :promote, params: { namespace_id: project.namespace.to_param, project_id: project, id: label_1.to_param }
           expect(response).to redirect_to(namespace_project_labels_path)
         end
       end
@@ -168,15 +237,15 @@ describe Projects::LabelsController do
         context 'non-show path' do
           context 'with exactly matching casing' do
             it 'does not redirect' do
-              get :index, namespace_id: project.namespace, project_id: project.to_param
+              get :index, params: { namespace_id: project.namespace, project_id: project.to_param }
 
-              expect(response).not_to have_http_status(301)
+              expect(response).not_to have_gitlab_http_status(:moved_permanently)
             end
           end
 
           context 'with different casing' do
             it 'redirects to the correct casing' do
-              get :index, namespace_id: project.namespace, project_id: project.to_param.upcase
+              get :index, params: { namespace_id: project.namespace, project_id: project.to_param.upcase }
 
               expect(response).to redirect_to(project_labels_path(project))
               expect(controller).not_to set_flash[:notice]
@@ -186,13 +255,31 @@ describe Projects::LabelsController do
       end
 
       context 'when requesting a redirected path' do
-        let!(:redirect_route) { project.redirect_routes.create(path: project.full_path + 'old') }
+        let_it_be(:redirect_route) { project.redirect_routes.create(path: project.full_path + 'old') }
 
         it 'redirects to the canonical path' do
-          get :index, namespace_id: project.namespace, project_id: project.to_param + 'old'
+          get :index, params: { namespace_id: project.namespace, project_id: project.to_param + 'old' }
 
           expect(response).to redirect_to(project_labels_path(project))
           expect(controller).to set_flash[:notice].to(project_moved_message(redirect_route, project))
+        end
+
+        context 'with an AJAX request' do
+          it 'redirects to the canonical path but does not set flash message' do
+            get :index, params: { namespace_id: project.namespace, project_id: project.to_param + 'old' }, xhr: true
+
+            expect(response).to redirect_to(project_labels_path(project))
+            expect(controller).not_to set_flash[:notice]
+          end
+        end
+
+        context 'with JSON format' do
+          it 'redirects to the canonical path but does not set flash message' do
+            get :index, params: { namespace_id: project.namespace, project_id: project.to_param + 'old' }, format: :json
+
+            expect(response).to redirect_to(project_labels_path(project, format: :json))
+            expect(controller).not_to set_flash[:notice]
+          end
         end
       end
     end
@@ -201,25 +288,25 @@ describe Projects::LabelsController do
   context 'for a non-GET request' do
     context 'when requesting the canonical path with different casing' do
       it 'does not 404' do
-        post :generate, namespace_id: project.namespace, project_id: project
+        post :generate, params: { namespace_id: project.namespace, project_id: project }
 
-        expect(response).not_to have_http_status(404)
+        expect(response).not_to have_gitlab_http_status(:not_found)
       end
 
       it 'does not redirect to the correct casing' do
-        post :generate, namespace_id: project.namespace, project_id: project
+        post :generate, params: { namespace_id: project.namespace, project_id: project }
 
-        expect(response).not_to have_http_status(301)
+        expect(response).not_to have_gitlab_http_status(:moved_permanently)
       end
     end
 
     context 'when requesting a redirected path' do
-      let!(:redirect_route) { project.redirect_routes.create(path: project.full_path + 'old') }
+      let_it_be(:redirect_route) { project.redirect_routes.create(path: project.full_path + 'old') }
 
       it 'returns not found' do
-        post :generate, namespace_id: project.namespace, project_id: project.to_param + 'old'
+        post :generate, params: { namespace_id: project.namespace, project_id: project.to_param + 'old' }
 
-        expect(response).to have_http_status(404)
+        expect(response).to have_gitlab_http_status(:not_found)
       end
     end
   end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module DeclarativePolicy
   module Rule
     # A Rule is the object that results from the `rule` declaration,
@@ -8,8 +10,8 @@ module DeclarativePolicy
     # how that affects the actual ability decision - for that, a
     # `Step` is used.
     class Base
-      def self.make(*a)
-        new(*a).simplify
+      def self.make(*args)
+        new(*args).simplify
       end
 
       # true or false whether this rule passes.
@@ -82,7 +84,8 @@ module DeclarativePolicy
       # returns nil unless it's already cached
       def cached_pass?(context)
         condition = context.condition(@name)
-        return nil unless condition.cached?
+        return unless condition.cached?
+
         condition.pass?
       end
 
@@ -109,6 +112,7 @@ module DeclarativePolicy
       def delegated_context(context)
         policy = context.delegated_policies[@delegate_name]
         raise MissingDelegate if policy.nil?
+
         policy
       end
 
@@ -120,7 +124,8 @@ module DeclarativePolicy
 
       def cached_pass?(context)
         condition = delegated_context(context).condition(@name)
-        return nil unless condition.cached?
+        return unless condition.cached?
+
         condition.pass?
       rescue MissingDelegate
         false
@@ -156,7 +161,8 @@ module DeclarativePolicy
 
       def cached_pass?(context)
         runner = context.runner(@ability)
-        return nil unless runner.cached?
+        return unless runner.cached?
+
         runner.pass?
       end
 
@@ -206,11 +212,13 @@ module DeclarativePolicy
       end
 
       def cached_pass?(context)
-        passes = @rules.map { |r| r.cached_pass?(context) }
-        return false if passes.any? { |p| p == false }
-        return true if passes.all? { |p| p == true }
+        @rules.each do |rule|
+          pass = rule.cached_pass?(context)
 
-        nil
+          return pass if pass.nil? || pass == false
+        end
+
+        true
       end
 
       def repr
@@ -245,15 +253,18 @@ module DeclarativePolicy
       end
 
       def cached_pass?(context)
-        passes = @rules.map { |r| r.cached_pass?(context) }
-        return true if passes.any? { |p| p == true }
-        return false if passes.all? { |p| p == false }
+        @rules.each do |rule|
+          pass = rule.cached_pass?(context)
 
-        nil
+          return pass if pass.nil? || pass == true
+        end
+
+        false
       end
 
       def score(context)
         return 0 unless cached_pass?(context).nil?
+
         @rules.map { |r| r.score(context) }.inject(0, :+)
       end
 

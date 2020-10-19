@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::SlashCommands::Presenters::IssueSearch do
+RSpec.describe Gitlab::SlashCommands::Presenters::IssueSearch do
   let(:project) { create(:project) }
   let(:message) { subject[:text] }
 

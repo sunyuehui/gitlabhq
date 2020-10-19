@@ -1,15 +1,18 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Projects::CommitController do
-  let(:project)  { create(:project, :repository) }
-  let(:user)     { create(:user) }
-  let(:commit)   { project.commit("master") }
+RSpec.describe Projects::CommitController do
+  let_it_be(:project)  { create(:project, :repository) }
+  let_it_be(:user)     { create(:user) }
+
+  let(:commit) { project.commit("master") }
   let(:master_pickable_sha) { '7d3b0f7cff5f37573aea97cebfd5692ea1689924' }
-  let(:master_pickable_commit)  { project.commit(master_pickable_sha) }
+  let(:master_pickable_commit) { project.commit(master_pickable_sha) }
 
   before do
     sign_in(user)
-    project.team << [user, :master]
+    project.add_maintainer(user)
   end
 
   describe 'GET show' do
@@ -21,7 +24,7 @@ describe Projects::CommitController do
         project_id: project
       }
 
-      get :show, params.merge(extra_params)
+      get :show, params: params.merge(extra_params)
     end
 
     context 'with valid id' do
@@ -43,14 +46,14 @@ describe Projects::CommitController do
     it 'handles binary files' do
       go(id: TestEnv::BRANCH_SHA['binary-encoding'], format: 'html')
 
-      expect(response).to be_success
+      expect(response).to be_successful
     end
 
     shared_examples "export as" do |format|
       it "does generally work" do
         go(id: commit.id, format: format)
 
-        expect(response).to be_success
+        expect(response).to be_successful
       end
 
       it "generates it" do
@@ -79,41 +82,18 @@ describe Projects::CommitController do
     end
 
     describe "as diff" do
-      include_examples "export as", :diff
-      let(:format) { :diff }
+      it "triggers workhorse to serve the request" do
+        go(id: commit.id, format: :diff)
 
-      it "should really only be a git diff" do
-        go(id: '66eceea0db202bb39c4e445e8ca28689645366c5', format: format)
-
-        expect(response.body).to start_with("diff --git")
-      end
-
-      it "is only be a git diff without whitespace changes" do
-        go(id: '66eceea0db202bb39c4e445e8ca28689645366c5', format: format, w: 1)
-
-        expect(response.body).to start_with("diff --git")
-
-        # without whitespace option, there are more than 2 diff_splits for other formats
-        diff_splits = assigns(:diffs).diff_files.first.diff.diff.split("\n")
-        expect(diff_splits.length).to be <= 2
+        expect(response.headers[Gitlab::Workhorse::SEND_DATA_HEADER]).to start_with("git-diff:")
       end
     end
 
     describe "as patch" do
-      include_examples "export as", :patch
-      let(:format) { :patch }
-      let(:commit2) { project.commit('498214de67004b1da3d820901307bed2a68a8ef6') }
-
-      it "is a git email patch" do
-        go(id: commit2.id, format: format)
-
-        expect(response.body).to start_with("From #{commit2.id}")
-      end
-
       it "contains a git diff" do
-        go(id: commit2.id, format: format)
+        go(id: commit.id, format: :patch)
 
-        expect(response.body).to match(/^diff --git/)
+        expect(response.headers[Gitlab::Workhorse::SEND_DATA_HEADER]).to start_with("git-format-patch:")
       end
     end
 
@@ -125,26 +105,66 @@ describe Projects::CommitController do
 
       it 'renders it' do
         get(:show,
-            namespace_id: fork_project.namespace,
-            project_id: fork_project,
-            id: commit.id)
+            params: {
+              namespace_id: fork_project.namespace,
+              project_id: fork_project,
+              id: commit.id
+            })
 
-        expect(response).to be_success
+        expect(response).to be_successful
+      end
+    end
+
+    context 'in the context of a merge_request' do
+      let(:merge_request) { create(:merge_request, source_project: project) }
+      let(:commit) { merge_request.commits.first }
+
+      it 'prepare diff notes in the context of the merge request' do
+        go(id: commit.id, merge_request_iid: merge_request.iid)
+
+        expect(assigns(:new_diff_note_attrs)).to eq({
+                                                      noteable_type: 'MergeRequest',
+                                                      noteable_id: merge_request.id,
+                                                      commit_id: commit.id
+                                                    })
+        expect(response).to be_ok
       end
     end
   end
 
-  describe "GET branches" do
-    it "contains branch and tags information" do
+  describe 'GET branches' do
+    it 'contains branch and tags information' do
       commit = project.commit('5937ac0a7beb003549fc5fd26fc247adbce4a52e')
 
       get(:branches,
-          namespace_id: project.namespace,
-          project_id: project,
-          id: commit.id)
+          params: {
+            namespace_id: project.namespace,
+            project_id: project,
+            id: commit.id
+          })
 
-      expect(assigns(:branches)).to include("master", "feature_conflict")
-      expect(assigns(:tags)).to include("v1.1.0")
+      expect(assigns(:branches)).to include('master', 'feature_conflict')
+      expect(assigns(:branches_limit_exceeded)).to be_falsey
+      expect(assigns(:tags)).to include('v1.1.0')
+      expect(assigns(:tags_limit_exceeded)).to be_falsey
+    end
+
+    it 'returns :limit_exceeded when number of branches/tags reach a threshhold' do
+      commit = project.commit('5937ac0a7beb003549fc5fd26fc247adbce4a52e')
+      allow_any_instance_of(Repository).to receive(:branch_count).and_return(1001)
+      allow_any_instance_of(Repository).to receive(:tag_count).and_return(1001)
+
+      get(:branches,
+          params: {
+            namespace_id: project.namespace,
+            project_id: project,
+            id: commit.id
+          })
+
+      expect(assigns(:branches)).to eq([])
+      expect(assigns(:branches_limit_exceeded)).to be_truthy
+      expect(assigns(:tags)).to eq([])
+      expect(assigns(:tags_limit_exceeded)).to be_truthy
     end
   end
 
@@ -152,22 +172,26 @@ describe Projects::CommitController do
     context 'when target branch is not provided' do
       it 'renders the 404 page' do
         post(:revert,
-            namespace_id: project.namespace,
-            project_id: project,
-            id: commit.id)
+            params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              id: commit.id
+            })
 
-        expect(response).not_to be_success
-        expect(response).to have_http_status(404)
+        expect(response).not_to be_successful
+        expect(response).to have_gitlab_http_status(:not_found)
       end
     end
 
     context 'when the revert was successful' do
       it 'redirects to the commits page' do
         post(:revert,
-            namespace_id: project.namespace,
-            project_id: project,
-            start_branch: 'master',
-            id: commit.id)
+            params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              start_branch: 'master',
+              id: commit.id
+            })
 
         expect(response).to redirect_to project_commits_path(project, 'master')
         expect(flash[:notice]).to eq('The commit has been successfully reverted.')
@@ -177,19 +201,23 @@ describe Projects::CommitController do
     context 'when the revert failed' do
       before do
         post(:revert,
-            namespace_id: project.namespace,
-            project_id: project,
-            start_branch: 'master',
-            id: commit.id)
+            params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              start_branch: 'master',
+              id: commit.id
+            })
       end
 
       it 'redirects to the commit page' do
         # Reverting a commit that has been already reverted.
         post(:revert,
-            namespace_id: project.namespace,
-            project_id: project,
-            start_branch: 'master',
-            id: commit.id)
+            params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              start_branch: 'master',
+              id: commit.id
+            })
 
         expect(response).to redirect_to project_commit_path(project, commit.id)
         expect(flash[:alert]).to match('Sorry, we cannot revert this commit automatically.')
@@ -201,44 +229,52 @@ describe Projects::CommitController do
     context 'when target branch is not provided' do
       it 'renders the 404 page' do
         post(:cherry_pick,
-            namespace_id: project.namespace,
-            project_id: project,
-            id: master_pickable_commit.id)
+            params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              id: master_pickable_commit.id
+            })
 
-        expect(response).not_to be_success
-        expect(response).to have_http_status(404)
+        expect(response).not_to be_successful
+        expect(response).to have_gitlab_http_status(:not_found)
       end
     end
 
     context 'when the cherry-pick was successful' do
       it 'redirects to the commits page' do
         post(:cherry_pick,
-            namespace_id: project.namespace,
-            project_id: project,
-            start_branch: 'master',
-            id: master_pickable_commit.id)
+            params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              start_branch: 'master',
+              id: master_pickable_commit.id
+            })
 
         expect(response).to redirect_to project_commits_path(project, 'master')
-        expect(flash[:notice]).to eq('The commit has been successfully cherry-picked.')
+        expect(flash[:notice]).to eq('The commit has been successfully cherry-picked into master.')
       end
     end
 
     context 'when the cherry_pick failed' do
       before do
         post(:cherry_pick,
-            namespace_id: project.namespace,
-            project_id: project,
-            start_branch: 'master',
-            id: master_pickable_commit.id)
+            params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              start_branch: 'master',
+              id: master_pickable_commit.id
+            })
       end
 
       it 'redirects to the commit page' do
         # Cherry-picking a commit that has been already cherry-picked.
         post(:cherry_pick,
-            namespace_id: project.namespace,
-            project_id: project,
-            start_branch: 'master',
-            id: master_pickable_commit.id)
+            params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              start_branch: 'master',
+              id: master_pickable_commit.id
+            })
 
         expect(response).to redirect_to project_commit_path(project, master_pickable_commit.id)
         expect(flash[:alert]).to match('Sorry, we cannot cherry-pick this commit automatically.')
@@ -253,7 +289,7 @@ describe Projects::CommitController do
         project_id: project
       }
 
-      get :diff_for_path, params.merge(extra_params)
+      get :diff_for_path, params: params.merge(extra_params)
     end
 
     let(:existing_path) { '.gitmodules' }
@@ -286,7 +322,7 @@ describe Projects::CommitController do
           end
 
           it 'returns a 404' do
-            expect(response).to have_http_status(404)
+            expect(response).to have_gitlab_http_status(:not_found)
           end
         end
       end
@@ -298,18 +334,18 @@ describe Projects::CommitController do
         end
 
         it 'returns a 404' do
-          expect(response).to have_http_status(404)
+          expect(response).to have_gitlab_http_status(:not_found)
         end
       end
     end
 
     context 'when the commit does not exist' do
       before do
-        diff_for_path(id: commit.id.succ, old_path: existing_path, new_path: existing_path)
+        diff_for_path(id: commit.id.reverse, old_path: existing_path, new_path: existing_path)
       end
 
       it 'returns a 404' do
-        expect(response).to have_http_status(404)
+        expect(response).to have_gitlab_http_status(:not_found)
       end
     end
   end
@@ -321,7 +357,7 @@ describe Projects::CommitController do
         project_id: project
       }
 
-      get :pipelines, params.merge(extra_params)
+      get :pipelines, params: params.merge(extra_params)
     end
 
     context 'when the commit exists' do
@@ -343,8 +379,9 @@ describe Projects::CommitController do
             get_pipelines(id: commit.id, format: :json)
 
             expect(response).to be_ok
-            expect(JSON.parse(response.body)['pipelines']).not_to be_empty
-            expect(JSON.parse(response.body)['count']['all']).to eq 1
+            expect(json_response['pipelines']).not_to be_empty
+            expect(json_response['count']['all']).to eq 1
+            expect(response).to include_pagination_headers
           end
         end
       end
@@ -356,7 +393,7 @@ describe Projects::CommitController do
       end
 
       it 'returns a 404' do
-        expect(response).to have_http_status(404)
+        expect(response).to have_gitlab_http_status(:not_found)
       end
     end
   end

@@ -1,11 +1,16 @@
 /* eslint-disable */
 
-import { template as _template } from 'underscore';
+import { template as _template } from 'lodash';
 import { DATA_TRIGGER, DATA_DROPDOWN, TEMPLATE_REGEX } from './constants';
 
 const utils = {
   toCamelCase(attr) {
-    return this.camelize(attr.split('-').slice(1).join(' '));
+    return this.camelize(
+      attr
+        .split('-')
+        .slice(1)
+        .join(' '),
+    );
   },
 
   template(templateString, data) {
@@ -17,9 +22,11 @@ const utils = {
   },
 
   camelize(str) {
-    return str.replace(/(?:^\w|[A-Z]|\b\w)/g, (letter, index) => {
-      return index === 0 ? letter.toLowerCase() : letter.toUpperCase();
-    }).replace(/\s+/g, '');
+    return str
+      .replace(/(?:^\w|[A-Z]|\b\w)/g, (letter, index) => {
+        return index === 0 ? letter.toLowerCase() : letter.toUpperCase();
+      })
+      .replace(/\s+/g, '');
   },
 
   closest(thisTag, stopTag) {
@@ -30,7 +37,7 @@ const utils = {
   },
 
   isDropDownParts(target) {
-    if (!target || target.tagName === 'HTML') return false;
+    if (!target || !target.hasAttribute || target.tagName === 'HTML') return false;
     return target.hasAttribute(DATA_TRIGGER) || target.hasAttribute(DATA_DROPDOWN);
   },
 };

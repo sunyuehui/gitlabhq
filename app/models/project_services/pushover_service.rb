@@ -1,6 +1,7 @@
+# frozen_string_literal: true
+
 class PushoverService < Service
-  include HTTParty
-  base_uri 'https://api.pushover.net/1'
+  BASE_URI = 'https://api.pushover.net/1'
 
   prop_accessor :api_key, :user_key, :device, :priority, :sound
   validates :api_key, :user_key, :priority, presence: true, if: :activated?
@@ -10,7 +11,7 @@ class PushoverService < Service
   end
 
   def description
-    'Pushover makes it easy to get real-time notifications on your Android device, iPhone, iPad, and Desktop.'
+    s_('PushoverService|Pushover makes it easy to get real-time notifications on your Android device, iPhone, iPad, and Desktop.')
   end
 
   def self.to_param
@@ -19,15 +20,15 @@ class PushoverService < Service
 
   def fields
     [
-      { type: 'text', name: 'api_key', placeholder: 'Your application key', required: true },
-      { type: 'text', name: 'user_key', placeholder: 'Your user key', required: true },
-      { type: 'text', name: 'device', placeholder: 'Leave blank for all active devices' },
+      { type: 'text', name: 'api_key', placeholder: s_('PushoverService|Your application key'), required: true },
+      { type: 'text', name: 'user_key', placeholder: s_('PushoverService|Your user key'), required: true },
+      { type: 'text', name: 'device', placeholder: s_('PushoverService|Leave blank for all active devices') },
       { type: 'select', name: 'priority', required: true, choices:
         [
-          ['Lowest Priority', -2],
-          ['Low Priority', -1],
-          ['Normal Priority', 0],
-          ['High Priority', 1]
+          [s_('PushoverService|Lowest Priority'), -2],
+          [s_('PushoverService|Low Priority'), -1],
+          [s_('PushoverService|Normal Priority'), 0],
+          [s_('PushoverService|High Priority'), 1]
         ],
         default_choice: 0 },
       { type: 'select', name: 'sound', choices:
@@ -72,15 +73,15 @@ class PushoverService < Service
 
     message =
       if Gitlab::Git.blank_ref?(before)
-        "#{data[:user_name]} pushed new branch \"#{ref}\"."
+        s_("PushoverService|%{user_name} pushed new branch \"%{ref}\".") % { user_name: data[:user_name], ref: ref }
       elsif Gitlab::Git.blank_ref?(after)
-        "#{data[:user_name]} deleted branch \"#{ref}\"."
+        s_("PushoverService|%{user_name} deleted branch \"%{ref}\".") % { user_name: data[:user_name], ref: ref }
       else
-        "#{data[:user_name]} push to branch \"#{ref}\"."
+        s_("PushoverService|%{user_name} push to branch \"%{ref}\".") % { user_name: data[:user_name], ref: ref }
       end
 
     if data[:total_commits_count] > 0
-      message << "\nTotal commits count: #{data[:total_commits_count]}"
+      message = [message, s_("PushoverService|Total commits count: %{total_commits_count}") % { total_commits_count: data[:total_commits_count] }].join("\n")
     end
 
     pushover_data = {
@@ -88,10 +89,10 @@ class PushoverService < Service
       user: user_key,
       device: device,
       priority: priority,
-      title: "#{project.name_with_namespace}",
+      title: "#{project.full_name}",
       message: message,
       url: data[:project][:web_url],
-      url_title: "See project #{project.name_with_namespace}"
+      url_title: s_("PushoverService|See project %{project_full_name}") % { project_full_name: project.full_name }
     }
 
     # Sound parameter MUST NOT be sent to API if not selected
@@ -99,6 +100,6 @@ class PushoverService < Service
       pushover_data[:sound] = sound
     end
 
-    PushoverService.post('/messages.json', body: pushover_data)
+    Gitlab::HTTP.post('/messages.json', base_uri: BASE_URI, body: pushover_data)
   end
 end

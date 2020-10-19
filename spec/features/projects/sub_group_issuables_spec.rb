@@ -1,13 +1,15 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'Subgroup Issuables', :js, :nested_groups do
+RSpec.describe 'Subgroup Issuables', :js do
   let!(:group)    { create(:group, name: 'group') }
   let!(:subgroup) { create(:group, parent: group, name: 'subgroup') }
   let!(:project)  { create(:project, namespace: subgroup, name: 'project') }
   let(:user)      { create(:user) }
 
   before do
-    project.add_master(user)
+    project.add_maintainer(user)
     sign_in user
   end
 
@@ -24,9 +26,8 @@ describe 'Subgroup Issuables', :js, :nested_groups do
   end
 
   def expect_to_have_full_subgroup_title
-    title = find('.title-container')
+    title = find('.breadcrumbs-links')
 
-    expect(title).not_to have_selector '.initializing'
-    expect(title).to have_content 'group / subgroup / project'
+    expect(title).to have_content 'group subgroup project'
   end
 end

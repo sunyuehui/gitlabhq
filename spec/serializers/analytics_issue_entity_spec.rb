@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe AnalyticsIssueEntity do
+RSpec.describe AnalyticsIssueEntity do
   let(:user) { create(:user) }
   let(:entity_hash) do
     {
@@ -9,20 +11,19 @@ describe AnalyticsIssueEntity do
       iid: "1",
       id: "1",
       created_at: "2016-11-12 15:04:02.948604",
-      author: user
+      author: user,
+      project_path: project.path,
+      namespace_path: project.namespace.route.path
     }
   end
 
-  let(:project) { create(:project) }
-  let(:request) { EntityRequest.new(project: project, entity: :merge_request) }
+  let(:request) { EntityRequest.new(entity: :merge_request) }
 
   let(:entity) do
     described_class.new(entity_hash, request: request, project: project)
   end
 
-  context 'generic entity' do
-    subject { entity.as_json }
-
+  shared_examples 'generic entity' do
     it 'contains the entity URL' do
       expect(subject).to include(:url)
     end
@@ -34,6 +35,26 @@ describe AnalyticsIssueEntity do
     it 'does not contain sensitive information' do
       expect(subject).not_to include(/token/)
       expect(subject).not_to include(/variables/)
+    end
+  end
+
+  context 'without subgroup' do
+    let_it_be(:project) { create(:project, name: 'my project') }
+
+    subject { entity.as_json }
+
+    it_behaves_like 'generic entity'
+  end
+
+  context 'with subgroup' do
+    let_it_be(:project) { create(:project, :in_subgroup, name: 'my project') }
+
+    subject { entity.as_json }
+
+    it_behaves_like 'generic entity'
+
+    it 'has URL containing subgroup' do
+      expect(subject[:url]).to include("#{project.group.parent.name}/#{project.group.name}/my_project/")
     end
   end
 end

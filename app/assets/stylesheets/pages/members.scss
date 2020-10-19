@@ -3,137 +3,58 @@
   border-bottom: 1px solid $border-color;
 }
 
-.project-member-tabs {
-  background: $gray-light;
-  border: 1px solid $border-color;
-
-  li {
-    width: 50%;
-
-    &.active {
-      background: $white-light;
-    }
-
-    &:first-child {
-      border-right: 1px solid $border-color;
-    }
-
-    a {
-      width: 100%;
-      text-align: center;
-    }
-  }
-}
-
-.users-project-form {
-  .btn-create {
+.invite-users-form {
+  .btn-success {
     margin-right: 10px;
   }
 }
 
-.project-member-tab-content {
-  padding: $gl-padding;
-  border: 1px solid $border-color;
-  border-top: 0;
-  margin-bottom: $gl-padding;
-}
-
 .member {
-  .list-item-name {
-    @media (min-width: $screen-sm-min) {
-      float: left;
-      width: 50%;
-    }
-
-    strong {
-      font-weight: 600;
+  &.is-overridden {
+    .btn-ldap-override {
+      display: none !important;
     }
   }
 
   .controls {
-    @media (min-width: $screen-sm-min) {
-      display: -webkit-flex;
+    @include media-breakpoint-up(sm) {
       display: flex;
+    }
+
+    .dropdown-menu.dropdown-menu-right {
+      margin-top: -2px;
     }
   }
 
-  .form-horizontal {
-    margin-top: 20px;
+  .form-group {
+    margin-bottom: 0;
+  }
 
-    @media (min-width: $screen-sm-min) {
-      display: -webkit-flex;
-      display: flex;
-      margin-top: 3px;
+  .member-controls {
+    .fa {
+      line-height: inherit;
     }
   }
 
   .btn-remove {
     width: 100%;
 
-    @media (min-width: $screen-sm-min) {
+    @include media-breakpoint-up(sm) {
       width: auto;
+    }
+  }
+
+  &.existing-title {
+    @include media-breakpoint-up(sm) {
+      float: left;
     }
   }
 }
 
 .member-form-control {
-  @media (max-width: $screen-xs-max) {
-    padding-bottom: 5px;
-    margin-left: 0;
+  @include media-breakpoint-down(xs) {
     margin-right: 0;
-  }
-}
-
-.member-access-text {
-  margin-left: auto;
-  line-height: 43px;
-}
-
-.member.existing-title {
-  @media (min-width: $screen-sm-min) {
-    float: left;
-  }
-}
-
-.member-search-form {
-  position: relative;
-
-  @media (min-width: $screen-sm-min) {
-    float: right;
-  }
-
-  .dropdown {
-    width: 100%;
-    margin-top: 5px;
-
-    .dropdown-menu-toggle {
-      vertical-align: middle;
-      width: 100%;
-    }
-
-    @media (min-width: $screen-sm-min) {
-      margin-top: 0;
-      width: 155px;
-    }
-  }
-
-  .form-control {
-    width: 100%;
-    padding-right: 35px;
-
-    @media (min-width: $screen-sm-min) {
-      width: 250px;
-    }
-
-    &.input-short {
-      @media (min-width: $screen-md-min) {
-        width: 170px;
-      }
-
-      @media (min-width: $screen-lg-min) {
-        width: 210px;
-      }
-    }
+    width: auto;
   }
 }
 
@@ -141,16 +62,52 @@
   position: absolute;
   right: 4px;
   top: 0;
-  height: 35px;
+  height: $input-height;
   padding-left: 10px;
   padding-right: 10px;
   color: $gray-darkest;
   background: transparent;
   border: 0;
   outline: 0;
+}
 
-  @media (min-width: $screen-sm-min) {
-    right: 160px;
+.members-ldap {
+  align-self: center;
+}
+
+.alert-member-ldap {
+  background-color: $orange-50;
+
+  @include media-breakpoint-up(sm) {
+    line-height: 40px;
+  }
+
+  > p {
+    float: left;
+    margin-bottom: 10px;
+    color: $orange-600;
+
+    @include media-breakpoint-up(sm) {
+      padding-left: 55px;
+      margin-bottom: 0;
+    }
+  }
+
+  .controls {
+    width: 100%;
+
+    @include media-breakpoint-up(sm) {
+      width: auto;
+    }
+  }
+}
+
+.btn-ldap-override {
+  width: 100%;
+
+  @include media-breakpoint-up(sm) {
+    margin-left: 10px;
+    width: auto;
   }
 }
 
@@ -160,7 +117,7 @@
   align-items: center;
   justify-content: center;
 
-  @media (max-width: $screen-sm-min) {
+  @include media-breakpoint-down(sm) {
     display: block;
 
     .flex-project-title {
@@ -176,7 +133,7 @@
     text-overflow: ellipsis;
   }
 
-  .badge {
+  .badge.badge-pill {
     height: 17px;
     line-height: 16px;
     margin-right: 5px;
@@ -184,21 +141,21 @@
     padding-bottom: 1px;
   }
 
-  .flex-project-members-form {
+  .flex-users-form {
     flex-wrap: nowrap;
     white-space: nowrap;
     margin-left: auto;
   }
 }
 
-.panel {
-  .panel-heading {
-    .badge {
+.card {
+  .card-header {
+    .badge.badge-pill {
       margin-top: 0;
     }
 
-    @media (max-width: $screen-sm-min) {
-      .badge {
+    @include media-breakpoint-down(sm) {
+      .badge.badge-pill {
         margin-right: 0;
         margin-left: 0;
       }
@@ -207,9 +164,6 @@
 }
 
 .content-list.members-list li {
-  display: flex;
-  justify-content: space-between;
-
   .list-item-name {
     float: none;
     display: flex;
@@ -221,13 +175,9 @@
   }
 
   .member {
-    font-weight: bold;
+    font-weight: $gl-font-weight-bold;
     overflow-wrap: break-word;
     word-break: break-all;
-  }
-
-  .member-group-link {
-    display: inline-block;
   }
 
   .form-control {
@@ -238,39 +188,49 @@
     align-self: flex-start;
   }
 
-  .form-horizontal ~ .btn {
-    margin-right: 0;
+  @include media-breakpoint-down(sm) {
+    .member-access-text {
+      margin: 0 0 $gl-padding-4 ($grid-size * 6);
+    }
   }
 
-  @media (max-width: $screen-xs-max) {
+  @include media-breakpoint-down(xs) {
     display: block;
 
-    .controls > .btn {
-      margin-left: 0;
-      margin-right: 0;
+    .controls > .btn,
+    .controls .member-form-control {
+      margin: 0 0 $gl-padding-8;
       display: block;
     }
 
     .form-control {
       width: 100%;
     }
+  }
+}
 
-    .member-access-text {
-      line-height: 0;
-      margin-left: 50px;
+
+.members-table {
+  @include media-breakpoint-up(lg) {
+    .col-meta {
+      width: px-to-rem(150px);
     }
 
-    .member-controls {
-      margin-top: 5px;
+    .col-max-role {
+      width: px-to-rem(175px);
     }
 
-    .form-horizontal {
-      margin-top: 10px;
+    .col-expiration {
+      width: px-to-rem(200px);
+    }
+
+    .col-actions {
+      width: px-to-rem(50px);
     }
   }
 }
 
-.panel-mobile {
+.card-mobile {
   .content-list.members-list li {
     display: block;
 
@@ -288,10 +248,6 @@
 
     .dropdown-menu {
       margin-top: 0;
-    }
-
-    .form-horizontal {
-      display: block;
     }
 
     .member-form-control {

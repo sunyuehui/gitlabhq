@@ -1,13 +1,18 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe BambooService, :use_clean_rails_memory_store_caching do
+RSpec.describe BambooService, :use_clean_rails_memory_store_caching do
   include ReactiveCachingHelpers
+  include StubRequests
 
   let(:bamboo_url) { 'http://gitlab.com/bamboo' }
 
+  let_it_be(:project) { create(:project) }
+
   subject(:service) do
-    described_class.create(
-      project: create(:project),
+    described_class.create!(
+      project: project,
       properties: {
         bamboo_url: bamboo_url,
         username: 'mic',
@@ -80,7 +85,7 @@ describe BambooService, :use_clean_rails_memory_store_caching do
           bamboo_service = service
 
           bamboo_service.bamboo_url = 'http://gitlab1.com'
-          bamboo_service.save
+          bamboo_service.save!
 
           expect(bamboo_service.password).to be_nil
         end
@@ -89,7 +94,7 @@ describe BambooService, :use_clean_rails_memory_store_caching do
           bamboo_service = service
 
           bamboo_service.username = 'some_name'
-          bamboo_service.save
+          bamboo_service.save!
 
           expect(bamboo_service.password).to eq('password')
         end
@@ -99,7 +104,7 @@ describe BambooService, :use_clean_rails_memory_store_caching do
 
           bamboo_service.bamboo_url = 'http://gitlab_edited.com'
           bamboo_service.password = 'password'
-          bamboo_service.save
+          bamboo_service.save!
 
           expect(bamboo_service.password).to eq('password')
           expect(bamboo_service.bamboo_url).to eq('http://gitlab_edited.com')
@@ -112,11 +117,19 @@ describe BambooService, :use_clean_rails_memory_store_caching do
 
         bamboo_service.bamboo_url = 'http://gitlab_edited.com'
         bamboo_service.password = 'password'
-        bamboo_service.save
+        bamboo_service.save!
 
         expect(bamboo_service.password).to eq('password')
         expect(bamboo_service.bamboo_url).to eq('http://gitlab_edited.com')
       end
+    end
+  end
+
+  describe '#execute' do
+    it 'runs update and build action' do
+      stub_update_and_build_request
+
+      subject.execute(Gitlab::DataBuilder::Push::SAMPLE_DATA)
     end
   end
 
@@ -136,8 +149,8 @@ describe BambooService, :use_clean_rails_memory_store_caching do
     end
   end
 
-  describe '#calculate_reactive_cache' do
-    context '#build_page' do
+  shared_examples 'reactive cache calculation' do
+    describe '#build_page' do
       subject { service.calculate_reactive_cache('123', 'unused')[:build_page] }
 
       it 'returns a specific URL when status is 500' do
@@ -147,7 +160,7 @@ describe BambooService, :use_clean_rails_memory_store_caching do
       end
 
       it 'returns a specific URL when response has no results' do
-        stub_request(body: bamboo_response(size: 0))
+        stub_request(body: %q({"results":{"results":{"size":"0"}}}))
 
         is_expected.to eq('http://gitlab.com/bamboo/browse/foo')
       end
@@ -169,7 +182,7 @@ describe BambooService, :use_clean_rails_memory_store_caching do
       end
     end
 
-    context '#commit_status' do
+    describe '#commit_status' do
       subject { service.calculate_reactive_cache('123', 'unused')[:commit_status] }
 
       it 'sets commit status to :error when status is 500' do
@@ -213,20 +226,62 @@ describe BambooService, :use_clean_rails_memory_store_caching do
 
         is_expected.to eq(:error)
       end
+
+      Gitlab::HTTP::HTTP_ERRORS.each do |http_error|
+        it "sets commit status to :error with a #{http_error.name} error" do
+          WebMock.stub_request(:get, 'http://gitlab.com/bamboo/rest/api/latest/result/byChangeset/123?os_authType=basic')
+            .to_raise(http_error)
+
+          expect(Gitlab::ErrorTracking)
+            .to receive(:log_exception)
+            .with(instance_of(http_error), project_id: project.id)
+
+          is_expected.to eq(:error)
+        end
+      end
     end
   end
 
-  def stub_request(status: 200, body: nil)
-    bamboo_full_url = 'http://gitlab.com/bamboo/rest/api/latest/result?label=123&os_authType=basic'
+  describe '#calculate_reactive_cache' do
+    context 'when Bamboo API returns single result' do
+      let(:bamboo_response_template) do
+        %q({"results":{"results":{"size":"1","result":{"buildState":"%{build_state}","planResultKey":{"key":"42"}}}}})
+      end
 
-    WebMock.stub_request(:get, bamboo_full_url).to_return(
+      it_behaves_like 'reactive cache calculation'
+    end
+
+    context 'when Bamboo API returns an array of results and we only consider the last one' do
+      let(:bamboo_response_template) do
+        %q({"results":{"results":{"size":"2","result":[{"buildState":"%{build_state}","planResultKey":{"key":"41"}},{"buildState":"%{build_state}","planResultKey":{"key":"42"}}]}}})
+      end
+
+      it_behaves_like 'reactive cache calculation'
+    end
+  end
+
+  def stub_update_and_build_request(status: 200, body: nil)
+    bamboo_full_url = 'http://gitlab.com/bamboo/updateAndBuild.action?buildKey=foo&os_authType=basic'
+
+    stub_bamboo_request(bamboo_full_url, status, body)
+  end
+
+  def stub_request(status: 200, body: nil)
+    bamboo_full_url = 'http://gitlab.com/bamboo/rest/api/latest/result/byChangeset/123?os_authType=basic'
+
+    stub_bamboo_request(bamboo_full_url, status, body)
+  end
+
+  def stub_bamboo_request(url, status, body)
+    stub_full_request(url).to_return(
       status: status,
       headers: { 'Content-Type' => 'application/json' },
       body: body
     ).with(basic_auth: %w(mic password))
   end
 
-  def bamboo_response(result_key: 42, build_state: 'success', size: 1)
-    %Q({"results":{"results":{"size":"#{size}","result":{"buildState":"#{build_state}","planResultKey":{"key":"#{result_key}"}}}}})
+  def bamboo_response(build_state: 'success')
+    # reference: https://docs.atlassian.com/atlassian-bamboo/REST/6.2.5/#d2e786
+    bamboo_response_template % { build_state: build_state }
   end
 end

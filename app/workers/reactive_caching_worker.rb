@@ -1,15 +1,8 @@
-class ReactiveCachingWorker
-  include Sidekiq::Worker
-  include DedicatedSidekiqQueue
+# frozen_string_literal: true
 
-  def perform(class_name, id, *args)
-    klass = begin
-      Kernel.const_get(class_name)
-    rescue NameError
-      nil
-    end
-    return unless klass
+class ReactiveCachingWorker # rubocop:disable Scalability/IdempotentWorker
+  include ReactiveCacheableWorker
 
-    klass.find_by(id: id).try(:exclusively_update_reactive_cache!, *args)
-  end
+  urgency :low
+  worker_resource_boundary :cpu
 end

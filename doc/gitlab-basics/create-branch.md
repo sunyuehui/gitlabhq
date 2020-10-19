@@ -1,12 +1,19 @@
+---
+stage: Create
+group: Source Code
+info: "To determine the technical writer assigned to the Stage/Group associated with this page, see https://about.gitlab.com/handbook/engineering/ux/technical-writing/#designated-technical-writers"
+type: howto
+---
+
 # How to create a branch
 
-A branch is an independent line of development.
+A branch is an independent line of development in a [project](../user/project/index.md).
 
-New commits are recorded in the history for the current branch, which results
-in taking the source from someone’s repository (the place where the history of
-your work is stored) at certain point in time, and apply your own changes to it
-in the history of the project.
+When you create a new branch (in your [terminal](start-using-git.md) or with
+[the web interface](../user/project/repository/web_editor.md#create-a-new-branch)),
+you are creating a snapshot of a certain branch, usually the main `master` branch,
+at its current state. From there, you can start to make your own changes without
+affecting the main codebase. The history of your changes will be tracked in your branch.
 
-To add changes to your GitLab project, you should create a branch. You can do
-it in your [terminal](basic-git-commands.md) or by
-[using the web interface](../user/project/repository/web_editor.md#create-a-new-branch).
+When your changes are ready, you then merge them into the rest of the codebase with a
+[merge request](../user/project/merge_requests/creating_merge_requests.md).

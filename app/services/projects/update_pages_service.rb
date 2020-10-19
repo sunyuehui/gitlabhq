@@ -1,8 +1,16 @@
+# frozen_string_literal: true
+
 module Projects
   class UpdatePagesService < BaseService
+    InvalidStateError = Class.new(StandardError)
+    FailedToExtractError = Class.new(StandardError)
+
     BLOCK_SIZE = 32.kilobytes
-    MAX_SIZE = 1.terabyte
-    SITE_PATH = 'public/'.freeze
+    PUBLIC_DIR = 'public'
+
+    # this has to be invalid group name,
+    # as it shares the namespace with groups
+    TMP_EXTRACT_PATH = '@pages.tmp'
 
     attr_reader :build
 
@@ -11,47 +19,49 @@ module Projects
     end
 
     def execute
+      register_attempt
+
       # Create status notifying the deployment of pages
       @status = create_status
       @status.enqueue!
       @status.run!
 
-      raise 'missing pages artifacts' unless build.artifacts_file?
-      raise 'pages are outdated' unless latest?
+      raise InvalidStateError, 'missing pages artifacts' unless build.artifacts?
+      raise InvalidStateError, 'build SHA is outdated for this ref' unless latest?
 
       # Create temporary directory in which we will extract the artifacts
-      FileUtils.mkdir_p(tmp_path)
-      Dir.mktmpdir(nil, tmp_path) do |archive_path|
+      make_secure_tmp_dir(tmp_path) do |archive_path|
         extract_archive!(archive_path)
 
         # Check if we did extract public directory
-        archive_public_path = File.join(archive_path, 'public')
-        raise 'pages miss the public folder' unless Dir.exist?(archive_public_path)
-        raise 'pages are outdated' unless latest?
+        archive_public_path = File.join(archive_path, PUBLIC_DIR)
+        raise InvalidStateError, 'pages miss the public folder' unless Dir.exist?(archive_public_path)
+        raise InvalidStateError, 'build SHA is outdated for this ref' unless latest?
 
         deploy_page!(archive_public_path)
         success
       end
-    rescue => e
-      register_failure
+    rescue InvalidStateError => e
       error(e.message)
-    ensure
-      register_attempt
-      build.erase_artifacts! unless build.has_expiring_artifacts?
+    rescue => e
+      error(e.message)
+      raise e
     end
 
     private
 
     def success
       @status.success
+      @project.mark_pages_as_deployed(artifacts_archive: build.job_artifacts_archive)
       super
     end
 
-    def error(message, http_status = nil)
+    def error(message)
+      register_failure
       log_error("Projects::UpdatePagesService: #{message}")
       @status.allow_failure = !latest?
       @status.description = message
-      @status.drop
+      @status.drop(:script_failure)
       super
     end
 
@@ -67,41 +77,30 @@ module Projects
     end
 
     def extract_archive!(temp_path)
-      if artifacts.ends_with?('.tar.gz') || artifacts.ends_with?('.tgz')
-        extract_tar_archive!(temp_path)
-      elsif artifacts.ends_with?('.zip')
+      if artifacts.ends_with?('.zip')
         extract_zip_archive!(temp_path)
       else
-        raise 'unsupported artifacts format'
+        raise InvalidStateError, 'unsupported artifacts format'
       end
-    end
-
-    def extract_tar_archive!(temp_path)
-      results = Open3.pipeline(%W(gunzip -c #{artifacts}),
-                               %W(dd bs=#{BLOCK_SIZE} count=#{blocks}),
-                               %W(tar -x -C #{temp_path} #{SITE_PATH}),
-                               err: '/dev/null')
-      raise 'pages failed to extract' unless results.compact.all?(&:success?)
     end
 
     def extract_zip_archive!(temp_path)
-      raise 'missing artifacts metadata' unless build.artifacts_metadata?
+      raise InvalidStateError, 'missing artifacts metadata' unless build.artifacts_metadata?
 
       # Calculate page size after extract
-      public_entry = build.artifacts_metadata_entry(SITE_PATH, recursive: true)
+      public_entry = build.artifacts_metadata_entry(PUBLIC_DIR + '/', recursive: true)
 
       if public_entry.total_size > max_size
-        raise "artifacts for pages are too large: #{public_entry.total_size}"
+        raise InvalidStateError, "artifacts for pages are too large: #{public_entry.total_size}"
       end
 
-      # Requires UnZip at least 6.00 Info-ZIP.
-      # -qq be (very) quiet
-      # -n  never overwrite existing files
-      # We add * to end of SITE_PATH, because we want to extract SITE_PATH and all subdirectories
-      site_path = File.join(SITE_PATH, '*')
-      unless system(*%W(unzip -qq -n #{artifacts} #{site_path} -d #{temp_path}))
-        raise 'pages failed to extract'
+      build.artifacts_file.use_file do |artifacts_path|
+        SafeZip::Extract.new(artifacts_path)
+          .extract(directories: [PUBLIC_DIR], to: temp_path)
+        create_pages_deployment(artifacts_path)
       end
+    rescue SafeZip::Extract::Error => e
+      raise FailedToExtractError, e.message
     end
 
     def deploy_page!(archive_public_path)
@@ -120,6 +119,21 @@ module Projects
       FileUtils.rm_r(previous_public_path, force: true)
     end
 
+    def create_pages_deployment(artifacts_path)
+      return unless Feature.enabled?(:zip_pages_deployments, project)
+
+      File.open(artifacts_path) do |file|
+        deployment = project.pages_deployments.create!(file: file)
+        project.pages_metadatum.update!(pages_deployment: deployment)
+      end
+
+      # TODO: schedule old deployment removal https://gitlab.com/gitlab-org/gitlab/-/issues/235730
+    rescue => e
+      # we don't want to break current pages deployment process if something goes wrong
+      # TODO: remove this rescue as part of https://gitlab.com/gitlab-org/gitlab/-/issues/245308
+      Gitlab::ErrorTracking.track_and_raise_for_dev_exception(e)
+    end
+
     def latest?
       # check if sha for the ref is still the most recent one
       # this helps in case when multiple deployments happens
@@ -131,16 +145,20 @@ module Projects
       1 + max_size / BLOCK_SIZE
     end
 
+    def max_size_from_settings
+      Gitlab::CurrentSettings.max_pages_size.megabytes
+    end
+
     def max_size
-      max_pages_size = current_application_settings.max_pages_size.megabytes
+      max_pages_size = max_size_from_settings
 
-      return MAX_SIZE if max_pages_size.zero?
+      return ::Gitlab::Pages::MAX_SIZE if max_pages_size == 0
 
-      [max_pages_size, MAX_SIZE].min
+      max_pages_size
     end
 
     def tmp_path
-      @tmp_path ||= File.join(::Settings.pages.path, 'tmp')
+      @tmp_path ||= File.join(::Settings.pages.path, TMP_EXTRACT_PATH)
     end
 
     def pages_path
@@ -148,11 +166,11 @@ module Projects
     end
 
     def public_path
-      @public_path ||= File.join(pages_path, 'public')
+      @public_path ||= File.join(pages_path, PUBLIC_DIR)
     end
 
     def previous_public_path
-      @previous_public_path ||= File.join(pages_path, "public.#{SecureRandom.hex}")
+      @previous_public_path ||= File.join(pages_path, "#{PUBLIC_DIR}.#{SecureRandom.hex}")
     end
 
     def ref
@@ -165,6 +183,9 @@ module Projects
 
     def latest_sha
       project.commit(build.ref).try(:sha).to_s
+    ensure
+      # Close any file descriptors that were opened and free libgit2 buffers
+      project.cleanup
     end
 
     def sha
@@ -186,5 +207,17 @@ module Projects
     def pages_deployments_failed_total_counter
       @pages_deployments_failed_total_counter ||= Gitlab::Metrics.counter(:pages_deployments_failed_total, "Counter of GitLab Pages deployments which failed")
     end
+
+    def make_secure_tmp_dir(tmp_path)
+      FileUtils.mkdir_p(tmp_path)
+      path = Dir.mktmpdir(nil, tmp_path)
+      begin
+        yield(path)
+      ensure
+        FileUtils.remove_entry_secure(path)
+      end
+    end
   end
 end
+
+Projects::UpdatePagesService.prepend_if_ee('EE::Projects::UpdatePagesService')

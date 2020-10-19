@@ -1,5 +1,9 @@
+# frozen_string_literal: true
+
 module Expirable
   extend ActiveSupport::Concern
+
+  DAYS_TO_EXPIRE = 7
 
   included do
     scope :expired, -> { where('expires_at <= ?', Time.current) }
@@ -14,6 +18,6 @@ module Expirable
   end
 
   def expires_soon?
-    expires? && expires_at < 7.days.from_now
+    expires? && expires_at < DAYS_TO_EXPIRE.days.from_now
   end
 end

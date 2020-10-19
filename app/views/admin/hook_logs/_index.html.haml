@@ -1,6 +1,6 @@
-.row.prepend-top-default.append-bottom-default
+.row.gl-mt-3.gl-mb-3
   .col-lg-3
-    %h4.prepend-top-0
+    %h4.gl-mt-0
       Recent Deliveries
     %p When an event in GitLab triggers a webhook, you can use the request details to figure out if something went wrong.
   .col-lg-9
@@ -18,13 +18,13 @@
           %tr
             %td
               = render partial: 'shared/hook_logs/status_label', locals: { hook_log: hook_log }
-            %td.hidden-xs
-              %span.label.label-gray.deploy-project-label
+            %td.d-none.d-sm-block
+              %span.badge.badge-gray.deploy-project-label
                 = hook_log.trigger.singularize.titleize
             %td
               = truncate(hook_log.url, length: 50)
             %td.light
-              #{number_with_precision(hook_log.execution_duration, precision: 2)} ms
+              #{number_with_precision(hook_log.execution_duration, precision: 2)} sec
             %td.light
               = time_ago_with_tooltip(hook_log.created_at)
             %td

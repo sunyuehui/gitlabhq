@@ -1,15 +1,18 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
-describe API::Helpers do
+require 'spec_helper'
+require 'raven/transports/dummy'
+require_relative '../../../config/initializers/sentry'
+
+RSpec.describe API::Helpers do
   include API::APIGuard::HelperMethods
   include described_class
-  include SentryHelper
+  include TermsHelper
 
-  let(:user) { create(:user) }
+  let_it_be(:user, reload: true) { create(:user) }
   let(:admin) { create(:admin) }
   let(:key) { create(:key, user: user) }
 
-  let(:params) { {} }
   let(:csrf_token) { SecureRandom.base64(ActionController::RequestForgeryProtection::AUTHENTICITY_TOKEN_LENGTH) }
   let(:env) do
     {
@@ -17,37 +20,17 @@ describe API::Helpers do
       'rack.session' => {
         _csrf_token: csrf_token
       },
-      'REQUEST_METHOD' => 'GET'
+      'REQUEST_METHOD' => 'GET',
+      'CONTENT_TYPE' => 'text/plain;charset=utf-8'
     }
   end
+
   let(:header) { }
+  let(:request) { Grape::Request.new(env)}
+  let(:params) { request.params }
 
   before do
     allow_any_instance_of(self.class).to receive(:options).and_return({})
-  end
-
-  def set_env(user_or_token, identifier)
-    clear_env
-    clear_param
-    env[API::APIGuard::PRIVATE_TOKEN_HEADER] = user_or_token.respond_to?(:private_token) ? user_or_token.private_token : user_or_token
-    env[API::Helpers::SUDO_HEADER] = identifier.to_s
-  end
-
-  def set_param(user_or_token, identifier)
-    clear_env
-    clear_param
-    params[API::APIGuard::PRIVATE_TOKEN_PARAM] = user_or_token.respond_to?(:private_token) ? user_or_token.private_token : user_or_token
-    params[API::Helpers::SUDO_PARAM] = identifier.to_s
-  end
-
-  def clear_env
-    env.delete(API::APIGuard::PRIVATE_TOKEN_HEADER)
-    env.delete(API::Helpers::SUDO_HEADER)
-  end
-
-  def clear_param
-    params.delete(API::APIGuard::PRIVATE_TOKEN_PARAM)
-    params.delete(API::Helpers::SUDO_PARAM)
   end
 
   def warden_authenticate_returns(value)
@@ -55,22 +38,18 @@ describe API::Helpers do
     env['warden'] = warden
   end
 
-  def doorkeeper_guard_returns(value)
-    allow_any_instance_of(self.class).to receive(:doorkeeper_guard) { value }
+  def error!(message, status, header)
+    raise StandardError.new("#{status} - #{message}")
   end
 
-  def error!(message, status, header)
-    raise Exception.new("#{status} - #{message}")
+  def set_param(key, value)
+    request.update_param(key, value)
   end
 
   describe ".current_user" do
     subject { current_user }
 
     describe "Warden authentication", :allow_forgery_protection do
-      before do
-        doorkeeper_guard_returns false
-      end
-
       context "with invalid credentials" do
         context "GET request" do
           before do
@@ -92,6 +71,12 @@ describe API::Helpers do
           end
 
           it { is_expected.to eq(user) }
+
+          it 'sets the environment with data of the current user' do
+            subject
+
+            expect(env[API::Helpers::API_USER_ENV]).to eq({ user_id: subject.id, username: subject.username })
+          end
         end
 
         context "HEAD request" do
@@ -100,6 +85,27 @@ describe API::Helpers do
           end
 
           it { is_expected.to eq(user) }
+
+          context 'when user should have 2fa enabled' do
+            before do
+              allow(user).to receive(:require_two_factor_authentication_from_group?).and_return(true)
+              allow_next_instance_of(Gitlab::Auth::TwoFactorAuthVerifier) do |verifier|
+                allow(verifier).to receive(:two_factor_grace_period_expired?).and_return(true)
+              end
+            end
+
+            context 'when 2fa is not enabled' do
+              it { is_expected.to be_nil }
+            end
+
+            context 'when 2fa is enabled' do
+              before do
+                allow(user).to receive(:two_factor_enabled?).and_return(true)
+              end
+
+              it { is_expected.to eq(user) }
+            end
+          end
         end
 
         context "PUT request" do
@@ -158,273 +164,143 @@ describe API::Helpers do
       end
     end
 
-    describe "when authenticating using a user's private token" do
-      it "returns nil for an invalid token" do
-        env[API::APIGuard::PRIVATE_TOKEN_HEADER] = 'invalid token'
-        allow_any_instance_of(self.class).to receive(:doorkeeper_guard) { false }
-
-        expect(current_user).to be_nil
-      end
-
-      it "returns nil for a user without access" do
-        env[API::APIGuard::PRIVATE_TOKEN_HEADER] = user.private_token
-        allow_any_instance_of(Gitlab::UserAccess).to receive(:allowed?).and_return(false)
-
-        expect(current_user).to be_nil
-      end
-
-      it "leaves user as is when sudo not specified" do
-        env[API::APIGuard::PRIVATE_TOKEN_HEADER] = user.private_token
-
-        expect(current_user).to eq(user)
-
-        clear_env
-
-        params[API::APIGuard::PRIVATE_TOKEN_PARAM] = user.private_token
-
-        expect(current_user).to eq(user)
-      end
-    end
-
     describe "when authenticating using a user's personal access tokens" do
       let(:personal_access_token) { create(:personal_access_token, user: user) }
 
-      before do
-        allow_any_instance_of(self.class).to receive(:doorkeeper_guard) { false }
+      it "returns a 401 response for an invalid token" do
+        env[Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_HEADER] = 'invalid token'
+
+        expect { current_user }.to raise_error /401/
       end
 
-      it "returns nil for an invalid token" do
-        env[API::APIGuard::PRIVATE_TOKEN_HEADER] = 'invalid token'
-
-        expect(current_user).to be_nil
-      end
-
-      it "returns nil for a user without access" do
-        env[API::APIGuard::PRIVATE_TOKEN_HEADER] = personal_access_token.token
+      it "returns a 403 response for a user without access" do
+        env[Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_HEADER] = personal_access_token.token
         allow_any_instance_of(Gitlab::UserAccess).to receive(:allowed?).and_return(false)
 
-        expect(current_user).to be_nil
+        expect { current_user }.to raise_error /403/
       end
 
-      it "returns nil for a token without the appropriate scope" do
+      it 'returns a 403 response for a user who is blocked' do
+        user.block!
+        env[Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_HEADER] = personal_access_token.token
+
+        expect { current_user }.to raise_error /403/
+      end
+
+      context 'when terms are enforced' do
+        before do
+          enforce_terms
+          env[Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_HEADER] = personal_access_token.token
+        end
+
+        it 'returns a 403 when a user has not accepted the terms' do
+          expect { current_user }.to raise_error /must accept the Terms of Service/
+        end
+
+        it 'sets the current user when the user accepted the terms' do
+          accept_terms(user)
+
+          expect(current_user).to eq(user)
+        end
+      end
+
+      it "sets current_user" do
+        env[Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_HEADER] = personal_access_token.token
+        expect(current_user).to eq(user)
+      end
+
+      it "does not allow tokens without the appropriate scope" do
         personal_access_token = create(:personal_access_token, user: user, scopes: ['read_user'])
-        env[API::APIGuard::PRIVATE_TOKEN_HEADER] = personal_access_token.token
+        env[Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_HEADER] = personal_access_token.token
 
-        expect(current_user).to be_nil
-      end
-
-      it "leaves user as is when sudo not specified" do
-        env[API::APIGuard::PRIVATE_TOKEN_HEADER] = personal_access_token.token
-        expect(current_user).to eq(user)
-        clear_env
-        params[API::APIGuard::PRIVATE_TOKEN_PARAM] = personal_access_token.token
-
-        expect(current_user).to eq(user)
+        expect { current_user }.to raise_error Gitlab::Auth::InsufficientScopeError
       end
 
       it 'does not allow revoked tokens' do
         personal_access_token.revoke!
-        env[API::APIGuard::PRIVATE_TOKEN_HEADER] = personal_access_token.token
+        env[Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_HEADER] = personal_access_token.token
 
-        expect(current_user).to be_nil
+        expect { current_user }.to raise_error Gitlab::Auth::RevokedError
       end
 
       it 'does not allow expired tokens' do
-        personal_access_token.update_attributes!(expires_at: 1.day.ago)
-        env[API::APIGuard::PRIVATE_TOKEN_HEADER] = personal_access_token.token
+        personal_access_token.update!(expires_at: 1.day.ago)
+        env[Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_HEADER] = personal_access_token.token
 
-        expect(current_user).to be_nil
-      end
-    end
-
-    context 'sudo usage' do
-      context 'with admin' do
-        context 'with header' do
-          context 'with id' do
-            it 'changes current_user to sudo' do
-              set_env(admin, user.id)
-
-              expect(current_user).to eq(user)
-            end
-
-            it 'memoize the current_user: sudo permissions are not run against the sudoed user' do
-              set_env(admin, user.id)
-
-              expect(current_user).to eq(user)
-              expect(current_user).to eq(user)
-            end
-
-            it 'handles sudo to oneself' do
-              set_env(admin, admin.id)
-
-              expect(current_user).to eq(admin)
-            end
-
-            it 'throws an error when user cannot be found' do
-              id = user.id + admin.id
-              expect(user.id).not_to eq(id)
-              expect(admin.id).not_to eq(id)
-
-              set_env(admin, id)
-
-              expect { current_user }.to raise_error(Exception)
-            end
-          end
-
-          context 'with username' do
-            it 'changes current_user to sudo' do
-              set_env(admin, user.username)
-
-              expect(current_user).to eq(user)
-            end
-
-            it 'handles sudo to oneself' do
-              set_env(admin, admin.username)
-
-              expect(current_user).to eq(admin)
-            end
-
-            it "throws an error when the user cannot be found for a given username" do
-              username = "#{user.username}#{admin.username}"
-              expect(user.username).not_to eq(username)
-              expect(admin.username).not_to eq(username)
-
-              set_env(admin, username)
-
-              expect { current_user }.to raise_error(Exception)
-            end
-          end
-        end
-
-        context 'with param' do
-          context 'with id' do
-            it 'changes current_user to sudo' do
-              set_param(admin, user.id)
-
-              expect(current_user).to eq(user)
-            end
-
-            it 'handles sudo to oneself' do
-              set_param(admin, admin.id)
-
-              expect(current_user).to eq(admin)
-            end
-
-            it 'handles sudo to oneself using string' do
-              set_env(admin, user.id.to_s)
-
-              expect(current_user).to eq(user)
-            end
-
-            it 'throws an error when user cannot be found' do
-              id = user.id + admin.id
-              expect(user.id).not_to eq(id)
-              expect(admin.id).not_to eq(id)
-
-              set_param(admin, id)
-
-              expect { current_user }.to raise_error(Exception)
-            end
-          end
-
-          context 'with username' do
-            it 'changes current_user to sudo' do
-              set_param(admin, user.username)
-
-              expect(current_user).to eq(user)
-            end
-
-            it 'handles sudo to oneself' do
-              set_param(admin, admin.username)
-
-              expect(current_user).to eq(admin)
-            end
-
-            it "throws an error when the user cannot be found for a given username" do
-              username = "#{user.username}#{admin.username}"
-              expect(user.username).not_to eq(username)
-              expect(admin.username).not_to eq(username)
-
-              set_param(admin, username)
-
-              expect { current_user }.to raise_error(Exception)
-            end
-          end
-        end
+        expect { current_user }.to raise_error Gitlab::Auth::ExpiredError
       end
 
-      context 'with regular user' do
-        context 'with env' do
-          it 'changes current_user to sudo when admin and user id' do
-            set_env(user, admin.id)
+      context 'when impersonation is disabled' do
+        let(:personal_access_token) { create(:personal_access_token, :impersonation, user: user) }
 
-            expect { current_user }.to raise_error(Exception)
-          end
-
-          it 'changes current_user to sudo when admin and user username' do
-            set_env(user, admin.username)
-
-            expect { current_user }.to raise_error(Exception)
-          end
-        end
-
-        context 'with params' do
-          it 'changes current_user to sudo when admin and user id' do
-            set_param(user, admin.id)
-
-            expect { current_user }.to raise_error(Exception)
-          end
-
-          it 'changes current_user to sudo when admin and user username' do
-            set_param(user, admin.username)
-
-            expect { current_user }.to raise_error(Exception)
-          end
-        end
-      end
-    end
-  end
-
-  describe '.sudo?' do
-    context 'when no sudo env or param is passed' do
-      before do
-        doorkeeper_guard_returns(nil)
-      end
-
-      it 'returns false' do
-        expect(sudo?).to be_falsy
-      end
-    end
-
-    context 'when sudo env or param is passed', 'user is not an admin' do
-      before do
-        set_env(user, '123')
-      end
-
-      it 'returns an 403 Forbidden' do
-        expect { sudo? }.to raise_error '403 - {"message"=>"403 Forbidden  - Must be admin to use sudo"}'
-      end
-    end
-
-    context 'when sudo env or param is passed', 'user is admin' do
-      context 'personal access token is used' do
         before do
-          personal_access_token = create(:personal_access_token, user: admin)
-          set_env(personal_access_token.token, user.id)
+          stub_config_setting(impersonation_enabled: false)
+          env[Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_HEADER] = personal_access_token.token
         end
 
-        it 'returns an 403 Forbidden' do
-          expect { sudo? }.to raise_error '403 - {"message"=>"403 Forbidden  - Private token must be specified in order to use sudo"}'
+        it 'does not allow impersonation tokens' do
+          expect { current_user }.to raise_error Gitlab::Auth::ImpersonationDisabled
+        end
+      end
+    end
+
+    describe "when authenticating using a job token" do
+      let_it_be(:job, reload: true) do
+        create(:ci_build, user: user, status: :running)
+      end
+
+      let(:route_authentication_setting) { {} }
+
+      before do
+        allow_any_instance_of(self.class).to receive(:route_authentication_setting)
+          .and_return(route_authentication_setting)
+      end
+
+      context 'when route is allowed to be authenticated' do
+        let(:route_authentication_setting) { { job_token_allowed: true } }
+
+        it "returns a 401 response for an invalid token" do
+          env[Gitlab::Auth::AuthFinders::JOB_TOKEN_HEADER] = 'invalid token'
+
+          expect { current_user }.to raise_error /401/
+        end
+
+        it "returns a 401 response for a job that's not running" do
+          job.update!(status: :success)
+          env[Gitlab::Auth::AuthFinders::JOB_TOKEN_HEADER] = job.token
+
+          expect { current_user }.to raise_error /401/
+        end
+
+        it "returns a 403 response for a user without access" do
+          env[Gitlab::Auth::AuthFinders::JOB_TOKEN_HEADER] = job.token
+          allow_any_instance_of(Gitlab::UserAccess).to receive(:allowed?).and_return(false)
+
+          expect { current_user }.to raise_error /403/
+        end
+
+        it 'returns a 403 response for a user who is blocked' do
+          user.block!
+          env[Gitlab::Auth::AuthFinders::JOB_TOKEN_HEADER] = job.token
+
+          expect { current_user }.to raise_error /403/
+        end
+
+        it "sets current_user" do
+          env[Gitlab::Auth::AuthFinders::JOB_TOKEN_HEADER] = job.token
+
+          expect(current_user).to eq(user)
         end
       end
 
-      context 'private access token is used' do
-        before do
-          set_env(admin.private_token, user.id)
-        end
+      context 'when route is not allowed to be authenticated' do
+        let(:route_authentication_setting) { { job_token_allowed: false } }
 
-        it 'returns true' do
-          expect(sudo?).to be_truthy
+        it "sets current_user to nil" do
+          env[Gitlab::Auth::AuthFinders::JOB_TOKEN_HEADER] = job.token
+          allow_any_instance_of(Gitlab::UserAccess).to receive(:allowed?).and_return(true)
+
+          expect(current_user).to be_nil
         end
       end
     end
@@ -432,8 +308,13 @@ describe API::Helpers do
 
   describe '.handle_api_exception' do
     before do
-      allow_any_instance_of(self.class).to receive(:sentry_enabled?).and_return(true)
       allow_any_instance_of(self.class).to receive(:rack_response)
+
+      stub_sentry_settings
+
+      expect(Gitlab::ErrorTracking).to receive(:sentry_dsn).and_return(Gitlab.config.sentry.dsn)
+      Gitlab::ErrorTracking.configure
+      Raven.client.configuration.encoding = 'json'
     end
 
     it 'does not report a MethodNotAllowed exception to Sentry' do
@@ -449,10 +330,46 @@ describe API::Helpers do
       exception = RuntimeError.new('test error')
       allow(exception).to receive(:backtrace).and_return(caller)
 
-      expect_any_instance_of(self.class).to receive(:sentry_context)
-      expect(Raven).to receive(:capture_exception).with(exception)
+      expect(Raven).to receive(:capture_exception).with(exception, tags:
+        a_hash_including(correlation_id: 'new-correlation-id'), extra: {})
 
-      handle_api_exception(exception)
+      Labkit::Correlation::CorrelationId.use_id('new-correlation-id') do
+        handle_api_exception(exception)
+      end
+    end
+
+    context 'with a personal access token given' do
+      let(:token) { create(:personal_access_token, scopes: ['api'], user: user) }
+
+      # Regression test for https://gitlab.com/gitlab-org/gitlab-foss/issues/38571
+      it 'does not raise an additional exception because of missing `request`' do
+        # We need to stub at a lower level than #sentry_enabled? otherwise
+        # Sentry is not enabled when the request below is made, and the test
+        # would pass even without the fix
+        expect(ProjectsFinder).to receive(:new).and_raise('Runtime Error!')
+
+        get api('/projects', personal_access_token: token)
+
+        # The 500 status is expected as we're testing a case where an exception
+        # is raised, but Grape shouldn't raise an additional exception
+        expect(response).to have_gitlab_http_status(:internal_server_error)
+        expect(json_response['message']).not_to include("undefined local variable or method `request'")
+        expect(json_response['message']).to start_with("\nRuntimeError (Runtime Error!):")
+      end
+    end
+
+    context 'extra information' do
+      # Sentry events are an array of the form [auth_header, data, options]
+      let(:event_data) { Raven.client.transport.events.first[1] }
+
+      it 'sends the params, excluding confidential values' do
+        expect(ProjectsFinder).to receive(:new).and_raise('Runtime Error!')
+
+        get api('/projects', user), params: { password: 'dont_send_this', other_param: 'send_this' }
+
+        expect(event_data).to include('other_param=send_this')
+        expect(event_data).to include('password=********')
+      end
     end
   end
 
@@ -490,11 +407,12 @@ describe API::Helpers do
     context 'current_user is nil' do
       before do
         expect_any_instance_of(self.class).to receive(:current_user).and_return(nil)
-        allow_any_instance_of(self.class).to receive(:initial_current_user).and_return(nil)
       end
 
       it 'returns a 401 response' do
-        expect { authenticate! }.to raise_error '401 - {"message"=>"401 Unauthorized"}'
+        expect { authenticate! }.to raise_error /401/
+
+        expect(env[described_class::API_RESPONSE_STATUS_CODE]).to eq(401)
       end
     end
 
@@ -502,34 +420,174 @@ describe API::Helpers do
       let(:user) { build(:user) }
 
       before do
-        expect_any_instance_of(self.class).to receive(:current_user).at_least(:once).and_return(user)
-        expect_any_instance_of(self.class).to receive(:initial_current_user).and_return(user)
+        expect_any_instance_of(self.class).to receive(:current_user).and_return(user)
       end
 
       it 'does not raise an error' do
         expect { authenticate! }.not_to raise_error
+
+        expect(env[described_class::API_RESPONSE_STATUS_CODE]).to be_nil
+      end
+    end
+  end
+
+  context 'sudo' do
+    include_context 'custom session'
+
+    shared_examples 'successful sudo' do
+      it 'sets current_user' do
+        expect(current_user).to eq(user)
+      end
+
+      it 'sets sudo?' do
+        expect(sudo?).to be_truthy
       end
     end
 
-    context 'current_user is blocked' do
-      let(:user) { build(:user, :blocked) }
+    shared_examples 'sudo' do
+      context 'when admin' do
+        before do
+          token.user = admin
+          token.save!
+        end
+
+        context 'when token has sudo scope' do
+          before do
+            token.scopes = %w[sudo]
+            token.save!
+          end
+
+          context 'when user exists' do
+            context 'when using header' do
+              context 'when providing username' do
+                before do
+                  env[API::Helpers::SUDO_HEADER] = user.username
+                end
+
+                it_behaves_like 'successful sudo'
+              end
+
+              context 'when providing username (case insensitive)' do
+                before do
+                  env[API::Helpers::SUDO_HEADER] = user.username.upcase
+                end
+
+                it_behaves_like 'successful sudo'
+              end
+
+              context 'when providing user ID' do
+                before do
+                  env[API::Helpers::SUDO_HEADER] = user.id.to_s
+                end
+
+                it_behaves_like 'successful sudo'
+              end
+            end
+
+            context 'when using param' do
+              context 'when providing username' do
+                before do
+                  set_param(API::Helpers::SUDO_PARAM, user.username)
+                end
+
+                it_behaves_like 'successful sudo'
+              end
+
+              context 'when providing username (case insensitive)' do
+                before do
+                  set_param(API::Helpers::SUDO_PARAM, user.username.upcase)
+                end
+
+                it_behaves_like 'successful sudo'
+              end
+
+              context 'when providing user ID' do
+                before do
+                  set_param(API::Helpers::SUDO_PARAM, user.id.to_s)
+                end
+
+                it_behaves_like 'successful sudo'
+              end
+            end
+          end
+
+          context 'when user does not exist' do
+            before do
+              set_param(API::Helpers::SUDO_PARAM, 'nonexistent')
+            end
+
+            it 'raises an error' do
+              expect { current_user }.to raise_error /User with ID or username 'nonexistent' Not Found/
+            end
+          end
+        end
+
+        context 'when token does not have sudo scope' do
+          before do
+            token.scopes = %w[api]
+            token.save!
+
+            set_param(API::Helpers::SUDO_PARAM, user.id.to_s)
+          end
+
+          it 'raises an error' do
+            expect { current_user }.to raise_error Gitlab::Auth::InsufficientScopeError
+          end
+        end
+      end
+
+      context 'when not admin' do
+        before do
+          token.user = user
+          token.save!
+
+          set_param(API::Helpers::SUDO_PARAM, user.id.to_s)
+        end
+
+        it 'raises an error' do
+          expect { current_user }.to raise_error /Must be admin to use sudo/
+        end
+      end
+    end
+
+    context 'using an OAuth token' do
+      let(:token) { create(:oauth_access_token) }
 
       before do
-        expect_any_instance_of(self.class).to receive(:current_user).at_least(:once).and_return(user)
+        env['HTTP_AUTHORIZATION'] = "Bearer #{token.token}"
+      end
+
+      it_behaves_like 'sudo'
+    end
+
+    context 'using a personal access token' do
+      let(:token) { create(:personal_access_token) }
+
+      context 'passed as param' do
+        before do
+          set_param(Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_PARAM, token.token)
+        end
+
+        it_behaves_like 'sudo'
+      end
+
+      context 'passed as header' do
+        before do
+          env[Gitlab::Auth::AuthFinders::PRIVATE_TOKEN_HEADER] = token.token
+        end
+
+        it_behaves_like 'sudo'
+      end
+    end
+
+    context 'using warden authentication' do
+      before do
+        warden_authenticate_returns admin
+        env[API::Helpers::SUDO_HEADER] = user.username
       end
 
       it 'raises an error' do
-        expect_any_instance_of(self.class).to receive(:initial_current_user).and_return(user)
-
-        expect { authenticate! }.to raise_error '401 - {"message"=>"401 Unauthorized"}'
-      end
-
-      it "doesn't raise an error if an admin user is impersonating a blocked user (via sudo)" do
-        admin_user = build(:user, :admin)
-
-        expect_any_instance_of(self.class).to receive(:initial_current_user).and_return(admin_user)
-
-        expect { authenticate! }.not_to raise_error
+        expect { current_user }.to raise_error /Must be authenticated using an OAuth or Personal Access Token to use sudo/
       end
     end
   end

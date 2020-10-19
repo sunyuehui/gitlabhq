@@ -1,13 +1,15 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Labels::PromoteService do
+RSpec.describe Labels::PromoteService do
   describe '#execute' do
     let!(:user) { create(:user) }
 
     context 'project without group' do
-      let!(:project_1)  { create(:project) }
+      let!(:project_1) { create(:project) }
 
-      let!(:project_label_1_1)  { create(:label, project: project_1) }
+      let!(:project_label_1_1) { create(:label, project: project_1) }
 
       subject(:service) { described_class.new(project_1, user) }
 
@@ -83,6 +85,19 @@ describe Labels::PromoteService do
       it 'merges labels with the same name in group' do
         expect { service.execute(project_label_1_1) }.to change(project_2.labels, :count).by(-1).and \
           change(project_3.labels, :count).by(-1)
+      end
+
+      it 'keeps users\' subscriptions' do
+        user2 = create(:user)
+        project_label_1_1.subscriptions.create(user: user, subscribed: true)
+        project_label_2_1.subscriptions.create(user: user, subscribed: true)
+        project_label_3_2.subscriptions.create(user: user, subscribed: true)
+        project_label_2_1.subscriptions.create(user: user2, subscribed: true)
+
+        expect { service.execute(project_label_1_1) }.to change { Subscription.count }.from(4).to(3)
+
+        expect(new_label.subscribed?(user)).to be_truthy
+        expect(new_label.subscribed?(user2)).to be_truthy
       end
 
       it 'recreates priorities' do

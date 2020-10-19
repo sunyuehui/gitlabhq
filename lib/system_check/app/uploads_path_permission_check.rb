@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module SystemCheck
   module App
     class UploadsPathPermissionCheck < SystemCheck::BaseCheck
@@ -17,7 +19,7 @@ module SystemCheck
           "sudo chmod 700 #{uploads_fullpath}"
         )
         for_more_information(
-          see_installation_guide_section 'GitLab'
+          see_installation_guide_section('GitLab')
         )
         fix_and_rerun
       end

@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 module Bitbucket
   class Connection
-    DEFAULT_API_VERSION = '2.0'.freeze
-    DEFAULT_BASE_URI    = 'https://api.bitbucket.org/'.freeze
+    DEFAULT_API_VERSION = '2.0'
+    DEFAULT_BASE_URI    = 'https://api.bitbucket.org/'
     DEFAULT_QUERY       = {}.freeze
 
     attr_reader :expires_at, :expires_in, :refresh_token, :token
@@ -57,7 +59,7 @@ module Bitbucket
     end
 
     def provider
-      Gitlab::OAuth::Provider.config_for('bitbucket')
+      Gitlab::Auth::OAuth::Provider.config_for('bitbucket')
     end
 
     def options

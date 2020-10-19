@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Banzai
   module Filter
     class WikiLinkFilter < HTML::Pipeline::Filter
@@ -9,8 +11,17 @@ module Banzai
         end
 
         def apply_rules
-          apply_file_link_rules!
-          apply_hierarchical_link_rules!
+          # Special case: relative URLs beginning with `/uploads/` refer to
+          # user-uploaded files will be handled elsewhere.
+          return @uri.to_s if public_upload?
+
+          # Special case: relative URLs beginning with Wikis::CreateAttachmentService::ATTACHMENT_PATH
+          # refer to user-uploaded files to the wiki repository.
+          unless repository_upload?
+            apply_file_link_rules!
+            apply_hierarchical_link_rules!
+          end
+
           apply_relative_link_rules!
           @uri.to_s
         end
@@ -34,6 +45,14 @@ module Banzai
             link = "#{link}##{@uri.fragment}" if @uri.fragment
             @uri = Addressable::URI.parse(link)
           end
+        end
+
+        def public_upload?
+          @uri.relative? && @uri.path.starts_with?('/uploads/')
+        end
+
+        def repository_upload?
+          @uri.relative? && @uri.path.starts_with?(Wikis::CreateAttachmentService::ATTACHMENT_PATH)
         end
       end
     end

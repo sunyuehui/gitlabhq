@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::ComposerJsonLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::ComposerJsonLinker do
   describe '.support?' do
     it 'supports composer.json' do
       expect(described_class.support?('composer.json')).to be_truthy
@@ -50,8 +52,8 @@ describe Gitlab::DependencyLinker::ComposerJsonLinker do
       %{<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>}
     end
 
-    it 'links the module name' do
-      expect(subject).to include(link('laravel/laravel', 'https://packagist.org/packages/laravel/laravel'))
+    it 'does not link the module name' do
+      expect(subject).not_to include(link('laravel/laravel', 'https://packagist.org/packages/laravel/laravel'))
     end
 
     it 'links the homepage' do

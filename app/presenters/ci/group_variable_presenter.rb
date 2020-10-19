@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Ci
   class GroupVariablePresenter < Gitlab::View::Presenter::Delegated
     presents :variable
@@ -7,19 +9,15 @@ module Ci
     end
 
     def form_path
-      if variable.persisted?
-        group_variable_path(group, variable)
-      else
-        group_variables_path(group)
-      end
+      group_settings_ci_cd_path(group)
     end
 
     def edit_path
-      group_variable_path(group, variable)
+      group_variables_path(group)
     end
 
     def delete_path
-      group_variable_path(group, variable)
+      group_variables_path(group)
     end
   end
 end

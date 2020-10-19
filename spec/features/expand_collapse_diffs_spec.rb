@@ -1,15 +1,13 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Expand and collapse diffs', js: true do
+RSpec.describe 'Expand and collapse diffs', :js do
   let(:branch) { 'expand-collapse-diffs' }
   let(:project) { create(:project, :repository) }
 
   before do
-    # Set the limits to those when these specs were written, to avoid having to
-    # update the test repo every time we change them.
-    allow(Gitlab::Git::Diff).to receive(:size_limit).and_return(100.kilobytes)
-    allow(Gitlab::Git::Diff).to receive(:collapse_limit).and_return(10.kilobytes)
-
+    stub_feature_flags(increased_diff_limits: false)
     sign_in(create(:admin))
 
     # Ensure that undiffable.md is in .gitattributes
@@ -34,7 +32,7 @@ feature 'Expand and collapse diffs', js: true do
     define_method(file.split('.').first) { file_container(file) }
   end
 
-  it 'should show the diff content with a highlighted line when linking to line' do
+  it 'shows the diff content with a highlighted line when linking to line' do
     expect(large_diff).not_to have_selector('.code')
     expect(large_diff).to have_selector('.nothing-here-block')
 
@@ -48,7 +46,7 @@ feature 'Expand and collapse diffs', js: true do
     expect(large_diff).to have_selector('.hll')
   end
 
-  it 'should show the diff content when linking to file' do
+  it 'shows the diff content when linking to file' do
     expect(large_diff).not_to have_selector('.code')
     expect(large_diff).to have_selector('.nothing-here-block')
 
@@ -110,13 +108,6 @@ feature 'Expand and collapse diffs', js: true do
         # Click `large_diff.md` title
         all('.diff-toggle-caret')[1].click
         wait_for_requests
-      end
-
-      it 'makes a request to get the content' do
-        ajax_uris = evaluate_script('ajaxUris')
-
-        expect(ajax_uris).not_to be_empty
-        expect(ajax_uris.first).to include('large_diff.md')
       end
 
       it 'shows the diff content' do

@@ -1,6 +1,10 @@
+# frozen_string_literal: true
+
 class Admin::IdentitiesController < Admin::ApplicationController
   before_action :user
   before_action :identity, except: [:index, :new, :create]
+
+  feature_category :authentication_and_authorization
 
   def new
     @identity = Identity.new
@@ -11,7 +15,7 @@ class Admin::IdentitiesController < Admin::ApplicationController
     @identity.user_id = user.id
 
     if @identity.save
-      redirect_to admin_user_identities_path(@user), notice: 'User identity was successfully created.'
+      redirect_to admin_user_identities_path(@user), notice: _('User identity was successfully created.')
     else
       render :new
     end
@@ -25,9 +29,10 @@ class Admin::IdentitiesController < Admin::ApplicationController
   end
 
   def update
-    if @identity.update_attributes(identity_params)
-      RepairLdapBlockedUserService.new(@user).execute
-      redirect_to admin_user_identities_path(@user), notice: 'User identity was successfully updated.'
+    if @identity.update(identity_params)
+      ::Users::RepairLdapBlockedService.new(@user).execute
+
+      redirect_to admin_user_identities_path(@user), notice: _('User identity was successfully updated.')
     else
       render :edit
     end
@@ -35,18 +40,21 @@ class Admin::IdentitiesController < Admin::ApplicationController
 
   def destroy
     if @identity.destroy
-      RepairLdapBlockedUserService.new(@user).execute
-      redirect_to admin_user_identities_path(@user), status: 302, notice: 'User identity was successfully removed.'
+      ::Users::RepairLdapBlockedService.new(@user).execute
+
+      redirect_to admin_user_identities_path(@user), status: :found, notice: _('User identity was successfully removed.')
     else
-      redirect_to admin_user_identities_path(@user), status: 302, alert: 'Failed to remove user identity.'
+      redirect_to admin_user_identities_path(@user), status: :found, alert: _('Failed to remove user identity.')
     end
   end
 
   protected
 
+  # rubocop: disable CodeReuse/ActiveRecord
   def user
     @user ||= User.find_by!(username: params[:user_id])
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def identity
     @identity ||= user.identities.find(params[:id])

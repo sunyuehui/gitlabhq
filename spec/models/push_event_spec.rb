@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe PushEvent do
+RSpec.describe PushEvent do
   let(:payload) { PushEventPayload.new }
 
   let(:event) do
@@ -11,15 +13,119 @@ describe PushEvent do
     event
   end
 
-  describe '.sti_name' do
-    it 'returns Event::PUSHED' do
-      expect(described_class.sti_name).to eq(Event::PUSHED)
+  describe '.created_or_pushed' do
+    let(:event1) { create(:push_event) }
+    let(:event2) { create(:push_event) }
+    let(:event3) { create(:push_event) }
+
+    before do
+      create(:push_event_payload, event: event1, action: :pushed)
+      create(:push_event_payload, event: event2, action: :created)
+      create(:push_event_payload, event: event3, action: :removed)
+    end
+
+    let(:relation) { described_class.created_or_pushed }
+
+    it 'includes events for pushing to existing refs' do
+      expect(relation).to include(event1)
+    end
+
+    it 'includes events for creating new refs' do
+      expect(relation).to include(event2)
+    end
+
+    it 'does not include events for removing refs' do
+      expect(relation).not_to include(event3)
     end
   end
 
-  describe '#push?' do
+  describe '.branch_events' do
+    let(:event1) { create(:push_event) }
+    let(:event2) { create(:push_event) }
+
+    before do
+      create(:push_event_payload, event: event1, ref_type: :branch)
+      create(:push_event_payload, event: event2, ref_type: :tag)
+    end
+
+    let(:relation) { described_class.branch_events }
+
+    it 'includes events for branches' do
+      expect(relation).to include(event1)
+    end
+
+    it 'does not include events for tags' do
+      expect(relation).not_to include(event2)
+    end
+  end
+
+  describe '.without_existing_merge_requests' do
+    let(:project) { create(:project, :repository) }
+    let(:event1) { create(:push_event, project: project) }
+    let(:event2) { create(:push_event, project: project) }
+    let(:event3) { create(:push_event, project: project) }
+    let(:event4) { create(:push_event, project: project) }
+    let(:event5) { create(:push_event, project: project) }
+
+    before do
+      create(:push_event_payload, event: event1, ref: 'foo', action: :created)
+      create(:push_event_payload, event: event2, ref: 'bar', action: :created)
+      create(:push_event_payload, event: event3, ref: 'qux', action: :created)
+      create(:push_event_payload, event: event4, ref: 'baz', action: :removed)
+      create(:push_event_payload, event: event5, ref: 'baz', ref_type: :tag)
+
+      project.repository.create_branch('bar')
+
+      create(
+        :merge_request,
+        source_project: project,
+        target_project: project,
+        source_branch: 'bar'
+      )
+
+      project.repository.create_branch('qux')
+
+      create(
+        :merge_request,
+        :closed,
+        source_project: project,
+        target_project: project,
+        source_branch: 'qux'
+      )
+    end
+
+    let(:relation) { described_class.without_existing_merge_requests }
+
+    it 'includes events that do not have a corresponding merge request' do
+      expect(relation).to include(event1)
+    end
+
+    it 'does not include events that have a corresponding open merge request' do
+      expect(relation).not_to include(event2)
+    end
+
+    it 'includes events that has corresponding closed/merged merge requests' do
+      expect(relation).to include(event3)
+    end
+
+    it 'does not include events for removed refs' do
+      expect(relation).not_to include(event4)
+    end
+
+    it 'does not include events for pushing to tags' do
+      expect(relation).not_to include(event5)
+    end
+  end
+
+  describe '.sti_name' do
+    it 'returns the integer representation of the :pushed event action' do
+      expect(described_class.sti_name).to eq(Event.actions[:pushed])
+    end
+  end
+
+  describe '#push_action?' do
     it 'returns true' do
-      expect(event).to be_push
+      expect(event).to be_push_action
     end
   end
 
@@ -193,7 +299,7 @@ describe PushEvent do
 
   describe '#validate_push_action' do
     it 'adds an error when the action is not PUSHED' do
-      event.action = Event::CREATED
+      event.action = :created
       event.validate_push_action
 
       expect(event.errors.count).to eq(1)

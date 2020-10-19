@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Sherlock::Location do
+RSpec.describe Gitlab::Sherlock::Location do
   let(:location) { described_class.new(__FILE__, 1) }
 
   describe 'from_ruby_location' do

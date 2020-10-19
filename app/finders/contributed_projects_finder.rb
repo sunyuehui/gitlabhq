@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class ContributedProjectsFinder < UnionFinder
   def initialize(user)
     @user = user
@@ -11,12 +13,19 @@ class ContributedProjectsFinder < UnionFinder
   #
   # Returns an ActiveRecord::Relation.
   def execute(current_user = nil)
+    # Do not show contributed projects if the user profile is private.
+    return Project.none unless can_read_profile?(current_user)
+
     segments = all_projects(current_user)
 
-    find_union(segments, Project).includes(:namespace).order_id_desc
+    find_union(segments, Project).with_namespace.order_id_desc
   end
 
   private
+
+  def can_read_profile?(current_user)
+    Ability.allowed?(current_user, :read_user_profile, @user)
+  end
 
   def all_projects(current_user)
     projects = []

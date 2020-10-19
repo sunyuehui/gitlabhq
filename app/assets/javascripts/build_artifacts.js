@@ -1,25 +1,55 @@
-/* eslint-disable func-names, space-before-function-paren, wrap-iife, prefer-arrow-callback, no-unused-vars, no-return-assign, max-len */
+/* eslint-disable func-names */
 
-window.BuildArtifacts = (function() {
-  function BuildArtifacts() {
+import $ from 'jquery';
+import { visitUrl } from './lib/utils/url_utility';
+import { parseBoolean } from './lib/utils/common_utils';
+import { hide, initTooltips, show } from '~/tooltips';
+
+export default class BuildArtifacts {
+  constructor() {
     this.disablePropagation();
     this.setupEntryClick();
+    this.setupTooltips();
   }
 
-  BuildArtifacts.prototype.disablePropagation = function() {
-    $('.top-block').on('click', '.download', function(e) {
-      return e.stopPropagation();
+  // eslint-disable-next-line class-methods-use-this
+  disablePropagation() {
+    $('.top-block').on('click', '.download', e => {
+      e.stopPropagation();
     });
-    return $('.tree-holder').on('click', 'tr[data-link] a', function(e) {
-      return e.stopImmediatePropagation();
+    return $('.tree-holder').on('click', 'tr[data-link] a', e => {
+      e.stopImmediatePropagation();
     });
-  };
+  }
 
-  BuildArtifacts.prototype.setupEntryClick = function() {
-    return $('.tree-holder').on('click', 'tr[data-link]', function(e) {
-      return window.location = this.dataset.link;
+  // eslint-disable-next-line class-methods-use-this
+  setupEntryClick() {
+    return $('.tree-holder').on('click', 'tr[data-link]', function() {
+      visitUrl(this.dataset.link, parseBoolean(this.dataset.externalLink));
     });
-  };
+  }
 
-  return BuildArtifacts;
-})();
+  // eslint-disable-next-line class-methods-use-this
+  setupTooltips() {
+    initTooltips({
+      placement: 'bottom',
+      // Stop the tooltip from hiding when we stop hovering the element directly
+      // We handle all the showing/hiding below
+      trigger: 'manual',
+    });
+
+    // We want the tooltip to show if you hover anywhere on the row
+    // But be placed below and in the middle of the file name
+    $('.js-artifact-tree-row')
+      .on('mouseenter', e => {
+        const $el = $(e.currentTarget).find('.js-artifact-tree-tooltip');
+
+        show($el);
+      })
+      .on('mouseleave', e => {
+        const $el = $(e.currentTarget).find('.js-artifact-tree-tooltip');
+
+        hide($el);
+      });
+  }
+}

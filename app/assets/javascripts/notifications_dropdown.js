@@ -1,31 +1,39 @@
-/* eslint-disable func-names, space-before-function-paren, wrap-iife, one-var, no-var, one-var-declaration-per-line, no-unused-vars, consistent-return, prefer-arrow-callback, no-else-return, max-len */
-/* global Flash */
+import $ from 'jquery';
+import { Rails } from '~/lib/utils/rails_ujs';
+import { deprecatedCreateFlash as Flash } from './flash';
+import { __ } from '~/locale';
 
-(function() {
-  this.NotificationsDropdown = (function() {
-    function NotificationsDropdown() {
-      $(document).off('click', '.update-notification').on('click', '.update-notification', function(e) {
-        var form, label, notificationLevel;
-        e.preventDefault();
-        if ($(this).is('.is-active') && $(this).data('notification-level') === 'custom') {
-          return;
-        }
-        notificationLevel = $(this).data('notification-level');
-        label = $(this).data('notification-title');
-        form = $(this).parents('.notification-form:first');
-        form.find('.js-notification-loading').toggleClass('fa-bell fa-spin fa-spinner');
-        form.find('#notification_setting_level').val(notificationLevel);
-        return form.submit();
-      });
-      $(document).off('ajax:success', '.notification-form').on('ajax:success', '.notification-form', function(e, data) {
-        if (data.saved) {
-          return $(e.currentTarget).closest('.js-notification-dropdown').replaceWith(data.html);
-        } else {
-          return new Flash('Failed to save new settings', 'alert');
-        }
-      });
+export default function notificationsDropdown() {
+  $(document).on('click', '.update-notification', function updateNotificationCallback(e) {
+    e.preventDefault();
+
+    if ($(this).is('.is-active') && $(this).data('notificationLevel') === 'custom') {
+      return;
     }
 
-    return NotificationsDropdown;
-  })();
-}).call(window);
+    const notificationLevel = $(this).data('notificationLevel');
+    const form = $(this)
+      .parents('.notification-form')
+      .first();
+
+    form.find('.js-notification-loading').toggleClass('spinner');
+    if (form.hasClass('no-label')) {
+      form.find('.js-notification-loading').toggleClass('hidden');
+      form.find('.js-notifications-icon').toggleClass('hidden');
+    }
+    form.find('#notification_setting_level').val(notificationLevel);
+    Rails.fire(form[0], 'submit');
+  });
+
+  $(document).on('ajax:success', '.notification-form', e => {
+    const data = e.detail[0];
+
+    if (data.saved) {
+      $(e.currentTarget)
+        .closest('.js-notification-dropdown')
+        .replaceWith(data.html);
+    } else {
+      Flash(__('Failed to save new settings'), 'alert');
+    }
+  });
+}

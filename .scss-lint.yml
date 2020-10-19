@@ -1,10 +1,13 @@
 # Linter Documentation:
 # https://github.com/brigade/scss-lint/blob/master/lib/scss_lint/linter/README.md
 
-scss_files: 'app/assets/stylesheets/**/*.scss'
+scss_files:
+  - 'app/assets/stylesheets/**/*.scss'
+  - 'ee/app/assets/stylesheets/**/*.scss'
 
 exclude:
   - 'app/assets/stylesheets/pages/emojis.scss'
+  - 'app/assets/stylesheets/startup/startup-*.scss'
 
 linters:
   # Reports when you use improper spacing around ! (the "bang") in !default,
@@ -14,7 +17,7 @@ linters:
 
   # Whether or not to prefer `border: 0` over `border: none`.
   BorderZero:
-    enabled: false
+    enabled: true
 
   # Reports when you define a rule set using a selector with chained classes
   # (a.k.a. adjoining classes).
@@ -46,8 +49,9 @@ linters:
   # - properties
   # - @include declarations with inner @content
   # - nested rule sets.
+  # Disabled to minimize Bootstrap migration footprint
   DeclarationOrder:
-    enabled: true
+    enabled: false
 
   # `scss-lint:disable` control comments should be preceded by a comment
   # explaining why these linters are being disabled for this file.
@@ -59,6 +63,8 @@ linters:
   # Reports when you define the same property twice in a single rule set.
   DuplicateProperty:
     enabled: true
+    ignore_consecutive:
+      - cursor
 
   # Separate rule, function, and mixin declarations with empty lines.
   EmptyLineBetweenBlocks:
@@ -112,7 +118,7 @@ linters:
 
   # Reports when you define the same selector twice in a single sheet.
   MergeableSelector:
-    enabled: false
+    enabled: true
 
   # Functions, mixins, variables, and placeholders should be declared
   # with all lowercase letters and hyphens instead of underscores.
@@ -121,7 +127,8 @@ linters:
 
   # Avoid nesting selectors too deeply.
   NestingDepth:
-    enabled: false
+    enabled: true
+    max_depth: 6
 
   # Always use placeholder selectors in @extend.
   PlaceholderInExtend:
@@ -240,7 +247,7 @@ linters:
 
   # Numeric values should not contain unnecessary fractional portions.
   UnnecessaryMantissa:
-    enabled: false
+    enabled: true
 
   # Do not use parent selector references (&) when they would otherwise
   # be unnecessary.

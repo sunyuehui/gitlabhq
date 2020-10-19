@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Metrics
     # Module for instrumenting methods.
@@ -17,7 +19,7 @@ module Gitlab
 
       # Returns the name of the series to use for storing method calls.
       def self.series
-        @series ||= "#{Metrics.series_prefix}method_calls"
+        @series ||= "#{::Gitlab::Metrics.series_prefix}method_calls"
       end
 
       # Instruments a class method.
@@ -116,20 +118,19 @@ module Gitlab
       # mod  - The module containing the method.
       # name - The name of the method to instrument.
       def self.instrument(type, mod, name)
-        return unless Metrics.enabled?
-
-        name   = name.to_sym
-        target = type == :instance ? mod : mod.singleton_class
+        return unless ::Gitlab::Metrics.enabled?
 
         if type == :instance
           target = mod
-          label  = "#{mod.name}##{name}"
+          method_name = "##{name}"
           method = mod.instance_method(name)
         else
           target = mod.singleton_class
-          label  = "#{mod.name}.#{name}"
+          method_name = ".#{name}"
           method = mod.method(name)
         end
+
+        label = "#{mod.name}#{method_name}"
 
         unless instrumented?(target)
           target.instance_variable_set(PROXY_IVAR, Module.new)
@@ -150,18 +151,33 @@ module Gitlab
             '*args'
           end
 
+        method_visibility = method_visibility_for(target, name)
+
         proxy_module.class_eval <<-EOF, __FILE__, __LINE__ + 1
           def #{name}(#{args_signature})
             if trans = Gitlab::Metrics::Instrumentation.transaction
-              trans.method_call_for(#{label.to_sym.inspect}).measure { super }
+              trans.method_call_for(#{label.to_sym.inspect}, #{mod.name.inspect}, "#{method_name}")
+                .measure { super }
             else
               super
             end
           end
+          #{method_visibility} :#{name}
         EOF
 
         target.prepend(proxy_module)
       end
+
+      def self.method_visibility_for(mod, name)
+        if mod.private_method_defined?(name)
+          :private
+        elsif mod.protected_method_defined?(name)
+          :protected
+        else
+          :public
+        end
+      end
+      private_class_method :method_visibility_for
 
       # Small layer of indirection to make it easier to stub out the current
       # transaction.

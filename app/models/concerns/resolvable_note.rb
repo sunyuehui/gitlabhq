@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ResolvableNote
   extend ActiveSupport::Concern
 
@@ -10,7 +12,7 @@ module ResolvableNote
     validates :resolved_by, presence: true, if: :resolved?
 
     # Keep this scope in sync with `#potentially_resolvable?`
-    scope :potentially_resolvable, -> { where(type: RESOLVABLE_TYPES).where(noteable_type: Noteable::RESOLVABLE_TYPES) }
+    scope :potentially_resolvable, -> { where(type: RESOLVABLE_TYPES).where(noteable_type: Noteable.resolvable_types) }
     # Keep this scope in sync with `#resolvable?`
     scope :resolvable, -> { potentially_resolvable.user }
 
@@ -18,10 +20,10 @@ module ResolvableNote
     scope :unresolved, -> { resolvable.where(resolved_at: nil) }
   end
 
-  module ClassMethods
+  class_methods do
     # This method must be kept in sync with `#resolve!`
     def resolve!(current_user)
-      unresolved.update_all(resolved_at: Time.now, resolved_by_id: current_user.id)
+      unresolved.update_all(resolved_at: Time.current, resolved_by_id: current_user.id)
     end
 
     # This method must be kept in sync with `#unresolve!`
@@ -32,7 +34,7 @@ module ResolvableNote
 
   # Keep this method in sync with the `potentially_resolvable` scope
   def potentially_resolvable?
-    RESOLVABLE_TYPES.include?(self.class.name) && noteable.supports_resolvable_notes?
+    RESOLVABLE_TYPES.include?(self.class.name) && noteable&.supports_resolvable_notes?
   end
 
   # Keep this method in sync with the `resolvable` scope
@@ -51,22 +53,34 @@ module ResolvableNote
   end
 
   # If you update this method remember to also update `.resolve!`
-  def resolve!(current_user)
-    return unless resolvable?
-    return if resolved?
+  def resolve_without_save(current_user, resolved_by_push: false)
+    return false unless resolvable?
+    return false if resolved?
 
-    self.resolved_at = Time.now
+    self.resolved_at = Time.current
     self.resolved_by = current_user
-    save!
+    self.resolved_by_push = resolved_by_push
+
+    true
   end
 
   # If you update this method remember to also update `.unresolve!`
-  def unresolve!
-    return unless resolvable?
-    return unless resolved?
+  def unresolve_without_save
+    return false unless resolvable?
+    return false unless resolved?
 
     self.resolved_at = nil
     self.resolved_by = nil
-    save!
+
+    true
+  end
+
+  def resolve!(current_user, resolved_by_push: false)
+    resolve_without_save(current_user, resolved_by_push: resolved_by_push) &&
+      save!
+  end
+
+  def unresolve!
+    unresolve_without_save && save!
   end
 end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe AccessTokenValidationService do
+RSpec.describe AccessTokenValidationService do
   describe ".include_any_scope?" do
     let(:request) { double("request") }
 

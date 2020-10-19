@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Sherlock::LineProfiler do
+RSpec.describe Gitlab::Sherlock::LineProfiler do
   let(:profiler) { described_class.new }
 
   describe '#profile' do

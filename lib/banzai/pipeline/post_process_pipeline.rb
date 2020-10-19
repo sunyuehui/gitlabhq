@@ -1,11 +1,26 @@
+# frozen_string_literal: true
+
 module Banzai
   module Pipeline
     class PostProcessPipeline < BasePipeline
       def self.filters
-        FilterArray[
-          Filter::RelativeLinkFilter,
+        @filters ||= FilterArray[
+          *internal_link_filters,
+          Filter::AbsoluteLinkFilter,
+          Filter::BroadcastMessagePlaceholdersFilter
+        ]
+      end
+
+      def self.internal_link_filters
+        [
+          Filter::ReferenceRedactorFilter,
+          Filter::InlineMetricsRedactorFilter,
+          # UploadLinkFilter must come before RepositoryLinkFilter to
+          # prevent unnecessary Gitaly calls from being made.
+          Filter::UploadLinkFilter,
+          Filter::RepositoryLinkFilter,
           Filter::IssuableStateFilter,
-          Filter::RedactorFilter
+          Filter::SuggestionFilter
         ]
       end
 
@@ -17,3 +32,5 @@ module Banzai
     end
   end
 end
+
+Banzai::Pipeline::PostProcessPipeline.prepend_if_ee('EE::Banzai::Pipeline::PostProcessPipeline')

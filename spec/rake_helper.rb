@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 require 'rake'
 
@@ -15,5 +17,7 @@ RSpec.configure do |config|
   # Reset stdout
   config.after(:all) do
     $stdout = STDOUT
+
+    delete_from_all_tables!
   end
 end

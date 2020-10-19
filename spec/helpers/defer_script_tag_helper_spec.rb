@@ -1,7 +1,8 @@
-# coding: utf-8
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe DeferScriptTagHelper do
+RSpec.describe DeferScriptTagHelper do
   describe 'script tag' do
     script_url = 'test.js'
 

@@ -1,11 +1,10 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
+require 'fast_spec_helper'
 require 'rubocop'
-require 'rubocop/rspec/support'
-
 require_relative '../../../../rubocop/cop/migration/remove_index'
 
-describe RuboCop::Cop::Migration::RemoveIndex do
+RSpec.describe RuboCop::Cop::Migration::RemoveIndex, type: :rubocop do
   include CopHelper
 
   subject(:cop) { described_class.new }
@@ -16,7 +15,7 @@ describe RuboCop::Cop::Migration::RemoveIndex do
     end
 
     it 'registers an offense when remove_index is used' do
-      inspect_source(cop, 'def change; remove_index :table, :column; end')
+      inspect_source('def change; remove_index :table, :column; end')
 
       aggregate_failures do
         expect(cop.offenses.size).to eq(1)
@@ -27,7 +26,7 @@ describe RuboCop::Cop::Migration::RemoveIndex do
 
   context 'outside of migration' do
     it 'registers no offense' do
-      inspect_source(cop, 'def change; remove_index :table, :column; end')
+      inspect_source('def change; remove_index :table, :column; end')
 
       expect(cop.offenses.size).to eq(0)
     end

@@ -1,7 +1,11 @@
+# frozen_string_literal: true
+
 module Banzai
   module Filter
     # HTML filter that replaces milestone references with links.
     class MilestoneReferenceFilter < AbstractReferenceFilter
+      include Gitlab::Utils::StrongMemoize
+
       self.reference_type = :milestone
 
       def self.object_class
@@ -11,12 +15,34 @@ module Banzai
       # Links to project milestones contain the IID, but when we're handling
       # 'regular' references, we need to use the global ID to disambiguate
       # between group and project milestones.
-      def find_object(project, id)
-        find_milestone_with_finder(project, id: id)
+      def find_object(parent, id)
+        return unless valid_context?(parent)
+
+        find_milestone_with_finder(parent, id: id)
       end
 
-      def find_object_from_link(project, iid)
-        find_milestone_with_finder(project, iid: iid)
+      def find_object_from_link(parent, iid)
+        return unless valid_context?(parent)
+
+        find_milestone_with_finder(parent, iid: iid)
+      end
+
+      def valid_context?(parent)
+        strong_memoize(:valid_context) do
+          group_context?(parent) || project_context?(parent)
+        end
+      end
+
+      def group_context?(parent)
+        strong_memoize(:group_context) do
+          parent.is_a?(Group)
+        end
+      end
+
+      def project_context?(parent)
+        strong_memoize(:project_context) do
+          parent.is_a?(Project)
+        end
       end
 
       def references_in(text, pattern = Milestone.reference_pattern)
@@ -25,26 +51,34 @@ module Banzai
         # default implementation.
         return super(text, pattern) if pattern != Milestone.reference_pattern
 
-        text.gsub(pattern) do |match|
+        milestones = {}
+        unescaped_html = unescape_html_entities(text).gsub(pattern) do |match|
           milestone = find_milestone($~[:project], $~[:namespace], $~[:milestone_iid], $~[:milestone_name])
 
           if milestone
-            yield match, milestone.id, $~[:project], $~[:namespace], $~
+            milestones[milestone.id] = yield match, milestone.id, $~[:project], $~[:namespace], $~
+            "#{REFERENCE_PLACEHOLDER}#{milestone.id}"
           else
             match
           end
         end
+
+        return text if milestones.empty?
+
+        escape_with_placeholders(unescaped_html, milestones)
       end
 
       def find_milestone(project_ref, namespace_ref, milestone_id, milestone_name)
         project_path = full_project_path(namespace_ref, project_ref)
-        project = project_from_ref(project_path)
 
-        return unless project
+        # Returns group if project is not found by path
+        parent = parent_from_ref(project_path)
+
+        return unless parent
 
         milestone_params = milestone_params(milestone_id, milestone_name)
 
-        find_milestone_with_finder(project, milestone_params)
+        find_milestone_with_finder(parent, milestone_params)
       end
 
       def milestone_params(iid, name)
@@ -55,16 +89,28 @@ module Banzai
         end
       end
 
-      def find_milestone_with_finder(project, params)
-        finder_params = { project_ids: [project.id], order: nil }
+      def find_milestone_with_finder(parent, params)
+        finder_params = milestone_finder_params(parent, params[:iid].present?)
 
-        # We don't support IID lookups for group milestones, because IIDs can
-        # clash between group and project milestones.
-        if project.group && !params[:iid]
-          finder_params[:group_ids] = [project.group.id]
+        MilestonesFinder.new(finder_params).find_by(params)
+      end
+
+      def milestone_finder_params(parent, find_by_iid)
+        { order: nil, state: 'all' }.tap do |params|
+          params[:project_ids] = parent.id if project_context?(parent)
+
+          # We don't support IID lookups because IIDs can clash between
+          # group/project milestones and group/subgroup milestones.
+          params[:group_ids] = self_and_ancestors_ids(parent) unless find_by_iid
         end
+      end
 
-        MilestonesFinder.new(finder_params).execute.find_by(params)
+      def self_and_ancestors_ids(parent)
+        if group_context?(parent)
+          parent.self_and_ancestors.select(:id)
+        elsif project_context?(parent)
+          parent.group&.self_and_ancestors&.select(:id)
+        end
       end
 
       def url_for_object(milestone, project)
@@ -75,7 +121,7 @@ module Banzai
 
       def object_link_text(object, matches)
         milestone_link = escape_once(super)
-        reference = object.project&.to_reference(project)
+        reference = object.project&.to_reference_base(project)
 
         if reference.present?
           "#{milestone_link} <i>in #{reference}</i>".html_safe
@@ -84,7 +130,7 @@ module Banzai
         end
       end
 
-      def object_link_title(object)
+      def object_link_title(object, matches)
         nil
       end
     end

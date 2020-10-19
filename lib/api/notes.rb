@@ -1,47 +1,56 @@
+# frozen_string_literal: true
+
 module API
-  class Notes < Grape::API
+  class Notes < ::API::Base
     include PaginationParams
+    helpers ::API::Helpers::NotesHelpers
 
     before { authenticate! }
 
-    NOTEABLE_TYPES = [Issue, MergeRequest, Snippet].freeze
+    Helpers::NotesHelpers.noteable_types.each do |noteable_type|
+      parent_type = noteable_type.parent_class.to_s.underscore
+      noteables_str = noteable_type.to_s.underscore.pluralize
 
-    params do
-      requires :id, type: String, desc: 'The ID of a project'
-    end
-    resource :projects, requirements: { id: %r{[^/]+} } do
-      NOTEABLE_TYPES.each do |noteable_type|
-        noteables_str = noteable_type.to_s.underscore.pluralize
-
-        desc 'Get a list of project +noteable+ notes' do
+      params do
+        requires :id, type: String, desc: "The ID of a #{parent_type}"
+      end
+      resource parent_type.pluralize.to_sym, requirements: API::NAMESPACE_OR_PROJECT_REQUIREMENTS do
+        desc "Get a list of #{noteable_type.to_s.downcase} notes" do
           success Entities::Note
         end
         params do
           requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
+          optional :order_by, type: String, values: %w[created_at updated_at], default: 'created_at',
+                              desc: 'Return notes ordered by `created_at` or `updated_at` fields.'
+          optional :sort, type: String, values: %w[asc desc], default: 'desc',
+                          desc: 'Return notes sorted in `asc` or `desc` order.'
+          optional :activity_filter, type: String, values: UserPreference::NOTES_FILTERS.stringify_keys.keys, default: 'all_notes',
+                           desc: 'The type of notables which are returned.'
           use :pagination
         end
+        # rubocop: disable CodeReuse/ActiveRecord
         get ":id/#{noteables_str}/:noteable_id/notes" do
-          noteable = find_project_noteable(noteables_str, params[:noteable_id])
+          noteable = find_noteable(noteable_type, params[:noteable_id])
 
-          if can?(current_user, noteable_read_ability_name(noteable), noteable)
-            # We exclude notes that are cross-references and that cannot be viewed
-            # by the current user. By doing this exclusion at this level and not
-            # at the DB query level (which we cannot in that case), the current
-            # page can have less elements than :per_page even if
-            # there's more than one page.
-            notes =
-              # paginate() only works with a relation. This could lead to a
-              # mismatch between the pagination headers info and the actual notes
-              # array returned, but this is really a edge-case.
-              paginate(noteable.notes)
-              .reject { |n| n.cross_reference_not_visible_for?(current_user) }
-            present notes, with: Entities::Note
-          else
-            not_found!("Notes")
-          end
+          # We exclude notes that are cross-references and that cannot be viewed
+          # by the current user. By doing this exclusion at this level and not
+          # at the DB query level (which we cannot in that case), the current
+          # page can have less elements than :per_page even if
+          # there's more than one page.
+          notes_filter = UserPreference::NOTES_FILTERS[params[:activity_filter].to_sym]
+          raw_notes = noteable.notes.with_metadata.with_notes_filter(notes_filter).reorder(order_options_with_tie_breaker)
+
+          # paginate() only works with a relation. This could lead to a
+          # mismatch between the pagination headers info and the actual notes
+          # array returned, but this is really a edge-case.
+          notes = paginate(raw_notes)
+          notes = prepare_notes_for_rendering(notes)
+          notes = notes.select { |note| note.readable_by?(current_user) }
+          present notes, with: Entities::Note
         end
+        # rubocop: enable CodeReuse/ActiveRecord
 
-        desc 'Get a single +noteable+ note' do
+        desc "Get a single #{noteable_type.to_s.downcase} note" do
           success Entities::Note
         end
         params do
@@ -49,78 +58,59 @@ module API
           requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
         end
         get ":id/#{noteables_str}/:noteable_id/notes/:note_id" do
-          noteable = find_project_noteable(noteables_str, params[:noteable_id])
-          note = noteable.notes.find(params[:note_id])
-          can_read_note = can?(current_user, noteable_read_ability_name(noteable), noteable) && !note.cross_reference_not_visible_for?(current_user)
-
-          if can_read_note
-            present note, with: Entities::Note
-          else
-            not_found!("Note")
-          end
+          noteable = find_noteable(noteable_type, params[:noteable_id])
+          get_note(noteable, params[:note_id])
         end
 
-        desc 'Create a new +noteable+ note' do
+        desc "Create a new #{noteable_type.to_s.downcase} note" do
           success Entities::Note
         end
         params do
           requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
           requires :body, type: String, desc: 'The content of a note'
+          optional :confidential, type: Boolean, desc: 'Confidentiality note flag, default is false'
           optional :created_at, type: String, desc: 'The creation date of the note'
         end
         post ":id/#{noteables_str}/:noteable_id/notes" do
-          noteable = find_project_noteable(noteables_str, params[:noteable_id])
+          noteable = find_noteable(noteable_type, params[:noteable_id])
 
           opts = {
             note: params[:body],
             noteable_type: noteables_str.classify,
-            noteable_id: noteable.id
+            noteable_id: noteable.id,
+            confidential: params[:confidential],
+            created_at: params[:created_at]
           }
 
-          if can?(current_user, noteable_read_ability_name(noteable), noteable)
-            if params[:created_at] && (current_user.admin? || user_project.owner == current_user)
-              opts[:created_at] = params[:created_at]
-            end
+          note = create_note(noteable, opts)
 
-            note = ::Notes::CreateService.new(user_project, current_user, opts).execute
-
-            if note.valid?
-              present note, with: Entities.const_get(note.class.name)
-            else
-              not_found!("Note #{note.errors.messages}")
-            end
+          if note.errors.keys == [:commands_only]
+            status 202
+            present note, with: Entities::NoteCommands
+          elsif note.valid?
+            present note, with: Entities.const_get(note.class.name, false)
           else
-            not_found!("Note")
+            note.errors.delete(:commands_only) if note.errors.has_key?(:commands)
+            bad_request!("Note #{note.errors.messages}")
           end
         end
 
-        desc 'Update an existing +noteable+ note' do
+        desc "Update an existing #{noteable_type.to_s.downcase} note" do
           success Entities::Note
         end
         params do
           requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
           requires :note_id, type: Integer, desc: 'The ID of a note'
-          requires :body, type: String, desc: 'The content of a note'
+          optional :body, type: String, allow_blank: false, desc: 'The content of a note'
+          optional :confidential, type: Boolean, desc: 'Confidentiality note flag'
         end
         put ":id/#{noteables_str}/:noteable_id/notes/:note_id" do
-          note = user_project.notes.find(params[:note_id])
+          noteable = find_noteable(noteable_type, params[:noteable_id])
 
-          authorize! :admin_note, note
-
-          opts = {
-            note: params[:body]
-          }
-
-          note = ::Notes::UpdateService.new(user_project, current_user, opts).execute(note)
-
-          if note.valid?
-            present note, with: Entities::Note
-          else
-            render_api_error!("Failed to save note #{note.errors.messages}", 400)
-          end
+          update_note(noteable, params[:note_id])
         end
 
-        desc 'Delete a +noteable+ note' do
+        desc "Delete a #{noteable_type.to_s.downcase} note" do
           success Entities::Note
         end
         params do
@@ -128,22 +118,10 @@ module API
           requires :note_id, type: Integer, desc: 'The ID of a note'
         end
         delete ":id/#{noteables_str}/:noteable_id/notes/:note_id" do
-          note = user_project.notes.find(params[:note_id])
-          authorize! :admin_note, note
+          noteable = find_noteable(noteable_type, params[:noteable_id])
 
-          status 204
-          ::Notes::DestroyService.new(user_project, current_user).execute(note)
+          delete_note(noteable, params[:note_id])
         end
-      end
-    end
-
-    helpers do
-      def find_project_noteable(noteables_str, noteable_id)
-        public_send("find_project_#{noteables_str.singularize}", noteable_id) # rubocop:disable GitlabSecurity/PublicSend
-      end
-
-      def noteable_read_ability_name(noteable)
-        "read_#{noteable.class.to_s.underscore}".to_sym
       end
     end
   end

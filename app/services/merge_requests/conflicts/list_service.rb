@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module MergeRequests
   module Conflicts
     class ListService < MergeRequests::Conflicts::BaseService
@@ -6,7 +8,7 @@ module MergeRequests
       def can_be_resolved_by?(user)
         return false unless merge_request.source_project
 
-        access = ::Gitlab::UserAccess.new(user, project: merge_request.source_project)
+        access = ::Gitlab::UserAccess.new(user, container: merge_request.source_project)
         access.can_push_to_branch?(merge_request.source_branch)
       end
 
@@ -17,19 +19,11 @@ module MergeRequests
         return @conflicts_can_be_resolved_in_ui = false unless merge_request.has_complete_diff_refs?
         return @conflicts_can_be_resolved_in_ui = false if merge_request.branch_missing?
 
-        begin
-          # Try to parse each conflict. If the MR's mergeable status hasn't been
-          # updated, ensure that we don't say there are conflicts to resolve
-          # when there are no conflict files.
-          conflicts.files.each(&:lines)
-          @conflicts_can_be_resolved_in_ui = conflicts.files.length > 0
-        rescue Rugged::OdbError, Gitlab::Conflict::Parser::UnresolvableError, Gitlab::Conflict::FileCollection::ConflictSideMissing
-          @conflicts_can_be_resolved_in_ui = false
-        end
+        @conflicts_can_be_resolved_in_ui = conflicts.can_be_resolved_in_ui?
       end
 
       def conflicts
-        @conflicts ||= Gitlab::Conflict::FileCollection.read_only(merge_request)
+        @conflicts ||= Gitlab::Conflict::FileCollection.new(merge_request)
       end
     end
   end

@@ -1,6 +1,10 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe WebHookService do
+RSpec.describe WebHookService do
+  include StubRequests
+
   let(:project) { create(:project) }
   let(:project_hook) { create(:project_hook) }
   let(:headers) do
@@ -9,68 +13,139 @@ describe WebHookService do
       'X-Gitlab-Event' => 'Push Hook'
     }
   end
+
   let(:data) do
     { before: 'oldrev', after: 'newrev', ref: 'ref' }
   end
-  let(:service_instance) { described_class.new(project_hook, data, 'push_hooks') }
+
+  let(:service_instance) { described_class.new(project_hook, data, :push_hooks) }
+
+  describe '#initialize' do
+    before do
+      stub_application_setting(setting_name => setting)
+    end
+
+    shared_examples_for 'respects outbound network setting' do
+      context 'when local requests are allowed' do
+        let(:setting) { true }
+
+        it { expect(hook.request_options[:allow_local_requests]).to be_truthy }
+      end
+
+      context 'when local requests are not allowed' do
+        let(:setting) { false }
+
+        it { expect(hook.request_options[:allow_local_requests]).to be_falsey }
+      end
+    end
+
+    context 'when SystemHook' do
+      let(:setting_name) { :allow_local_requests_from_system_hooks }
+      let(:hook) { described_class.new(build(:system_hook), data, :system_hook) }
+
+      include_examples 'respects outbound network setting'
+    end
+
+    context 'when ProjectHook' do
+      let(:setting_name) { :allow_local_requests_from_web_hooks_and_services }
+      let(:hook) { described_class.new(build(:project_hook), data, :project_hook) }
+
+      include_examples 'respects outbound network setting'
+    end
+  end
 
   describe '#execute' do
     before do
       project.hooks << [project_hook]
-
-      WebMock.stub_request(:post, project_hook.url)
     end
 
     context 'when token is defined' do
       let(:project_hook) { create(:project_hook, :token) }
 
       it 'POSTs to the webhook URL' do
+        stub_full_request(project_hook.url, method: :post)
+
         service_instance.execute
-        expect(WebMock).to have_requested(:post, project_hook.url).with(
+
+        expect(WebMock).to have_requested(:post, stubbed_hostname(project_hook.url)).with(
           headers: headers.merge({ 'X-Gitlab-Token' => project_hook.token })
         ).once
       end
     end
 
-    it 'POSTs to the webhook URL' do
+    it 'POSTs the data as JSON' do
+      stub_full_request(project_hook.url, method: :post)
+
       service_instance.execute
-      expect(WebMock).to have_requested(:post, project_hook.url).with(
+
+      expect(WebMock).to have_requested(:post, stubbed_hostname(project_hook.url)).with(
         headers: headers
       ).once
     end
 
-    it 'POSTs the data as JSON' do
-      service_instance.execute
-      expect(WebMock).to have_requested(:post, project_hook.url).with(
-        headers: headers
-      ).once
+    context 'when auth credentials are present' do
+      let(:url) {'https://example.org'}
+      let(:project_hook) { create(:project_hook, url: 'https://demo:demo@example.org/') }
+
+      it 'uses the credentials' do
+        stub_full_request(url, method: :post)
+
+        service_instance.execute
+
+        expect(WebMock).to have_requested(:post, stubbed_hostname(url)).with(
+          headers: headers.merge('Authorization' => 'Basic ZGVtbzpkZW1v')
+        ).once
+      end
+    end
+
+    context 'when auth credentials are partial present' do
+      let(:url) {'https://example.org'}
+      let(:project_hook) { create(:project_hook, url: 'https://demo@example.org/') }
+
+      it 'uses the credentials anyways' do
+        stub_full_request(url, method: :post)
+
+        service_instance.execute
+
+        expect(WebMock).to have_requested(:post, stubbed_hostname(url)).with(
+          headers: headers.merge('Authorization' => 'Basic ZGVtbzo=')
+        ).once
+      end
     end
 
     it 'catches exceptions' do
-      WebMock.stub_request(:post, project_hook.url).to_raise(StandardError.new('Some error'))
+      stub_full_request(project_hook.url, method: :post).to_raise(StandardError.new('Some error'))
 
       expect { service_instance.execute }.to raise_error(StandardError)
     end
 
     it 'handles exceptions' do
-      exceptions = [SocketError, OpenSSL::SSL::SSLError, Errno::ECONNRESET, Errno::ECONNREFUSED, Errno::EHOSTUNREACH, Net::OpenTimeout, Net::ReadTimeout]
+      exceptions = [SocketError, OpenSSL::SSL::SSLError, Errno::ECONNRESET, Errno::ECONNREFUSED, Errno::EHOSTUNREACH, Net::OpenTimeout, Net::ReadTimeout, Gitlab::HTTP::BlockedUrlError, Gitlab::HTTP::RedirectionTooDeep]
       exceptions.each do |exception_class|
         exception = exception_class.new('Exception message')
 
-        WebMock.stub_request(:post, project_hook.url).to_raise(exception)
-        expect(service_instance.execute).to eq({ status: :error, message: exception.message })
+        stub_full_request(project_hook.url, method: :post).to_raise(exception)
+        expect(service_instance.execute).to eq({ status: :error, message: exception.to_s })
         expect { service_instance.execute }.not_to raise_error
       end
     end
 
+    context 'when request body size is too big' do
+      it 'does not perform the request' do
+        stub_const("#{described_class}::REQUEST_BODY_SIZE_LIMIT", 10.bytes)
+
+        expect(service_instance.execute).to eq({ status: :error, message: "Gitlab::Json::LimitedEncoder::LimitExceeded" })
+      end
+    end
+
     it 'handles 200 status code' do
-      WebMock.stub_request(:post, project_hook.url).to_return(status: 200, body: 'Success')
+      stub_full_request(project_hook.url, method: :post).to_return(status: 200, body: 'Success')
 
       expect(service_instance.execute).to include({ status: :success, http_status: 200, message: 'Success' })
     end
 
     it 'handles 2xx status codes' do
-      WebMock.stub_request(:post, project_hook.url).to_return(status: 201, body: 'Success')
+      stub_full_request(project_hook.url, method: :post).to_return(status: 201, body: 'Success')
 
       expect(service_instance.execute).to include({ status: :success, http_status: 201, message: 'Success' })
     end
@@ -80,7 +155,7 @@ describe WebHookService do
 
       context 'with success' do
         before do
-          WebMock.stub_request(:post, project_hook.url).to_return(status: 200, body: 'Success')
+          stub_full_request(project_hook.url, method: :post).to_return(status: 200, body: 'Success')
           service_instance.execute
         end
 
@@ -97,7 +172,7 @@ describe WebHookService do
 
       context 'with exception' do
         before do
-          WebMock.stub_request(:post, project_hook.url).to_raise(SocketError.new('Some HTTP Post error'))
+          stub_full_request(project_hook.url, method: :post).to_raise(SocketError.new('Some HTTP Post error'))
           service_instance.execute
         end
 
@@ -114,7 +189,7 @@ describe WebHookService do
 
       context 'with unsafe response body' do
         before do
-          WebMock.stub_request(:post, project_hook.url).to_return(status: 200, body: "\xBB")
+          stub_full_request(project_hook.url, method: :post).to_return(status: 200, body: "\xBB")
           service_instance.execute
         end
 
@@ -128,17 +203,6 @@ describe WebHookService do
           expect(hook_log.internal_error_message).to be_nil
         end
       end
-
-      context 'should not log ServiceHooks' do
-        let(:service_hook) { create(:service_hook) }
-        let(:service_instance) { described_class.new(service_hook, data, 'service_hook') }
-
-        before do
-          WebMock.stub_request(:post, service_hook.url).to_return(status: 200, body: 'Success')
-        end
-
-        it { expect { service_instance.execute }.not_to change(WebHookLog, :count) }
-      end
     end
   end
 
@@ -146,7 +210,7 @@ describe WebHookService do
     let(:system_hook) { create(:system_hook) }
 
     it 'enqueue WebHookWorker' do
-      expect(Sidekiq::Client).to receive(:enqueue).with(WebHookWorker, project_hook.id, data, 'push_hooks')
+      expect(WebHookWorker).to receive(:perform_async).with(project_hook.id, data, 'push_hooks')
 
       described_class.new(project_hook, data, 'push_hooks').async_execute
     end

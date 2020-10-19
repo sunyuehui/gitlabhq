@@ -1,44 +1,92 @@
+# frozen_string_literal: true
+
 class ProjectsController < Projects::ApplicationController
+  include API::Helpers::RelatedResourcesHelpers
   include IssuableCollections
   include ExtractsPath
+  include PreviewMarkdown
+  include SendFileUpload
+  include RecordUserLastActivity
+  include ImportUrlParams
+  include FiltersEvents
 
-  before_action :authenticate_user!, except: [:index, :show, :activity, :refs]
-  before_action :project, except: [:index, :new, :create]
-  before_action :repository, except: [:index, :new, :create]
-  before_action :assign_ref_vars, only: [:show], if: :repo_exists?
-  before_action :tree, only: [:show], if: [:repo_exists?, :project_view_files?]
+  prepend_before_action(only: [:show]) { authenticate_sessionless_user!(:rss) }
+
+  around_action :allow_gitaly_ref_name_caching, only: [:index, :show]
+
+  before_action :whitelist_query_limiting, only: [:create]
+  before_action :authenticate_user!, except: [:index, :show, :activity, :refs, :resolve]
+  before_action :redirect_git_extension, only: [:show]
+  before_action :project, except: [:index, :new, :create, :resolve]
+  before_action :repository, except: [:index, :new, :create, :resolve]
+  before_action :assign_ref_vars, if: -> { action_name == 'show' && repo_exists? }
+  before_action :tree,
+    if: -> { action_name == 'show' && repo_exists? && project_view_files? }
   before_action :project_export_enabled, only: [:export, :download_export, :remove_export, :generate_new_export]
+  before_action :present_project, only: [:edit]
+  before_action :authorize_download_code!, only: [:refs]
 
   # Authorize
   before_action :authorize_admin_project!, only: [:edit, :update, :housekeeping, :download_export, :export, :remove_export, :generate_new_export]
+  before_action :authorize_archive_project!, only: [:archive, :unarchive]
   before_action :event_filter, only: [:show, :activity]
 
+  # Project Export Rate Limit
+  before_action :export_rate_limit, only: [:export, :download_export, :generate_new_export]
+
+  # Experiments
+  before_action only: [:new, :create] do
+    frontend_experimentation_tracking_data(:new_create_project_ui, 'click_tab')
+    push_frontend_experiment(:new_create_project_ui)
+  end
+
+  before_action only: [:edit] do
+    push_frontend_feature_flag(:service_desk_custom_address, @project)
+    push_frontend_feature_flag(:approval_suggestions, @project, default_enabled: true)
+  end
+
   layout :determine_layout
+
+  feature_category :projects, [
+                     :index, :show, :new, :create, :edit, :update, :transfer,
+                     :destroy, :resolve, :archive, :unarchive, :toggle_star
+                   ]
+
+  feature_category :source_code_management, [:remove_fork, :housekeeping, :refs]
+  feature_category :issue_tracking, [:preview_markdown, :new_issuable_address]
+  feature_category :importers, [:export, :remove_export, :generate_new_export, :download_export]
+  feature_category :audit_events, [:activity]
 
   def index
     redirect_to(current_user ? root_path : explore_root_path)
   end
 
+  # rubocop: disable CodeReuse/ActiveRecord
   def new
-    @project = Project.new
+    @namespace = Namespace.find_by(id: params[:namespace_id]) if params[:namespace_id]
+    return access_denied! if @namespace && !can?(current_user, :create_projects, @namespace)
+
+    @project = Project.new(namespace_id: @namespace&.id)
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def edit
-    render 'edit'
+    @badge_api_endpoint = expose_path(api_v4_projects_badges_path(id: @project.id))
+    render_edit
   end
 
   def create
-    @project = ::Projects::CreateService.new(current_user, project_params).execute
+    @project = ::Projects::CreateService.new(current_user, project_params(attributes: project_params_create_attributes)).execute
 
     if @project.saved?
-      cookies[:issue_board_welcome_hidden] = { path: project_path(@project), value: nil, expires: Time.at(0) }
+      cookies[:issue_board_welcome_hidden] = { path: project_path(@project), value: nil, expires: Time.zone.at(0) }
 
       redirect_to(
-        project_path(@project),
+        project_path(@project, custom_import_params),
         notice: _("Project '%{project_name}' was successfully created.") % { project_name: @project.name }
       )
     else
-      render 'new'
+      render 'new', locals: { active_tab: active_new_project_tab }
     end
   end
 
@@ -53,18 +101,20 @@ class ProjectsController < Projects::ApplicationController
         flash[:notice] = _("Project '%{project_name}' was successfully updated.") % { project_name: @project.name }
 
         format.html do
-          redirect_to(edit_project_path(@project))
+          redirect_to(edit_project_path(@project, anchor: 'js-general-project-settings'))
         end
       else
-        flash[:alert] = result[:message]
+        flash.now[:alert] = result[:message]
+        @project.reset
 
-        format.html { render 'edit' }
+        format.html { render_edit }
       end
 
       format.js
     end
   end
 
+  # rubocop: disable CodeReuse/ActiveRecord
   def transfer
     return access_denied! unless can?(current_user, :change_namespace, @project)
 
@@ -75,6 +125,7 @@ class ProjectsController < Projects::ApplicationController
       flash[:alert] = @project.errors[:new_namespace].first
     end
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def remove_fork
     return access_denied! unless can?(current_user, :remove_fork_project, @project)
@@ -89,14 +140,14 @@ class ProjectsController < Projects::ApplicationController
       format.html
       format.json do
         load_events
-        pager_json('events/_events', @events.count)
+        pager_json('events/_events', @events.count { |event| event.visible_to_user?(current_user) })
       end
     end
   end
 
   def show
     if @project.import_in_progress?
-      redirect_to project_import_path(@project)
+      redirect_to project_import_path(@project, custom_import_params)
       return
     end
 
@@ -107,6 +158,8 @@ class ProjectsController < Projects::ApplicationController
     respond_to do |format|
       format.html do
         @notification_setting = current_user.notification_settings_for(@project) if current_user
+        @project = @project.present(current_user: current_user)
+
         render_landing_page
       end
 
@@ -121,24 +174,22 @@ class ProjectsController < Projects::ApplicationController
     return access_denied! unless can?(current_user, :remove_project, @project)
 
     ::Projects::DestroyService.new(@project, current_user, {}).async_execute
-    flash[:alert] = _("Project '%{project_name}' will be deleted.") % { project_name: @project.name_with_namespace }
+    flash[:notice] = _("Project '%{project_name}' is in the process of being deleted.") % { project_name: @project.full_name }
 
-    redirect_to dashboard_projects_path, status: 302
+    redirect_to dashboard_projects_path, status: :found
   rescue Projects::DestroyService::DestroyError => ex
-    redirect_to edit_project_path(@project), status: 302, alert: ex.message
+    redirect_to edit_project_path(@project), status: :found, alert: ex.message
   end
 
-  def new_issue_address
+  def new_issuable_address
     return render_404 unless Gitlab::IncomingEmail.supports_issue_creation?
 
     current_user.reset_incoming_email_token!
-    render json: { new_issue_address: @project.new_issue_address(current_user) }
+    render json: { new_address: @project.new_issuable_address(current_user, params[:issuable_type]) }
   end
 
   def archive
-    return access_denied! unless can?(current_user, :archive_project, @project)
-
-    @project.archive!
+    ::Projects::UpdateService.new(@project, current_user, archived: true).execute
 
     respond_to do |format|
       format.html { redirect_to project_path(@project) }
@@ -146,9 +197,7 @@ class ProjectsController < Projects::ApplicationController
   end
 
   def unarchive
-    return access_denied! unless can?(current_user, :archive_project, @project)
-
-    @project.unarchive!
+    ::Projects::UpdateService.new(@project, current_user, archived: false).execute
 
     respond_to do |format|
       format.html { redirect_to project_path(@project) }
@@ -156,7 +205,7 @@ class ProjectsController < Projects::ApplicationController
   end
 
   def housekeeping
-    ::Projects::HousekeepingService.new(@project).execute
+    ::Projects::HousekeepingService.new(@project, :gc).execute
 
     redirect_to(
       project_path(@project),
@@ -164,7 +213,7 @@ class ProjectsController < Projects::ApplicationController
     )
   rescue ::Projects::HousekeepingService::LeaseTaken => ex
     redirect_to(
-      edit_project_path(@project),
+      edit_project_path(@project, anchor: 'js-project-advanced-settings'),
       alert: ex.to_s
     )
   end
@@ -173,19 +222,17 @@ class ProjectsController < Projects::ApplicationController
     @project.add_export_job(current_user: current_user)
 
     redirect_to(
-      edit_project_path(@project),
-      notice: _("Project export started. A download link will be sent by email.")
+      edit_project_path(@project, anchor: 'js-export-project'),
+      notice: _("Project export started. A download link will be sent by email and made available on this page.")
     )
   end
 
   def download_export
-    export_project_path = @project.export_project_path
-
-    if export_project_path
-      send_file export_project_path, disposition: 'attachment'
+    if @project.export_file_exists?
+      send_upload(@project.export_file, attachment: @project.export_file.filename)
     else
       redirect_to(
-        edit_project_path(@project),
+        edit_project_path(@project, anchor: 'js-export-project'),
         alert: _("Project export link has expired. Please generate a new export from your project settings.")
       )
     end
@@ -197,7 +244,8 @@ class ProjectsController < Projects::ApplicationController
     else
       flash[:alert] = _("Project export could not be deleted.")
     end
-    redirect_to(edit_project_path(@project))
+
+    redirect_to(edit_project_path(@project, anchor: 'js-export-project'))
   end
 
   def generate_new_export
@@ -205,7 +253,7 @@ class ProjectsController < Projects::ApplicationController
       export
     else
       redirect_to(
-        edit_project_path(@project),
+        edit_project_path(@project, anchor: 'js-export-project'),
         alert: _("Project export could not be deleted.")
       )
     end
@@ -213,13 +261,14 @@ class ProjectsController < Projects::ApplicationController
 
   def toggle_star
     current_user.toggle_star(@project)
-    @project.reload
+    @project.reset
 
     render json: {
       star_count: @project.star_count
     }
   end
 
+  # rubocop: disable CodeReuse/ActiveRecord
   def refs
     find_refs = params['find']
 
@@ -237,13 +286,13 @@ class ProjectsController < Projects::ApplicationController
 
     if find_branches
       branches = BranchesFinder.new(@repository, params).execute.take(100).map(&:name)
-      options[s_('RefSwitcher|Branches')] = branches
+      options['Branches'] = branches
     end
 
     if find_tags && @repository.tag_count.nonzero?
       tags = TagsFinder.new(@repository, params).execute.take(100).map(&:name)
 
-      options[s_('RefSwitcher|Tags')] = tags
+      options['Tags'] = tags
     end
 
     # If reference is commit id - we should add it to branch/tag selectbox
@@ -254,41 +303,44 @@ class ProjectsController < Projects::ApplicationController
 
     render json: options.to_json
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
-  def preview_markdown
-    result = PreviewMarkdownService.new(@project, current_user, params).execute
+  def resolve
+    @project = Project.find(params[:id])
 
-    render json: {
-      body: view_context.markdown(result[:text]),
-      references: {
-        users: result[:users],
-        commands: view_context.markdown(result[:commands])
-      }
-    }
+    if can?(current_user, :read_project, @project)
+      redirect_to @project
+    else
+      render_404
+    end
   end
 
   private
 
   # Render project landing depending of which features are available
-  # So if page is not availble in the list it renders the next page
+  # So if page is not available in the list it renders the next page
   #
   # pages list order: repository readme, wiki home, issues list, customize workflow
   def render_landing_page
     if can?(current_user, :download_code, @project)
       return render 'projects/no_repo' unless @project.repository_exists?
+
       render 'projects/empty' if @project.empty_repo?
     else
-      if @project.wiki_enabled?
-        @project_wiki = @project.wiki
-        @wiki_home = @project_wiki.find_page('home', params[:version_id])
+      if can?(current_user, :read_wiki, @project)
+        @wiki = @project.wiki
+        @wiki_home = @wiki.find_page('home', params[:version_id])
       elsif @project.feature_available?(:issues, current_user)
-        @issues = issues_collection.page(params[:page])
-        @collection_type = 'Issue'
-        @issuable_meta_data = issuable_meta_data(@issues, @collection_type)
+        @issues = issuables_collection.page(params[:page])
+        @issuable_meta_data = Gitlab::IssuableMetadata.new(current_user, @issues).data
       end
 
       render :show
     end
+  end
+
+  def finder_type
+    IssuesFinder
   end
 
   def determine_layout
@@ -301,59 +353,95 @@ class ProjectsController < Projects::ApplicationController
     end
   end
 
+  # rubocop: disable CodeReuse/ActiveRecord
   def load_events
     projects = Project.where(id: @project.id)
 
     @events = EventCollection
       .new(projects, offset: params[:offset].to_i, filter: event_filter)
       .to_a
-  end
+      .map(&:present)
 
-  def project_params
+    Events::RenderService.new(current_user).execute(@events, atom_request: request.format.atom?)
+  end
+  # rubocop: enable CodeReuse/ActiveRecord
+
+  def project_params(attributes: [])
     params.require(:project)
-      .permit(project_params_attributes)
+      .permit(project_params_attributes + attributes)
+      .merge(import_url_params)
   end
 
   def project_params_attributes
     [
+      :allow_merge_on_skipped_pipeline,
       :avatar,
       :build_allow_git_fetch,
       :build_coverage_regex,
-      :build_timeout_in_minutes,
+      :build_timeout_human_readable,
+      :resolve_outdated_diff_discussions,
       :container_registry_enabled,
       :default_branch,
       :description,
+      :emails_disabled,
+      :external_authorization_classification_label,
       :import_url,
       :issues_tracker,
       :issues_tracker_id,
       :last_activity_at,
       :lfs_enabled,
       :name,
-      :namespace_id,
       :only_allow_merge_if_all_discussions_are_resolved,
       :only_allow_merge_if_pipeline_succeeds,
-      :printing_merge_request_link_enabled,
       :path,
+      :printing_merge_request_link_enabled,
       :public_builds,
+      :remove_source_branch_after_merge,
       :request_access_enabled,
       :runners_token,
       :tag_list,
       :visibility_level,
       :template_name,
+      :template_project_id,
+      :merge_method,
+      :initialize_with_readme,
+      :autoclose_referenced_issues,
+      :suggestion_commit_message,
+      :packages_enabled,
+      :service_desk_enabled,
 
       project_feature_attributes: %i[
         builds_access_level
         issues_access_level
+        forking_access_level
         merge_requests_access_level
         repository_access_level
         snippets_access_level
         wiki_access_level
+        pages_access_level
+        metrics_dashboard_access_level
+      ],
+      project_setting_attributes: %i[
+        show_default_award_emojis
+        squash_option
       ]
     ]
   end
 
+  def project_params_create_attributes
+    [:namespace_id]
+  end
+
+  def custom_import_params
+    {}
+  end
+
+  def active_new_project_tab
+    project_params[:import_url].present? ? 'import' : 'blank'
+  end
+
   def repo_exists?
-    project.repository_exists? && !project.empty_repo? && project.repo
+    project.repository_exists? && !project.empty_repo?
 
   rescue Gitlab::Git::Repository::NoRepository
     project.repository.expire_exists_cache
@@ -389,10 +477,49 @@ class ProjectsController < Projects::ApplicationController
     params[:namespace_id] = project.namespace.to_param
     params[:id] = project.to_param
 
-    url_for(params)
+    url_for(safe_params)
   end
 
   def project_export_enabled
-    render_404 unless current_application_settings.project_export_enabled?
+    render_404 unless Gitlab::CurrentSettings.project_export_enabled?
+  end
+
+  def redirect_git_extension
+    # Redirect from
+    #   localhost/group/project.git
+    # to
+    #   localhost/group/project
+    #
+    redirect_to request.original_url.sub(%r{\.git/?\Z}, '') if params[:format] == 'git'
+  end
+
+  def whitelist_query_limiting
+    Gitlab::QueryLimiting.whitelist('https://gitlab.com/gitlab-org/gitlab-foss/issues/42440')
+  end
+
+  def present_project
+    @project = @project.present(current_user: current_user)
+  end
+
+  def export_rate_limit
+    prefixed_action = "project_#{params[:action]}".to_sym
+
+    project_scope = params[:action] == :download_export ? @project : nil
+
+    if rate_limiter.throttled?(prefixed_action, scope: [current_user, project_scope].compact)
+      rate_limiter.log_request(request, "#{prefixed_action}_request_limit".to_sym, current_user)
+
+      render plain: _('This endpoint has been requested too many times. Try again later.'), status: :too_many_requests
+    end
+  end
+
+  def rate_limiter
+    ::Gitlab::ApplicationRateLimiter
+  end
+
+  def render_edit
+    render 'edit'
   end
 end
+
+ProjectsController.prepend_if_ee('EE::ProjectsController')

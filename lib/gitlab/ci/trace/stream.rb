@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     class Trace
@@ -6,15 +8,18 @@ module Gitlab
         BUFFER_SIZE = 4096
         LIMIT_SIZE = 500.kilobytes
 
-        attr_reader :stream
+        attr_reader :stream, :metrics
 
-        delegate :close, :tell, :seek, :size, :path, :truncate, to: :stream, allow_nil: true
+        delegate :close, :tell, :seek, :size, :url, :truncate, to: :stream, allow_nil: true
 
-        delegate :valid?, to: :stream, as: :present?, allow_nil: true
+        delegate :valid?, to: :stream, allow_nil: true
 
-        def initialize
+        alias_method :present?, :valid?
+
+        def initialize(metrics = Trace::Metrics.new)
           @stream = yield
           @stream&.binmode
+          @metrics = metrics
         end
 
         def valid?
@@ -25,6 +30,10 @@ module Gitlab
           self.path.present?
         end
 
+        def path
+          self.stream.path if self.stream.respond_to?(:path)
+        end
+
         def limit(last_bytes = LIMIT_SIZE)
           if last_bytes < size
             stream.seek(-last_bytes, IO::SEEK_END)
@@ -33,16 +42,19 @@ module Gitlab
         end
 
         def append(data, offset)
-          stream.truncate(offset)
-          stream.seek(0, IO::SEEK_END)
+          data = data.force_encoding(Encoding::BINARY)
+
+          metrics.increment_trace_operation(operation: :streamed)
+          metrics.increment_trace_bytes(data.bytesize)
+
+          stream.seek(offset, IO::SEEK_SET)
           stream.write(data)
-          stream.flush()
+          stream.truncate(offset + data.bytesize)
+          stream.flush
         end
 
         def set(data)
-          truncate(0)
-          stream.write(data)
-          stream.flush()
+          append(data, 0)
         end
 
         def raw(last_lines: nil)
@@ -55,14 +67,10 @@ module Gitlab
           end.force_encoding(Encoding.default_external)
         end
 
-        def html_with_state(state = nil)
-          ::Ci::Ansi2html.convert(stream, state)
-        end
-
         def html(last_lines: nil)
           text = raw(last_lines: last_lines)
           buffer = StringIO.new(text)
-          ::Ci::Ansi2html.convert(buffer).html
+          ::Gitlab::Ci::Ansi2html.convert(buffer).html
         end
 
         def extract_coverage(regex)
@@ -81,7 +89,7 @@ module Gitlab
 
             match = matches.flatten.last
             coverage = match.gsub(/\d+(\.\d+)?/).first
-            return coverage if coverage.present?
+            return coverage if coverage.present? # rubocop:disable Cop/AvoidReturnFromBlocks
           end
 
           nil
@@ -90,7 +98,24 @@ module Gitlab
           # so we just silently ignore error for now
         end
 
+        def extract_sections
+          return [] unless valid?
+
+          lines = to_enum(:each_line_with_pos)
+          parser = SectionParser.new(lines)
+
+          parser.parse!
+          parser.sections
+        end
+
         private
+
+        def each_line_with_pos
+          stream.seek(0, IO::SEEK_SET)
+          stream.each_line do |line|
+            yield [line, stream.pos - line.bytesize]
+          end
+        end
 
         def read_last_lines(limit)
           to_enum(:reverse_line).first(limit).reverse.join
@@ -101,14 +126,13 @@ module Gitlab
           debris = ''
 
           until (buf = read_backward(BUFFER_SIZE)).empty?
-            buf += debris
-            debris, *lines = buf.each_line.to_a
+            debris, *lines = (buf + debris).each_line.to_a
             lines.reverse_each do |line|
-              yield(line.force_encoding('UTF-8'))
+              yield(line.force_encoding(Encoding.default_external))
             end
           end
 
-          yield(debris.force_encoding('UTF-8')) unless debris.empty?
+          yield(debris.force_encoding(Encoding.default_external)) unless debris.empty?
         end
 
         def read_backward(length)

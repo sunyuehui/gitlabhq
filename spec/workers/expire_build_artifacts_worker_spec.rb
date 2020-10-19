@@ -1,50 +1,17 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ExpireBuildArtifactsWorker do
-  include RepoHelpers
-
+RSpec.describe ExpireBuildArtifactsWorker do
   let(:worker) { described_class.new }
 
-  before do
-    Sidekiq::Worker.clear_all
-  end
-
   describe '#perform' do
-    before do
-      build
-    end
-
-    subject! do
-      Sidekiq::Testing.fake! { worker.perform }
-    end
-
-    context 'with expired artifacts' do
-      let(:build) { create(:ci_build, :artifacts, artifacts_expire_at: Time.now - 7.days) }
-
-      it 'enqueues that build' do
-        expect(jobs_enqueued.size).to eq(1)
-        expect(jobs_enqueued[0]["args"]).to eq([build.id])
+    it 'executes a service' do
+      expect_next_instance_of(Ci::DestroyExpiredJobArtifactsService) do |instance|
+        expect(instance).to receive(:execute)
       end
-    end
 
-    context 'with not yet expired artifacts' do
-      let(:build) { create(:ci_build, :artifacts, artifacts_expire_at: Time.now + 7.days) }
-
-      it 'does not enqueue that build' do
-        expect(jobs_enqueued.size).to eq(0)
-      end
-    end
-
-    context 'without expire date' do
-      let(:build) { create(:ci_build, :artifacts) }
-
-      it 'does not enqueue that build' do
-        expect(jobs_enqueued.size).to eq(0)
-      end
-    end
-
-    def jobs_enqueued
-      Sidekiq::Queues.jobs_by_worker['ExpireBuildInstanceArtifactsWorker']
+      worker.perform
     end
   end
 end

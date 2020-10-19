@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe UserAgentDetail do
+require 'spec_helper'
+
+RSpec.describe UserAgentDetail do
   describe '.submittable?' do
     it 'is submittable when not already submitted' do
       detail = build(:user_agent_detail)
@@ -16,8 +18,10 @@ describe UserAgentDetail do
   end
 
   describe '.valid?' do
+    let(:issue) { create(:issue) }
+
     it 'is valid with a subject' do
-      detail = build(:user_agent_detail)
+      detail = build(:user_agent_detail, subject: issue)
 
       expect(detail).to be_valid
     end

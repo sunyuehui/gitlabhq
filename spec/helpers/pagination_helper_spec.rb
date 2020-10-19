@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe PaginationHelper do
+RSpec.describe PaginationHelper do
   describe '#paginate_collection' do
     let(:collection) { User.all.page(1) }
 

@@ -1,15 +1,17 @@
+# frozen_string_literal: true
+
 module PageLayoutHelper
   def page_title(*titles)
     @page_title ||= []
 
     @page_title.push(*titles.compact) if titles.any?
 
-    if show_new_nav? && titles.any? && !defined?(@breadcrumb_title)
+    if titles.any? && !defined?(@breadcrumb_title)
       @breadcrumb_title = @page_title.last
     end
 
-    # Segments are seperated by middot
-    @page_title.join(" \u00b7 ")
+    # Segments are separated by middot
+    @page_title.join(" · ")
   end
 
   # Define or get a description for the current page
@@ -34,12 +36,20 @@ module PageLayoutHelper
     if description.present?
       @page_description = description.squish
     elsif @page_description.present?
-      sanitize(@page_description, tags: []).truncate_words(30)
+      sanitize(@page_description.truncate_words(30), tags: [])
+    end
+  end
+
+  def page_canonical_link(link = nil)
+    if link
+      @page_canonical_link = link
+    else
+      @page_canonical_link
     end
   end
 
   def favicon
-    Rails.env.development? ? 'favicon-blue.ico' : 'favicon.ico'
+    Gitlab::Favicon.main
   end
 
   def page_image
@@ -65,14 +75,14 @@ module PageLayoutHelper
   end
 
   def page_card_meta_tags
-    tags = ''
+    tags = []
 
     page_card_attributes.each_with_index do |pair, i|
       tags << tag(:meta, property: "twitter:label#{i + 1}", content: pair[0])
       tags << tag(:meta, property: "twitter:data#{i + 1}",  content: pair[1])
     end
 
-    tags.html_safe
+    tags.join.html_safe
   end
 
   def header_title(title = nil, title_url = nil)
@@ -80,7 +90,9 @@ module PageLayoutHelper
       @header_title     = title
       @header_title_url = title_url
     else
-      @header_title_url ? link_to(@header_title, @header_title_url) : @header_title
+      return @header_title unless @header_title_url
+
+      breadcrumb_list_item(link_to(@header_title, @header_title_url))
     end
   end
 
@@ -100,6 +112,16 @@ module PageLayoutHelper
     end
   end
 
+  # This helper ensures there is always a default `Gitlab::SearchContext` available
+  # to all controller that use the application layout.
+  def search_context
+    strong_memoize(:search_context) do
+      next super if defined?(super)
+
+      Gitlab::SearchContext::Builder.new(controller.view_context).build!
+    end
+  end
+
   def fluid_layout
     current_user && current_user.layout == "fluid"
   end
@@ -113,16 +135,16 @@ module PageLayoutHelper
   end
 
   def container_class
-    css_class = "container-fluid"
+    css_class = ["container-fluid"]
 
     unless fluid_layout
-      css_class += " container-limited"
+      css_class << "container-limited"
     end
 
     if blank_container
-      css_class += " container-blank"
+      css_class << "container-blank"
     end
 
-    css_class
+    css_class.join(' ')
   end
 end

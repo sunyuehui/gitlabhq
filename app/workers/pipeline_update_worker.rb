@@ -1,9 +1,17 @@
+# frozen_string_literal: true
+
+# This worker is deprecated and will be removed in 14.0
+# See: https://gitlab.com/gitlab-org/gitlab/-/issues/232806
 class PipelineUpdateWorker
-  include Sidekiq::Worker
+  include ApplicationWorker
   include PipelineQueue
 
-  def perform(pipeline_id)
-    Ci::Pipeline.find_by(id: pipeline_id)
-      .try(:update_status)
+  queue_namespace :pipeline_processing
+  urgency :high
+
+  idempotent!
+
+  def perform(_pipeline_id)
+    # no-op
   end
 end

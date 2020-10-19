@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'securerandom'
 
 module Gitlab
@@ -10,6 +12,9 @@ module Gitlab
   # ExclusiveLease.
   #
   class ExclusiveLease
+    PREFIX = 'gitlab:exclusive_lease'
+    NoKey = Class.new(ArgumentError)
+
     LUA_CANCEL_SCRIPT = <<~EOS.freeze
       local key, uuid = KEYS[1], ARGV[1]
       if redis.call("get", key) == uuid then
@@ -25,20 +30,44 @@ module Gitlab
       end
     EOS
 
-    def self.cancel(key, uuid)
+    def self.get_uuid(key)
       Gitlab::Redis::SharedState.with do |redis|
-        redis.eval(LUA_CANCEL_SCRIPT, keys: [redis_shared_state_key(key)], argv: [uuid])
+        redis.get(redis_shared_state_key(key)) || false
+      end
+    end
+
+    def self.cancel(key, uuid)
+      return unless key.present?
+
+      Gitlab::Redis::SharedState.with do |redis|
+        redis.eval(LUA_CANCEL_SCRIPT, keys: [ensure_prefixed_key(key)], argv: [uuid])
       end
     end
 
     def self.redis_shared_state_key(key)
-      "gitlab:exclusive_lease:#{key}"
+      "#{PREFIX}:#{key}"
     end
 
-    def initialize(key, timeout:)
+    def self.ensure_prefixed_key(key)
+      raise NoKey unless key.present?
+
+      key.start_with?(PREFIX) ? key : redis_shared_state_key(key)
+    end
+
+    # Removes any existing exclusive_lease from redis
+    # Don't run this in a live system without making sure no one is using the leases
+    def self.reset_all!(scope = '*')
+      Gitlab::Redis::SharedState.with do |redis|
+        redis.scan_each(match: redis_shared_state_key(scope)).each do |key|
+          redis.del(key)
+        end
+      end
+    end
+
+    def initialize(key, uuid: nil, timeout:)
       @redis_shared_state_key = self.class.redis_shared_state_key(key)
       @timeout = timeout
-      @uuid = SecureRandom.uuid
+      @uuid = uuid || SecureRandom.uuid
     end
 
     # Try to obtain the lease. Return lease UUID on success,
@@ -65,5 +94,23 @@ module Gitlab
         redis.exists(@redis_shared_state_key)
       end
     end
+
+    # Returns the TTL of the Redis key.
+    #
+    # This method will return `nil` if no TTL could be obtained.
+    def ttl
+      Gitlab::Redis::SharedState.with do |redis|
+        ttl = redis.ttl(@redis_shared_state_key)
+
+        ttl if ttl > 0
+      end
+    end
+
+    # Gives up this lease, allowing it to be obtained by others.
+    def cancel
+      self.class.cancel(@redis_shared_state_key, @uuid)
+    end
   end
 end
+
+Gitlab::ExclusiveLease.prepend_if_ee('EE::Gitlab::ExclusiveLease')

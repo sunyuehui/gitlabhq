@@ -1,135 +1,108 @@
+# frozen_string_literal: true
+
 module Issues
-  class MoveService < Issues::BaseService
+  class MoveService < Issuable::Clone::BaseService
     MoveError = Class.new(StandardError)
 
-    def execute(issue, new_project)
-      @old_issue = issue
-      @old_project = @project
-      @new_project = new_project
+    def execute(issue, target_project)
+      @target_project = target_project
 
-      unless issue.can_move?(current_user, new_project)
-        raise MoveError, 'Cannot move issue due to insufficient permissions!'
+      unless issue.can_move?(current_user, @target_project)
+        raise MoveError, s_('MoveIssue|Cannot move issue due to insufficient permissions!')
       end
 
-      if @project == new_project
-        raise MoveError, 'Cannot move issue to project it originates from!'
+      if @project == @target_project
+        raise MoveError, s_('MoveIssue|Cannot move issue to project it originates from!')
       end
 
-      # Using transaction because of a high resources footprint
-      # on rewriting notes (unfolding references)
-      #
-      ActiveRecord::Base.transaction do
-        # New issue tasks
-        #
-        @new_issue = create_new_issue
-
-        rewrite_notes
-        rewrite_award_emoji
-        add_note_moved_from
-
-        # Old issue tasks
-        #
-        add_note_moved_to
-        close_issue
-        mark_as_moved
-      end
+      super
 
       notify_participants
 
-      @new_issue
+      # Updates old issue sent notifications allowing
+      # to receive service desk emails on the new moved issue.
+      update_service_desk_sent_notifications
+
+      queue_copy_designs
+
+      new_entity
     end
 
     private
 
-    def create_new_issue
-      new_params = { id: nil, iid: nil, label_ids: cloneable_label_ids,
-                     milestone_id: cloneable_milestone_id,
-                     project: @new_project, author: @old_issue.author,
-                     description: rewrite_content(@old_issue.description) }
+    attr_reader :target_project
 
-      new_params = @old_issue.serializable_hash.symbolize_keys.merge(new_params)
-      CreateService.new(@new_project, @current_user, new_params).execute
+    def update_service_desk_sent_notifications
+      return unless original_entity.from_service_desk?
+
+      original_entity
+        .sent_notifications.update_all(project_id: new_entity.project_id, noteable_id: new_entity.id)
     end
 
-    def cloneable_label_ids
-      params = {
-        project_id: @new_project.id,
-        title: @old_issue.labels.pluck(:title)
-      }
+    def update_old_entity
+      super
 
-      LabelsFinder.new(current_user, params).execute.pluck(:id)
+      rewrite_related_issues
+      mark_as_moved
     end
 
-    def cloneable_milestone_id
-      title = @old_issue.milestone&.title
-      return unless title
+    def create_new_entity
+      new_params = {
+                     id: nil,
+                     iid: nil,
+                     project: target_project,
+                     author: original_entity.author,
+                     assignee_ids: original_entity.assignee_ids,
+                     moved_issue: true
+                   }
 
-      if @new_project.group && can?(current_user, :read_group, @new_project.group)
-        group_id = @new_project.group.id
-      end
+      new_params = original_entity.serializable_hash.symbolize_keys.merge(new_params)
 
-      params =
-        { title: title, project_ids: @new_project.id, group_ids: group_id }
-
-      milestones = MilestonesFinder.new(params).execute
-      milestones.first&.id
+      # Skip creation of system notes for existing attributes of the issue. The system notes of the old
+      # issue are copied over so we don't want to end up with duplicate notes.
+      CreateService.new(@target_project, @current_user, new_params).execute(skip_system_notes: true)
     end
 
-    def rewrite_notes
-      @old_issue.notes.find_each do |note|
-        new_note = note.dup
-        new_params = { project: @new_project, noteable: @new_issue,
-                       note: rewrite_content(new_note.note),
-                       created_at: note.created_at,
-                       updated_at: note.updated_at }
+    def queue_copy_designs
+      return unless original_entity.designs.present?
 
-        new_note.update(new_params)
-      end
-    end
+      response = DesignManagement::CopyDesignCollection::QueueService.new(
+        current_user,
+        original_entity,
+        new_entity
+      ).execute
 
-    def rewrite_award_emoji
-      @old_issue.award_emoji.each do |award|
-        new_award = award.dup
-        new_award.awardable = @new_issue
-        new_award.save
-      end
-    end
-
-    def rewrite_content(content)
-      return unless content
-
-      rewriters = [Gitlab::Gfm::ReferenceRewriter,
-                   Gitlab::Gfm::UploadsRewriter]
-
-      rewriters.inject(content) do |text, klass|
-        rewriter = klass.new(text, @old_project, @current_user)
-        rewriter.rewrite(@new_project)
-      end
-    end
-
-    def close_issue
-      close_service = CloseService.new(@old_project, @current_user)
-      close_service.execute(@old_issue, notifications: false, system_note: false)
-    end
-
-    def add_note_moved_from
-      SystemNoteService.noteable_moved(@new_issue, @new_project,
-                                       @old_issue, @current_user,
-                                       direction: :from)
-    end
-
-    def add_note_moved_to
-      SystemNoteService.noteable_moved(@old_issue, @old_project,
-                                       @new_issue, @current_user,
-                                       direction: :to)
+      log_error(response.message) if response.error?
     end
 
     def mark_as_moved
-      @old_issue.update(moved_to: @new_issue)
+      original_entity.update(moved_to: new_entity)
+    end
+
+    def rewrite_related_issues
+      source_issue_links = IssueLink.for_source_issue(original_entity)
+      source_issue_links.update_all(source_id: new_entity.id)
+
+      target_issue_links = IssueLink.for_target_issue(original_entity)
+      target_issue_links.update_all(target_id: new_entity.id)
     end
 
     def notify_participants
-      notification_service.issue_moved(@old_issue, @new_issue, @current_user)
+      notification_service.async.issue_moved(original_entity, new_entity, @current_user)
+    end
+
+    def add_note_from
+      SystemNoteService.noteable_moved(new_entity, target_project,
+                                       original_entity, current_user,
+                                       direction: :from)
+    end
+
+    def add_note_to
+      SystemNoteService.noteable_moved(original_entity, old_project,
+                                       new_entity, current_user,
+                                       direction: :to)
     end
   end
 end
+
+Issues::MoveService.prepend_if_ee('EE::Issues::MoveService')

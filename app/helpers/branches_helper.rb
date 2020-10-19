@@ -1,21 +1,6 @@
+# frozen_string_literal: true
+
 module BranchesHelper
-  def filter_branches_path(options = {})
-    exist_opts = {
-      search: params[:search],
-      sort: params[:sort]
-    }
-
-    options = exist_opts.merge(options)
-
-    project_branches_path(@project, @id, options)
-  end
-
-  def can_push_branch?(project, branch_name)
-    return false unless project.repository.branch_exists?(branch_name)
-
-    ::Gitlab::UserAccess.new(current_user, project: project).can_push_to_branch?(branch_name)
-  end
-
   def project_branches
     options_for_select(@project.repository.branch_names, @project.default_branch)
   end
@@ -23,4 +8,14 @@ module BranchesHelper
   def protected_branch?(project, branch)
     ProtectedBranch.protected?(project, branch.name)
   end
+
+  def access_levels_data(access_levels)
+    return [] unless access_levels
+
+    access_levels.map do |level|
+      { id: level.id, type: :role, access_level: level.access_level }
+    end
+  end
 end
+
+BranchesHelper.prepend_if_ee('EE::BranchesHelper')

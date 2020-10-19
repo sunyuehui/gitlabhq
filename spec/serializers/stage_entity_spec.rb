@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe StageEntity do
+RSpec.describe StageEntity do
   let(:pipeline) { create(:ci_pipeline) }
   let(:request) { double('request') }
   let(:user) { create(:user) }
@@ -26,8 +28,8 @@ describe StageEntity do
     end
 
     it 'contains detailed status' do
-      expect(subject[:status]).to include :text, :label, :group, :icon
-      expect(subject[:status][:label]).to eq 'passed'
+      expect(subject[:status]).to include :text, :label, :group, :icon, :tooltip
+      expect(subject[:status][:label]).to eq s_('CiStatusLabel|passed')
     end
 
     it 'contains valid name' do
@@ -45,7 +47,11 @@ describe StageEntity do
     end
 
     it 'contains stage title' do
-      expect(subject[:title]).to eq 'test: passed'
+      expect(subject[:title]).to eq "test: #{s_('CiStatusLabel|passed')}"
+    end
+
+    it 'does not contain play_details info' do
+      expect(subject[:status][:action]).not_to be_present
     end
 
     context 'when the jobs should be grouped' do
@@ -64,6 +70,30 @@ describe StageEntity do
           groups = subject[:groups].map { |group| group[:name] }
           expect(groups).to include('generic')
         end
+      end
+    end
+
+    context 'with a skipped stage ' do
+      let(:stage) { create(:ci_stage_entity, status: 'skipped') }
+
+      it 'contains play_all_manual' do
+        expect(subject[:status][:action]).to be_present
+      end
+    end
+
+    context 'with a scheduled stage ' do
+      let(:stage) { create(:ci_stage_entity, status: 'scheduled') }
+
+      it 'contains play_all_manual' do
+        expect(subject[:status][:action]).to be_present
+      end
+    end
+
+    context 'with a manual stage ' do
+      let(:stage) { create(:ci_stage_entity, status: 'manual') }
+
+      it 'contains play_all_manual' do
+        expect(subject[:status][:action]).to be_present
       end
     end
   end

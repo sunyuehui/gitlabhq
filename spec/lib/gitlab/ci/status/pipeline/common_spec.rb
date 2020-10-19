@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Status::Pipeline::Common do
+RSpec.describe Gitlab::Ci::Status::Pipeline::Common do
   let(:user) { create(:user) }
   let(:project) { create(:project, :private) }
   let(:pipeline) { create(:ci_pipeline, project: project) }
@@ -18,7 +20,7 @@ describe Gitlab::Ci::Status::Pipeline::Common do
   describe '#has_details?' do
     context 'when user has access to read pipeline' do
       before do
-        project.team << [user, :developer]
+        project.add_developer(user)
       end
 
       it { is_expected.to have_details }

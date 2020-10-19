@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::RequirementsTxtLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::RequirementsTxtLinker do
   describe '.support?' do
     it 'supports requirements.txt' do
       expect(described_class.support?('requirements.txt')).to be_truthy

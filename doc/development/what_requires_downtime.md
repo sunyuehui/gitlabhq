@@ -5,73 +5,70 @@ GitLab offline, others do require a downtime period. This guide describes
 various operations, their impact, and how to perform them without requiring
 downtime.
 
-## Adding Columns
-
-On PostgreSQL you can safely add a new column to an existing table as long as it
-does **not** have a default value. For example, this query would not require
-downtime:
-
-```sql
-ALTER TABLE projects ADD COLUMN random_value int;
-```
-
-Add a column _with_ a default however does require downtime. For example,
-consider this query:
-
-```sql
-ALTER TABLE projects ADD COLUMN random_value int DEFAULT 42;
-```
-
-This requires updating every single row in the `projects` table so that
-`random_value` is set to `42` by default. This requires updating all rows and
-indexes in a table. This in turn acquires enough locks on the table for it to
-effectively block any other queries.
-
-As of MySQL 5.6 adding a column to a table is still quite an expensive
-operation, even when using `ALGORITHM=INPLACE` and `LOCK=NONE`. This means
-downtime _may_ be required when modifying large tables as otherwise the
-operation could potentially take hours to complete.
-
-Adding a column with a default value _can_ be done without requiring downtime
-when using the migration helper method
-`Gitlab::Database::MigrationHelpers#add_column_with_default`. This method works
-similar to `add_column` except it updates existing rows in batches without
-blocking access to the table being modified. See ["Adding Columns With Default
-Values"](migration_style_guide.html#adding-columns-with-default-values) for more
-information on how to use this method.
-
 ## Dropping Columns
 
 Removing columns is tricky because running GitLab processes may still be using
-the columns. To work around this you will need two separate merge requests and
-releases: one to ignore and then remove the column, and one to remove the ignore
-rule.
+the columns. To work around this safely, you will need three steps in three releases:
 
-### Step 1: Ignoring The Column
+1. Ignoring the column (release M)
+1. Dropping the column (release M+1)
+1. Removing the ignore rule (release M+2)
+
+The reason we spread this out across three releases is that dropping a column is
+a destructive operation that can't be rolled back easily.
+
+Following this procedure helps us to make sure there are no deployments to GitLab.com
+and upgrade processes for self-managed installations that lump together any of these steps.
+
+### Step 1: Ignoring the column (release M)
 
 The first step is to ignore the column in the application code. This is
 necessary because Rails caches the columns and re-uses this cache in various
-places. This can be done by including the `IgnorableColumn` module into the
-model, followed by defining the columns to ignore. For example, to ignore
+places. This can be done by defining the columns to ignore. For example, to ignore
 `updated_at` in the User model you'd use the following:
 
 ```ruby
-class User < ActiveRecord::Base
-  include IgnorableColumn
-
-  ignore_column :updated_at
+class User < ApplicationRecord
+  include IgnorableColumns
+  ignore_column :updated_at, remove_with: '12.7', remove_after: '2020-01-22'
 end
 ```
 
-Once added you should create a _post-deployment_ migration that removes the
-column. Both these changes should be submitted in the same merge request.
+Multiple columns can be ignored, too:
 
-### Step 2: Removing The Ignore Rule
+```ruby
+ignore_columns %i[updated_at created_at], remove_with: '12.7', remove_after: '2020-01-22'
+```
 
-Once the changes from step 1 have been released & deployed you can set up a
-separate merge request that removes the ignore rule. This merge request can
-simply remove the `ignore_column` line, and the `include IgnorableColumn` line
-if no other `ignore_column` calls remain.
+We require indication of when it is safe to remove the column ignore with:
+
+- `remove_with`: set to a GitLab release typically two releases (M+2) after adding the
+  column ignore.
+- `remove_after`: set to a date after which we consider it safe to remove the column
+  ignore, typically last date of the development cycle of release M+2 - namely the release date.
+
+This information allows us to reason better about column ignores and makes sure we
+don't remove column ignores too early for both regular releases and deployments to GitLab.com. For
+example, this avoids a situation where we deploy a bulk of changes that include both changes
+to ignore the column and subsequently remove the column ignore (which would result in a downtime).
+
+In this example, the change to ignore the column went into release 12.5.
+
+### Step 2: Dropping the column (release M+1)
+
+Continuing our example, dropping the column goes into a _post-deployment_ migration in release 12.6:
+
+```ruby
+ remove_column :user, :updated_at
+```
+
+### Step 3: Removing the ignore rule (release M+2)
+
+With the next release, in this example 12.7, we set up another merge request to remove the ignore rule.
+This removes the `ignore_column` line and - if not needed anymore - also the inclusion of `IgnoreableColumns`.
+
+This should only get merged with the release indicated with `remove_with` and once
+the `remove_after` date has passed.
 
 ## Renaming Columns
 
@@ -88,7 +85,7 @@ renaming. For example
 
 ```ruby
 # A regular migration in db/migrate
-class RenameUsersUpdatedAtToUpdatedAtTimestamp < ActiveRecord::Migration
+class RenameUsersUpdatedAtToUpdatedAtTimestamp < ActiveRecord::Migration[4.2]
   include Gitlab::Database::MigrationHelpers
 
   disable_ddl_transaction!
@@ -98,7 +95,7 @@ class RenameUsersUpdatedAtToUpdatedAtTimestamp < ActiveRecord::Migration
   end
 
   def down
-    cleanup_concurrent_column_rename :users, :updated_at_timestamp, :updated_at
+    undo_rename_column_concurrently :users, :updated_at, :updated_at_timestamp
   end
 end
 ```
@@ -106,7 +103,8 @@ end
 This will take care of renaming the column, ensuring data stays in sync, copying
 over indexes and foreign keys, etc.
 
-**NOTE:** if a column contains 1 or more indexes that do not contain the name of
+NOTE: **Note:**
+If a column contains 1 or more indexes that do not contain the name of
 the original column, the above procedure will fail. In this case you will first
 need to rename these indexes.
 
@@ -118,7 +116,7 @@ We can perform this cleanup using
 
 ```ruby
 # A post-deployment migration in db/post_migrate
-class CleanupUsersUpdatedAtRename < ActiveRecord::Migration
+class CleanupUsersUpdatedAtRename < ActiveRecord::Migration[4.2]
   include Gitlab::Database::MigrationHelpers
 
   disable_ddl_transaction!
@@ -128,19 +126,30 @@ class CleanupUsersUpdatedAtRename < ActiveRecord::Migration
   end
 
   def down
-    rename_column_concurrently :users, :updated_at_timestamp, :updated_at
+    undo_cleanup_concurrent_column_rename :users, :updated_at, :updated_at_timestamp
   end
 end
 ```
 
+NOTE: **Note:**
+If you're renaming a [large table](https://gitlab.com/gitlab-org/gitlab/-/blob/master/rubocop/rubocop-migrations.yml#L3), please carefully consider the state when the first migration has run but the second cleanup migration hasn't been run yet.
+With [Canary](https://gitlab.com/gitlab-com/gl-infra/readiness/-/tree/master/library/canary/) it is possible that the system runs in this state for a significant amount of time.
+
 ## Changing Column Constraints
 
-Adding or removing a NOT NULL clause (or another constraint) can typically be
+Adding or removing a `NOT NULL` clause (or another constraint) can typically be
 done without requiring downtime. However, this does require that any application
 changes are deployed _first_. Thus, changing the constraints of a column should
 happen in a post-deployment migration.
-NOTE: Avoid using `change_column` as it produces inefficient query because it re-defines
-the whole column type. For example, to add a NOT NULL constraint, prefer `change_column_null `
+
+NOTE: Avoid using `change_column` as it produces an inefficient query because it re-defines
+the whole column type.
+
+You can check the following guides for each specific use case:
+
+- [Adding foreign-key constraints](migration_style_guide.md#adding-foreign-key-constraints)
+- [Adding `NOT NULL` constraints](database/not_null_constraints.md)
+- [Adding limits to text columns](database/strings_and_the_text_data_type.md)
 
 ## Changing Column Types
 
@@ -157,7 +166,7 @@ as follows:
 
 ```ruby
 # A regular migration in db/migrate
-class ChangeUsersUsernameStringToText < ActiveRecord::Migration
+class ChangeUsersUsernameStringToText < ActiveRecord::Migration[4.2]
   include Gitlab::Database::MigrationHelpers
 
   disable_ddl_transaction!
@@ -167,7 +176,7 @@ class ChangeUsersUsernameStringToText < ActiveRecord::Migration
   end
 
   def down
-    cleanup_concurrent_column_type_change :users, :username
+    undo_change_column_type_concurrently :users, :username
   end
 end
 ```
@@ -178,62 +187,162 @@ Next we need to clean up our changes using a post-deployment migration:
 
 ```ruby
 # A post-deployment migration in db/post_migrate
-class ChangeUsersUsernameStringToTextCleanup < ActiveRecord::Migration
+class ChangeUsersUsernameStringToTextCleanup < ActiveRecord::Migration[4.2]
   include Gitlab::Database::MigrationHelpers
 
   disable_ddl_transaction!
 
   def up
-    cleanup_concurrent_column_type_change :users
+    cleanup_concurrent_column_type_change :users, :username
   end
 
   def down
-    change_column_type_concurrently :users, :username, :string
+    undo_cleanup_concurrent_column_type_change :users, :username, :string
   end
 end
 ```
 
 And that's it, we're done!
 
-## Adding Indexes
+### Casting data to a new type
 
-Adding indexes is an expensive process that blocks INSERT and UPDATE queries for
-the duration. When using PostgreSQL one can work arounds this by using the
-`CONCURRENTLY` option:
+Some type changes require casting data to a new type. For example when changing from `text` to `jsonb`.
+In this case, use the `type_cast_function` option.
+Make sure there is no bad data and the cast will always succeed. You can also provide a custom function that handles
+casting errors.
 
-```sql
-CREATE INDEX CONCURRENTLY index_name ON projects (column_name);
-```
-
-Migrations can take advantage of this by using the method
-`add_concurrent_index`. For example:
+Example migration:
 
 ```ruby
-class MyMigration < ActiveRecord::Migration
   def up
-    add_concurrent_index :projects, :column_name
+    change_column_type_concurrently :users, :settings, :jsonb, type_cast_function: 'jsonb'
+  end
+```
+
+## Changing The Schema For Large Tables
+
+While `change_column_type_concurrently` and `rename_column_concurrently` can be
+used for changing the schema of a table without downtime, it doesn't work very
+well for large tables. Because all of the work happens in sequence the migration
+can take a very long time to complete, preventing a deployment from proceeding.
+They can also produce a lot of pressure on the database due to it rapidly
+updating many rows in sequence.
+
+To reduce database pressure you should instead use
+`change_column_type_using_background_migration` or `rename_column_using_background_migration`
+when migrating a column in a large table (e.g. `issues`). These methods work
+similarly to the concurrent counterparts but uses background migration to spread
+the work / load over a longer time period, without slowing down deployments.
+
+For example, to change the column type using a background migration:
+
+```ruby
+class ExampleMigration < ActiveRecord::Migration[4.2]
+  include Gitlab::Database::MigrationHelpers
+
+  disable_ddl_transaction!
+
+  class Issue < ActiveRecord::Base
+    self.table_name = 'issues'
+
+    include EachBatch
+
+    def self.to_migrate
+      where('closed_at IS NOT NULL')
+    end
+  end
+
+  def up
+    change_column_type_using_background_migration(
+      Issue.to_migrate,
+      :closed_at,
+      :datetime_with_timezone
+    )
   end
 
   def down
-    remove_index(:projects, :column_name) if index_exists?(:projects, :column_name)
+    change_column_type_using_background_migration(
+      Issue.to_migrate,
+      :closed_at,
+      :datetime
+    )
   end
 end
 ```
 
-Note that `add_concurrent_index` can not be reversed automatically, thus you
-need to manually define `up` and `down`.
+This would change the type of `issues.closed_at` to `timestamp with time zone`.
 
-When running this on PostgreSQL the `CONCURRENTLY` option mentioned above is
-used. On MySQL this method produces a regular `CREATE INDEX` query.
+Keep in mind that the relation passed to
+`change_column_type_using_background_migration` _must_ include `EachBatch`,
+otherwise it will raise a `TypeError`.
 
-MySQL doesn't really have a workaround for this. Supposedly it _can_ create
-indexes without the need for downtime but only for variable width columns. The
-details on this are a bit sketchy. Since it's better to be safe than sorry one
-should assume that adding indexes requires downtime on MySQL.
+This migration then needs to be followed in a separate release (_not_ a patch
+release) by a cleanup migration, which should steal from the queue and handle
+any remaining rows. For example:
+
+```ruby
+class MigrateRemainingIssuesClosedAt < ActiveRecord::Migration[4.2]
+  include Gitlab::Database::MigrationHelpers
+
+  DOWNTIME = false
+
+  disable_ddl_transaction!
+
+  class Issue < ActiveRecord::Base
+    self.table_name = 'issues'
+    include EachBatch
+  end
+
+  def up
+    Gitlab::BackgroundMigration.steal('CopyColumn')
+    Gitlab::BackgroundMigration.steal('CleanupConcurrentTypeChange')
+
+    migrate_remaining_rows if migrate_column_type?
+  end
+
+  def down
+    # Previous migrations already revert the changes made here.
+  end
+
+  def migrate_remaining_rows
+    Issue.where('closed_at_for_type_change IS NULL AND closed_at IS NOT NULL').each_batch do |batch|
+      batch.update_all('closed_at_for_type_change = closed_at')
+    end
+
+    cleanup_concurrent_column_type_change(:issues, :closed_at)
+  end
+
+  def migrate_column_type?
+    # Some environments may have already executed the previous version of this
+    # migration, thus we don't need to migrate those environments again.
+    column_for('issues', 'closed_at').type == :datetime # rubocop:disable Migration/Datetime
+  end
+end
+```
+
+The same applies to `rename_column_using_background_migration`:
+
+1. Create a migration using the helper, which will schedule background
+   migrations to spread the writes over a longer period of time.
+1. In the next monthly release, create a clean-up migration to steal from the
+   Sidekiq queues, migrate any missing rows, and cleanup the rename. This
+   migration should skip the steps after stealing from the Sidekiq queues if the
+   column has already been renamed.
+
+For more information, see [the documentation on cleaning up background
+migrations](background_migrations.md#cleaning-up).
+
+## Adding Indexes
+
+Adding indexes does not require downtime when `add_concurrent_index`
+is used.
+
+See also [Migration Style Guide](migration_style_guide.md#adding-indexes)
+for more information.
 
 ## Dropping Indexes
 
-Dropping an index does not require downtime on both PostgreSQL and MySQL.
+Dropping an index does not require downtime.
 
 ## Adding Tables
 
@@ -243,6 +352,11 @@ This operation is safe as there's no code using the table just yet.
 
 Dropping tables can be done safely using a post-deployment migration, but only
 if the application no longer uses the table.
+
+## Renaming Tables
+
+Renaming tables requires downtime as an application may continue
+using the old table name during/after a database migration.
 
 ## Adding Foreign Keys
 
@@ -257,7 +371,7 @@ transaction this means this approach would require downtime.
 
 GitLab allows you to work around this by using
 `Gitlab::Database::MigrationHelpers#add_concurrent_foreign_key`. This method
-ensures that when PostgreSQL is used no downtime is needed.
+ensures that no downtime is needed.
 
 ## Removing Foreign Keys
 

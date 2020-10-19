@@ -1,14 +1,17 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::EtagCaching::Middleware do
+RSpec.describe Gitlab::EtagCaching::Middleware do
   let(:app) { double(:app) }
   let(:middleware) { described_class.new(app) }
   let(:app_status_code) { 200 }
   let(:if_none_match) { nil }
-  let(:enabled_path) { '/gitlab-org/gitlab-ce/noteable/issue/1/notes' }
+  let(:enabled_path) { '/gitlab-org/gitlab-foss/noteable/issue/1/notes' }
+  let(:endpoint) { 'issue_notes' }
 
   context 'when ETag caching is not enabled for current route' do
-    let(:path) { '/gitlab-org/gitlab-ce/tree/master/noteable/issue/1/notes' }
+    let(:path) { '/gitlab-org/gitlab-foss/tree/master/noteable/issue/1/notes' }
 
     before do
       mock_app_response
@@ -36,8 +39,9 @@ describe Gitlab::EtagCaching::Middleware do
     end
 
     it 'generates ETag' do
-      expect_any_instance_of(Gitlab::EtagCaching::Store)
-        .to receive(:touch).and_return('123')
+      expect_next_instance_of(Gitlab::EtagCaching::Store) do |instance|
+        expect(instance).to receive(:touch).and_return('123')
+      end
 
       middleware.call(build_request(path, if_none_match))
     end
@@ -47,9 +51,9 @@ describe Gitlab::EtagCaching::Middleware do
 
       it 'tracks "etag_caching_key_not_found" event' do
         expect(Gitlab::Metrics).to receive(:add_event)
-          .with(:etag_caching_middleware_used, endpoint: 'issue_notes')
+          .with(:etag_caching_middleware_used, endpoint: endpoint)
         expect(Gitlab::Metrics).to receive(:add_event)
-          .with(:etag_caching_key_not_found, endpoint: 'issue_notes')
+          .with(:etag_caching_key_not_found, endpoint: endpoint)
 
         middleware.call(build_request(path, if_none_match))
       end
@@ -68,6 +72,37 @@ describe Gitlab::EtagCaching::Middleware do
       _, headers, _ = middleware.call(build_request(path, if_none_match))
 
       expect(headers['ETag']).to eq 'W/"123"'
+    end
+  end
+
+  shared_examples 'sends a process_action.action_controller notification' do |status_code|
+    let(:expected_items) do
+      {
+        etag_route: endpoint,
+        params:     {},
+        format:     :html,
+        method:     'GET',
+        path:       enabled_path,
+        status:     status_code
+      }
+    end
+
+    it 'sends the expected payload' do
+      payload = payload_for('process_action.action_controller') do
+        middleware.call(build_request(path, if_none_match))
+      end
+
+      expect(payload).to include(expected_items)
+
+      expect(payload[:headers].env['HTTP_IF_NONE_MATCH']).to eq('W/"123"')
+    end
+
+    it 'log subscriber processes action' do
+      expect_any_instance_of(ActionController::LogSubscriber).to receive(:process_action)
+        .with(instance_of(ActiveSupport::Notifications::Event))
+        .and_call_original
+
+      middleware.call(build_request(path, if_none_match))
     end
   end
 
@@ -91,6 +126,8 @@ describe Gitlab::EtagCaching::Middleware do
       expect(status).to eq 304
     end
 
+    it_behaves_like 'sends a process_action.action_controller notification', 304
+
     it 'returns empty body' do
       _, _, body = middleware.call(build_request(path, if_none_match))
 
@@ -99,9 +136,9 @@ describe Gitlab::EtagCaching::Middleware do
 
     it 'tracks "etag_caching_cache_hit" event' do
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_middleware_used, endpoint: 'issue_notes')
+        .with(:etag_caching_middleware_used, endpoint: endpoint)
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_cache_hit, endpoint: 'issue_notes')
+        .with(:etag_caching_cache_hit, endpoint: endpoint)
 
       middleware.call(build_request(path, if_none_match))
     end
@@ -117,6 +154,8 @@ describe Gitlab::EtagCaching::Middleware do
 
         expect(status).to eq 429
       end
+
+      it_behaves_like 'sends a process_action.action_controller notification', 429
     end
   end
 
@@ -138,9 +177,9 @@ describe Gitlab::EtagCaching::Middleware do
       mock_app_response
 
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_middleware_used, endpoint: 'issue_notes')
+        .with(:etag_caching_middleware_used, endpoint: endpoint)
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_resource_changed, endpoint: 'issue_notes')
+        .with(:etag_caching_resource_changed, endpoint: endpoint)
 
       middleware.call(build_request(path, if_none_match))
     end
@@ -156,9 +195,9 @@ describe Gitlab::EtagCaching::Middleware do
 
     it 'tracks "etag_caching_header_missing" event' do
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_middleware_used, endpoint: 'issue_notes')
+        .with(:etag_caching_middleware_used, endpoint: endpoint)
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_header_missing, endpoint: 'issue_notes')
+        .with(:etag_caching_header_missing, endpoint: endpoint)
 
       middleware.call(build_request(path, if_none_match))
     end
@@ -175,9 +214,9 @@ describe Gitlab::EtagCaching::Middleware do
         'SCRIPT_NAME' => '/relative-gitlab'
       }
 
-      expect_any_instance_of(Gitlab::EtagCaching::Store)
-        .to receive(:get).with("/relative-gitlab#{enabled_path}")
-        .and_return(nil)
+      expect_next_instance_of(Gitlab::EtagCaching::Store) do |instance|
+        expect(instance).to receive(:get).with("/relative-gitlab#{enabled_path}").and_return(nil)
+      end
 
       middleware.call(env)
     end
@@ -188,11 +227,27 @@ describe Gitlab::EtagCaching::Middleware do
   end
 
   def mock_value_in_store(value)
-    allow_any_instance_of(Gitlab::EtagCaching::Store)
-      .to receive(:get).and_return(value)
+    allow_next_instance_of(Gitlab::EtagCaching::Store) do |instance|
+      allow(instance).to receive(:get).and_return(value)
+    end
   end
 
   def build_request(path, if_none_match)
-    { 'PATH_INFO' => path, 'HTTP_IF_NONE_MATCH' => if_none_match }
+    { 'PATH_INFO' => path,
+      'HTTP_IF_NONE_MATCH' => if_none_match,
+      'rack.input' => '',
+      'REQUEST_METHOD' => 'GET' }
+  end
+
+  def payload_for(event)
+    payload = nil
+    subscription = ActiveSupport::Notifications.subscribe event do |_, _, _, _, extra_payload|
+      payload = extra_payload
+    end
+
+    yield
+
+    ActiveSupport::Notifications.unsubscribe(subscription)
+    payload
   end
 end

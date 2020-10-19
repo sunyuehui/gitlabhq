@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
 # Emulates paginator. It returns 2 pages with results
@@ -15,7 +17,7 @@ class TestPaginator
   end
 end
 
-describe Bitbucket::Collection do
+RSpec.describe Bitbucket::Collection do
   it "iterates paginator" do
     collection = described_class.new(TestPaginator.new)
 

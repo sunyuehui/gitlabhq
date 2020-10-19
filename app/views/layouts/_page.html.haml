@@ -1,26 +1,25 @@
-.page-with-sidebar{ class: page_with_sidebar_class }
-  - if show_new_nav?
-    - if defined?(nav) && nav
-      = render "layouts/nav/#{nav}"
-  - else
-    - if defined?(nav) && nav
-      .layout-nav
-        .container-fluid
-          = render "layouts/nav/#{nav}"
-    - if content_for?(:sub_nav)
-      = yield :sub_nav
-  .content-wrapper{ class: layout_nav_class }
-    - if show_new_nav?
-      .mobile-overlay
+.layout-page{ class: page_with_sidebar_class }
+  - if defined?(nav) && nav
+    = render "layouts/nav/sidebar/#{nav}"
+  .content-wrapper{ class: "#{@content_wrapper_class}" }
+    .mobile-overlay
+    = yield :group_invite_members_banner
     .alert-wrapper
+      = render 'shared/outdated_browser'
+      = render_if_exists "layouts/header/licensed_user_count_threshold"
+      = render_if_exists "layouts/header/token_expiry_notification"
       = render "layouts/broadcast"
-      - if show_new_nav?
-        - if content_for?(:new_global_flash)
-          = yield :new_global_flash
-        - unless @hide_breadcrumbs
-          = render "layouts/nav/breadcrumbs"
-      = render "layouts/flash"
+      = render "layouts/header/read_only_banner"
+      = render "layouts/nav/classification_level_banner"
       = yield :flash_message
+      = render "shared/ping_consent"
+      = render_account_recovery_regular_check
+      = render_if_exists "layouts/header/ee_subscribable_banner"
+      = render_if_exists "shared/namespace_storage_limit_alert"
+      = yield :customize_homepage_banner
+      - unless @hide_breadcrumbs
+        = render "layouts/nav/breadcrumbs"
     %div{ class: "#{(container_class unless @no_container)} #{@content_class}" }
       .content{ id: "content-body" }
+        = render "layouts/flash", extra_flash_class: 'limit-container-width'
         = yield

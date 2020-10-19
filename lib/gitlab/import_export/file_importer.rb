@@ -1,28 +1,44 @@
+# frozen_string_literal: true
+
 module Gitlab
   module ImportExport
     class FileImporter
       include Gitlab::ImportExport::CommandLineUtil
 
-      MAX_RETRIES = 8
+      ImporterError = Class.new(StandardError)
 
-      def self.import(*args)
-        new(*args).import
+      MAX_RETRIES = 8
+      IGNORED_FILENAMES = %w(. ..).freeze
+
+      def self.import(*args, **kwargs)
+        new(*args, **kwargs).import
       end
 
-      def initialize(archive_file:, shared:)
+      def initialize(importable:, archive_file:, shared:)
+        @importable = importable
         @archive_file = archive_file
         @shared = shared
       end
 
       def import
         mkdir_p(@shared.export_path)
+        mkdir_p(@shared.archive_path)
+
+        remove_symlinks
+        copy_archive
 
         wait_for_archived_file do
+          # Disable archive validation by default
+          # See: https://gitlab.com/gitlab-org/gitlab/-/issues/235949
+          validate_decompressed_archive_size if Feature.enabled?(:validate_import_decompressed_archive_size)
           decompress_archive
         end
       rescue => e
         @shared.error(e)
         false
+      ensure
+        remove_import_file
+        remove_symlinks
       end
 
       private
@@ -41,12 +57,20 @@ module Gitlab
       def decompress_archive
         result = untar_zxf(archive: @archive_file, dir: @shared.export_path)
 
-        raise Projects::ImportService::Error.new("Unable to decompress #{@archive_file} into #{@shared.export_path}") unless result
+        raise ImporterError.new("Unable to decompress #{@archive_file} into #{@shared.export_path}") unless result
 
-        remove_symlinks!
+        result
       end
 
-      def remove_symlinks!
+      def copy_archive
+        return if @archive_file
+
+        @archive_file = File.join(@shared.archive_path, Gitlab::ImportExport.export_filename(exportable: @importable))
+
+        download_or_copy_upload(@importable.import_export_upload.import_file, @archive_file)
+      end
+
+      def remove_symlinks
         extracted_files.each do |path|
           FileUtils.rm(path) if File.lstat(path).symlink?
         end
@@ -54,8 +78,20 @@ module Gitlab
         true
       end
 
+      def remove_import_file
+        FileUtils.rm_rf(@archive_file)
+      end
+
       def extracted_files
-        Dir.glob("#{@shared.export_path}/**/*", File::FNM_DOTMATCH).reject { |f| f =~ /.*\/\.{1,2}$/ }
+        Dir.glob("#{@shared.export_path}/**/*", File::FNM_DOTMATCH).reject { |f| IGNORED_FILENAMES.include?(File.basename(f)) }
+      end
+
+      def validate_decompressed_archive_size
+        raise ImporterError.new(size_validator.error) unless size_validator.valid?
+      end
+
+      def size_validator
+        @size_validator ||= DecompressedArchiveSizeValidator.new(archive_path: @archive_file)
       end
     end
   end

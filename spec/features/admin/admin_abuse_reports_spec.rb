@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe "Admin::AbuseReports", js: true  do
+RSpec.describe "Admin::AbuseReports", :js do
   let(:user) { create(:user) }
 
   context 'as an admin' do
@@ -45,8 +47,32 @@ describe "Admin::AbuseReports", js: true  do
           visit admin_abuse_reports_path
 
           expect(page).to have_selector('.pagination')
-          expect(page).to have_selector('.pagination .page', count: (report_count.to_f / AbuseReport.default_per_page).ceil)
+          expect(page).to have_selector('.pagination .js-pagination-page', count: (report_count.to_f / AbuseReport.default_per_page).ceil)
         end
+      end
+    end
+
+    describe 'filtering by user' do
+      let!(:user2) { create(:user) }
+      let!(:abuse_report)   { create(:abuse_report, user: user) }
+      let!(:abuse_report_2) { create(:abuse_report, user: user2) }
+
+      it 'shows only single user report' do
+        visit admin_abuse_reports_path
+
+        page.within '.filter-form' do
+          click_button 'User'
+          wait_for_requests
+
+          page.within '.dropdown-menu-user' do
+            click_link user2.name
+          end
+
+          wait_for_requests
+        end
+
+        expect(page).to have_content(user2.name)
+        expect(page).not_to have_content(user.name)
       end
     end
   end

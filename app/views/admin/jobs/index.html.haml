@@ -1,18 +1,20 @@
-- @no_container = true
-= render "admin/dashboard/head"
+- breadcrumb_title _("Jobs")
+- page_title _("Jobs")
 
-%div{ class: container_class }
+.top-area.scrolling-tabs-container.inner-page-scroll-tabs
+  - build_path_proc = ->(scope) { admin_jobs_path(scope: scope) }
+  = render "shared/builds/tabs", build_path_proc: build_path_proc, all_builds: @all_builds, scope: @scope
 
-  .top-area
-    - build_path_proc = ->(scope) { admin_jobs_path(scope: scope) }
-    = render "shared/builds/tabs", build_path_proc: build_path_proc, all_builds: @all_builds, scope: @scope
-
+  - if @all_builds.running_or_pending.any?
+    #stop-jobs-modal
     .nav-controls
-      - if @all_builds.running_or_pending.any?
-        = link_to 'Cancel all', cancel_all_admin_jobs_path, data: { confirm: 'Are you sure?' }, class: 'btn btn-danger', method: :post
+      %button#stop-jobs-button.btn.gl-button.btn-danger{ data: { toggle: 'modal',
+        target: '#stop-jobs-modal',
+        url: cancel_all_admin_jobs_path } }
+        = s_('AdminArea|Stop all jobs')
 
-  .row-content-block.second-block
-    #{(@scope || 'all').capitalize} jobs
+.row-content-block.second-block
+  #{(@scope || 'all').capitalize} jobs
 
-  %ul.content-list.builds-content-list.admin-builds-table
-    = render "projects/jobs/table", builds: @builds, admin: true
+%ul.content-list.builds-content-list.admin-builds-table
+  = render "projects/jobs/table", builds: @builds, admin: true

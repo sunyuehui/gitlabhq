@@ -1,33 +1,19 @@
-RSpec.configure do |config|
-  config.before(:suite) do
-    DatabaseCleaner.clean_with(:truncation)
+# frozen_string_literal: true
+
+module DbCleaner
+  def delete_from_all_tables!(except: [])
+    except << 'ar_internal_metadata'
+
+    DatabaseCleaner.clean_with(:deletion, cache_tables: false, except: except)
   end
 
-  config.append_after(:context) do
-    DatabaseCleaner.clean_with(:truncation)
+  def deletion_except_tables
+    []
   end
 
-  config.before(:each) do
-    DatabaseCleaner.strategy = :transaction
-  end
-
-  config.before(:each, js: true) do
-    DatabaseCleaner.strategy = :truncation
-  end
-
-  config.before(:each, truncate: true) do
-    DatabaseCleaner.strategy = :truncation
-  end
-
-  config.before(:each, :migration) do
-    DatabaseCleaner.strategy = :truncation, { cache_tables: false }
-  end
-
-  config.before(:each) do
-    DatabaseCleaner.start
-  end
-
-  config.append_after(:each) do
-    DatabaseCleaner.clean
+  def setup_database_cleaner
+    DatabaseCleaner[:active_record, { connection: ActiveRecord::Base }]
   end
 end
+
+DbCleaner.prepend_if_ee('EE::DbCleaner')

@@ -1,15 +1,24 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'projects/commit/show.html.haml' do
+RSpec.describe 'projects/commit/show.html.haml' do
   let(:project) { create(:project, :repository) }
+  let(:commit) { project.commit }
 
   before do
     assign(:project, project)
     assign(:repository, project.repository)
-    assign(:commit, project.commit)
-    assign(:noteable, project.commit)
+    assign(:commit, commit)
+    assign(:noteable, commit)
     assign(:notes, [])
-    assign(:diffs, project.commit.diffs)
+    assign(:diffs, commit.diffs)
+
+    controller.params[:controller] = 'projects/commit'
+    controller.params[:action] = 'show'
+    controller.params[:namespace_id] = project.namespace.to_param
+    controller.params[:project_id] = project.to_param
+    controller.params[:id] = commit.id
 
     allow(view).to receive(:current_user).and_return(nil)
     allow(view).to receive(:can?).and_return(false)
@@ -41,6 +50,21 @@ describe 'projects/commit/show.html.haml' do
 
     it 'spans full width' do
       expect(rendered).not_to have_selector('.limit-container-width')
+    end
+  end
+
+  context 'in the context of a merge request' do
+    let(:merge_request) { create(:merge_request, source_project: project, target_project: project) }
+
+    before do
+      assign(:merge_request, merge_request)
+      render
+    end
+
+    it 'shows that it is in the context of a merge request' do
+      merge_request_url = diffs_project_merge_request_path(project, merge_request, commit_id: commit.id)
+      expect(rendered).to have_content("This commit is part of merge request")
+      expect(rendered).to have_link(merge_request.to_reference, href: merge_request_url)
     end
   end
 end

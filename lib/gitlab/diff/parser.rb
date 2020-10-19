@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Diff
     class Parser
       include Enumerable
 
-      def parse(lines)
+      def parse(lines, diff_file: nil)
         return [] if lines.blank?
 
         @lines = lines
@@ -17,7 +19,9 @@ module Gitlab
         # without having to instantiate all the others that come after it.
         Enumerator.new do |yielder|
           @lines.each do |line|
-            next if filename?(line)
+            # We're expecting a filename parameter only in a meta-part of the diff content
+            # when type is defined then we're already in a content-part
+            next if filename?(line) && type.nil?
 
             full_line = line.delete("\n")
 
@@ -28,17 +32,18 @@ module Gitlab
               line_new = line.match(/\+[0-9]*/)[0].to_i.abs rescue 0
 
               next if line_old <= 1 && line_new <= 1 # top of file
-              yielder << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new)
+
+              yielder << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new, parent_file: diff_file)
               line_obj_index += 1
               next
             elsif line[0] == '\\'
               type = "#{context}-nonewline"
 
-              yielder << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new)
+              yielder << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new, parent_file: diff_file)
               line_obj_index += 1
             else
               type = identification_type(line)
-              yielder << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new)
+              yielder << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new, parent_file: diff_file)
               line_obj_index += 1
             end
 

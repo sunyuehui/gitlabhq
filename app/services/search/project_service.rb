@@ -1,5 +1,11 @@
+# frozen_string_literal: true
+
 module Search
   class ProjectService
+    include Gitlab::Utils::StrongMemoize
+
+    ALLOWED_SCOPES = %w(notes issues merge_requests milestones wiki_blobs commits users).freeze
+
     attr_accessor :project, :current_user, :params
 
     def initialize(project, user, params)
@@ -8,13 +14,24 @@ module Search
 
     def execute
       Gitlab::ProjectSearchResults.new(current_user,
-                                       project,
                                        params[:search],
-                                       params[:repository_ref])
+                                       project: project,
+                                       repository_ref: params[:repository_ref],
+                                       sort: params[:sort],
+                                       filters: { confidential: params[:confidential], state: params[:state] }
+                                      )
+    end
+
+    def allowed_scopes
+      ALLOWED_SCOPES
     end
 
     def scope
-      @scope ||= %w[notes issues merge_requests milestones wiki_blobs commits].delete(params[:scope]) { 'blobs' }
+      strong_memoize(:scope) do
+        allowed_scopes.include?(params[:scope]) ? params[:scope] : 'blobs'
+      end
     end
   end
 end
+
+Search::ProjectService.prepend_if_ee('EE::Search::ProjectService')

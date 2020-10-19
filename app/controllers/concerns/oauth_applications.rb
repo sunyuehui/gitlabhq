@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module OauthApplications
   extend ActiveSupport::Concern
 
@@ -14,6 +16,6 @@ module OauthApplications
   end
 
   def load_scopes
-    @scopes = Doorkeeper.configuration.scopes
+    @scopes ||= Doorkeeper.configuration.scopes
   end
 end

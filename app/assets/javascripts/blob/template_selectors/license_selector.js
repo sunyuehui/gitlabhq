@@ -1,6 +1,5 @@
-import Api from '../../api';
-
 import FileTemplateSelector from '../file_template_selector';
+import initDeprecatedJQueryDropdown from '~/deprecated_jquery_dropdown';
 
 export default class BlobLicenseSelector extends FileTemplateSelector {
   constructor({ mediator }) {
@@ -9,22 +8,21 @@ export default class BlobLicenseSelector extends FileTemplateSelector {
       key: 'license',
       name: 'LICENSE',
       pattern: /^(.+\/)?(licen[sc]e|copying)($|\.)/i,
-      endpoint: Api.licenseText,
+      type: 'licenses',
       dropdown: '.js-license-selector',
       wrapper: '.js-license-selector-wrap',
     };
   }
 
   initDropdown() {
-    this.$dropdown.glDropdown({
+    initDeprecatedJQueryDropdown(this.$dropdown, {
       data: this.$dropdown.data('data'),
       filterable: true,
       selectable: true,
-      toggleLabel: item => item.name,
       search: {
         fields: ['name'],
       },
-      clicked: (options) => {
+      clicked: options => {
         const { e } = options;
         const el = options.$el;
         const query = options.selectedObj;

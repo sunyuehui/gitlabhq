@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Banzai
   module Filter
     class AsciiDocPostProcessingFilter < HTML::Pipeline::Filter
@@ -6,6 +8,9 @@ module Banzai
           node.set_attribute('class', 'code math js-render-math')
         end
 
+        doc.search('[data-mermaid-style]').each do |node|
+          node.set_attribute('class', 'js-render-mermaid')
+        end
         doc
       end
     end

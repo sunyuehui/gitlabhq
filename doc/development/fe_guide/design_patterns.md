@@ -31,11 +31,11 @@ export default new MyThing();
 
 export default class MyThing {
   constructor() {
-    if (!this.prototype.singleton) {
+    if (!MyThing.prototype.singleton) {
       this.init();
-      this.prototype.singleton = this;
+      MyThing.prototype.singleton = this;
     }
-    return this.prototype.singleton;
+    return MyThing.prototype.singleton;
   }
 
   init() {
@@ -53,6 +53,7 @@ When writing a class that needs to manipulate the DOM guarantee a container opti
 This is useful when we need that class to be instantiated more than once in the same page.
 
 Bad:
+
 ```javascript
 class Foo {
   constructor() {
@@ -63,6 +64,7 @@ new Foo();
 ```
 
 Good:
+
 ```javascript
 class Foo {
   constructor(opts) {
@@ -72,7 +74,5 @@ class Foo {
 
 new Foo({ container: '.my-element' });
 ```
-You can find an example of the above in this [class][container-class-example];
 
-
-[container-class-example]: https://gitlab.com/gitlab-org/gitlab-ce/blob/master/app/assets/javascripts/mini_pipeline_graph_dropdown.js
+You can find an example of the above in this [class](https://gitlab.com/gitlab-org/gitlab/blob/master/app/assets/javascripts/mini_pipeline_graph_dropdown.js);

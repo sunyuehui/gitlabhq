@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module DeclarativePolicy
   class Base
     # A map of ability => list of rules together with :enable
@@ -115,12 +117,29 @@ module DeclarativePolicy
         own_delegations[name] = delegation_block
       end
 
+      # Declare that the given abilities should not be read from delegates.
+      #
+      # This is useful if you have an ability that you want to define
+      # differently in a policy than in a delegated policy, but still want to
+      # delegate all other abilities.
+      #
+      # example:
+      #
+      #   delegate { @subect.parent }
+      #
+      #   overrides :drive_car, :watch_tv
+      #
+      def overrides(*names)
+        @overrides ||= [].to_set
+        @overrides.merge(names)
+      end
+
       # Declares a rule, constructed using RuleDsl, and returns
       # a PolicyDsl which is used for registering the rule with
       # this class. PolicyDsl will call back into Base.enable_when,
       # Base.prevent_when, and Base.prevent_all_when.
-      def rule(&b)
-        rule = RuleDsl.new(self).instance_eval(&b)
+      def rule(&block)
+        rule = RuleDsl.new(self).instance_eval(&block)
         PolicyDsl.new(self, rule)
       end
 
@@ -194,7 +213,7 @@ module DeclarativePolicy
     #
     # It also stores a reference to the cache, so it can be used
     # to cache computations by e.g. ManifestCondition.
-    attr_reader :user, :subject, :cache
+    attr_reader :user, :subject
     def initialize(user, subject, opts = {})
       @user = user
       @subject = subject
@@ -222,8 +241,8 @@ module DeclarativePolicy
 
     # computes the given ability and prints a helpful debugging output
     # showing which
-    def debug(ability, *a)
-      runner(ability).debug(*a)
+    def debug(ability, *args)
+      runner(ability).debug(*args)
     end
 
     desc "Unknown user"
@@ -263,9 +282,13 @@ module DeclarativePolicy
       @runners ||= {}
       @runners[ability] ||=
         begin
-          delegated_runners = delegated_policies.values.compact.map { |p| p.runner(ability) }
           own_runner = Runner.new(own_steps(ability))
-          delegated_runners.inject(own_runner, &:merge_runner)
+          if self.class.overrides.include?(ability)
+            own_runner
+          else
+            delegated_runners = delegated_policies.values.compact.map { |p| p.runner(ability) }
+            delegated_runners.inject(own_runner, &:merge_runner)
+          end
         end
     end
 
@@ -274,8 +297,9 @@ module DeclarativePolicy
     #
     # NOTE we can't use ||= here because the value might be the
     # boolean `false`
-    def cache(key, &b)
+    def cache(key)
       return @cache[key] if cached?(key)
+
       @cache[key] = yield
     end
 
@@ -291,6 +315,7 @@ module DeclarativePolicy
       @_conditions[name] ||=
         begin
           raise "invalid condition #{name}" unless self.class.conditions.key?(name)
+
           ManifestCondition.new(self.class.conditions[name], self)
         end
     end

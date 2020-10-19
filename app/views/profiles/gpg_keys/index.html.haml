@@ -1,21 +1,21 @@
-- page_title "GPG Keys"
-= render 'profiles/head'
+- page_title _('GPG Keys')
+- @content_class = "limit-container-width" unless fluid_layout
 
-.row.prepend-top-default
-  .col-lg-3.profile-settings-sidebar
-    %h4.prepend-top-0
+.row.gl-mt-3
+  .col-lg-4.profile-settings-sidebar
+    %h4.gl-mt-0
       = page_title
     %p
-      GPG keys allow you to verify signed commits.
-  .col-lg-9
-    %h5.prepend-top-0
-      Add a GPG key
+      = _('GPG keys allow you to verify signed commits.')
+  .col-lg-8
+    %h5.gl-mt-0
+      = _('Add a GPG key')
     %p.profile-settings-content
-      Before you can add a GPG key you need to
-      = link_to 'generate it.', help_page_path('workflow/gpg_signed_commits/index.md')
+      - help_link_start = '<a href="%{url}" target="_blank" rel="noopener noreferrer">'.html_safe % { url: help_page_path('user/project/repository/gpg_signed_commits/index.md') }
+      = _('Before you can add a GPG key you need to %{help_link_start}Generate it.%{help_link_end}'.html_safe) % {help_link_start: help_link_start, help_link_end:'</a>'.html_safe }
     = render 'form'
     %hr
     %h5
-      Your GPG keys (#{@gpg_keys.count})
-    .append-bottom-default
+      = _('Your GPG keys (%{count})') % { count:@gpg_keys.count}
+    .gl-mb-3
       = render 'key_table'

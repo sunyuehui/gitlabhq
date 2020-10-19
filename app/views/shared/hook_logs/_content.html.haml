@@ -6,12 +6,12 @@
 
 %p
   %strong Trigger:
-  %td.hidden-xs
-    %span.label.label-gray.deploy-project-label
+  %td.d-none.d-sm-block
+    %span.badge.badge-gray.deploy-project-label
       = hook_log.trigger.singularize.titleize
 %p
   %strong Elapsed time:
-  #{number_with_precision(hook_log.execution_duration, precision: 2)} ms
+  #{number_with_precision(hook_log.execution_duration, precision: 2)} sec
 %p
   %strong Request time:
   = time_ago_with_tooltip(hook_log.created_at)
@@ -30,8 +30,8 @@
 
 %h5 Request body:
 %pre
-  :plain
-    #{JSON.pretty_generate(hook_log.request_data)}
+  :escaped
+    #{Gitlab::Json.pretty_generate(hook_log.request_data)}
 %h5 Response headers:
 %pre
   - hook_log.response_headers.each do |k,v|
@@ -40,5 +40,5 @@
 
 %h5 Response body:
 %pre
-  :plain
+  :escaped
     #{hook_log.response_body}

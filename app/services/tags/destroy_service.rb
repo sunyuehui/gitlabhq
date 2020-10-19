@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Tags
   class DestroyService < BaseService
     def execute(tag_name)
@@ -9,19 +11,20 @@ module Tags
       end
 
       if repository.rm_tag(current_user, tag_name)
-        release = project.releases.find_by(tag: tag_name)
-        release&.destroy
+        ##
+        # When a tag in a repository is destroyed,
+        # release assets will be destroyed too.
+        Releases::DestroyService
+          .new(project, current_user, tag: tag_name)
+          .execute
 
-        push_data = build_push_data(tag)
-        EventCreateService.new.push(project, current_user, push_data)
-        project.execute_hooks(push_data.dup, :tag_push_hooks)
-        project.execute_services(push_data.dup, :tag_push_hooks)
+        unlock_artifacts(tag_name)
 
         success('Tag was removed')
       else
         error('Failed to remove tag')
       end
-    rescue GitHooksService::PreReceiveError => ex
+    rescue Gitlab::Git::PreReceiveError => ex
       error(ex.message)
     end
 
@@ -33,14 +36,10 @@ module Tags
       super().merge(message: message)
     end
 
-    def build_push_data(tag)
-      Gitlab::DataBuilder::Push.build(
-        project,
-        current_user,
-        tag.dereferenced_target.sha,
-        Gitlab::Git::BLANK_SHA,
-        "#{Gitlab::Git::TAG_REF_PREFIX}#{tag.name}",
-        [])
+    private
+
+    def unlock_artifacts(tag_name)
+      Ci::RefDeleteUnlockArtifactsWorker.perform_async(project.id, current_user.id, "#{::Gitlab::Git::TAG_REF_PREFIX}#{tag_name}")
     end
   end
 end

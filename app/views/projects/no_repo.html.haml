@@ -1,3 +1,6 @@
+- breadcrumb_title _("Details")
+- page_title _("Details")
+
 %h2
   %i.fa.fa-warning
   #{ _('No repository') }
@@ -10,13 +13,13 @@
 
 .no-repo-actions
   = link_to project_repository_path(@project), method: :post, class: 'btn btn-primary' do
-    #{ _('Create empty bare repository') }
+    #{ _('Create empty repository') }
 
-  %strong.prepend-left-10.append-right-10 or
+  %strong.gl-ml-3.gl-mr-3 or
 
   = link_to new_project_import_path(@project), class: 'btn' do
     #{ _('Import repository') }
 
 - if can? current_user, :remove_project, @project
   .prepend-top-20
-    = link_to _('Remove project'), project_path(@project), data: { confirm: remove_project_message(@project)}, method: :delete, class: "btn btn-remove pull-right"
+    = link_to _('Delete project'), project_path(@project), data: { confirm: remove_project_message(@project)}, method: :delete, class: "gl-button btn btn-danger btn-danger-secondary float-right"

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Database::RenameReservedPathsMigration::V1::RenameBase, :truncate do
+RSpec.describe Gitlab::Database::RenameReservedPathsMigration::V1::RenameBase, :delete do
   let(:migration) { FakeRenameReservedPathMigrationV1.new }
   let(:subject) { described_class.new(['the-path'], migration) }
 
@@ -19,8 +21,8 @@ describe Gitlab::Database::RenameReservedPathsMigration::V1::RenameBase, :trunca
       Project.find(project.id)
   end
 
-  describe "#remove_last_ocurrence" do
-    it "removes only the last occurance of a string" do
+  describe "#remove_last_occurrence" do
+    it "removes only the last occurrence of a string" do
       input = "this/is/a-word-to-replace/namespace/with/a-word-to-replace"
 
       expect(subject.remove_last_occurrence(input, "a-word-to-replace"))
@@ -81,6 +83,7 @@ describe Gitlab::Database::RenameReservedPathsMigration::V1::RenameBase, :trunca
   describe '#rename_path_for_routable' do
     context 'for namespaces' do
       let(:namespace) { create(:namespace, path: 'the-path') }
+
       it "renames namespaces called the-path" do
         subject.rename_path_for_routable(migration_namespace(namespace))
 
@@ -157,6 +160,7 @@ describe Gitlab::Database::RenameReservedPathsMigration::V1::RenameBase, :trunca
   describe '#perform_rename' do
     describe 'for namespaces' do
       let(:namespace) { create(:namespace, path: 'the-path') }
+
       it 'renames the path' do
         subject.perform_rename(migration_namespace(namespace), 'the-path', 'renamed')
 
@@ -229,7 +233,7 @@ describe Gitlab::Database::RenameReservedPathsMigration::V1::RenameBase, :trunca
     end
   end
 
-  describe '#track_rename', redis: true do
+  describe '#track_rename', :redis do
     it 'tracks a rename in redis' do
       key = 'rename:FakeRenameReservedPathMigrationV1:namespace'
 
@@ -238,7 +242,7 @@ describe Gitlab::Database::RenameReservedPathsMigration::V1::RenameBase, :trunca
       old_path, new_path = [nil, nil]
       Gitlab::Redis::SharedState.with do |redis|
         rename_info = redis.lpop(key)
-        old_path, new_path = JSON.parse(rename_info)
+        old_path, new_path = Gitlab::Json.parse(rename_info)
       end
 
       expect(old_path).to eq('path/to/namespace')
@@ -246,7 +250,7 @@ describe Gitlab::Database::RenameReservedPathsMigration::V1::RenameBase, :trunca
     end
   end
 
-  describe '#reverts_for_type', redis: true do
+  describe '#reverts_for_type', :redis do
     it 'yields for each tracked rename' do
       subject.track_rename('project', 'old_path', 'new_path')
       subject.track_rename('project', 'old_path2', 'new_path2')
@@ -274,7 +278,7 @@ describe Gitlab::Database::RenameReservedPathsMigration::V1::RenameBase, :trunca
       end
 
       expect(rename_count).to eq(1)
-      expect(JSON.parse(stored_renames.first)).to eq(%w(old_path new_path))
+      expect(Gitlab::Json.parse(stored_renames.first)).to eq(%w(old_path new_path))
     end
   end
 end

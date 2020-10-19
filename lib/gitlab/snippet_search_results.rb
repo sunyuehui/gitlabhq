@@ -1,45 +1,48 @@
+# frozen_string_literal: true
+
 module Gitlab
   class SnippetSearchResults < SearchResults
     include SnippetsHelper
 
-    attr_reader :limit_snippets
-
-    def initialize(limit_snippets, query)
-      @limit_snippets = limit_snippets
-      @query = query
+    def initialize(current_user, query)
+      super(current_user, query)
     end
 
-    def objects(scope, page = nil)
-      case scope
-      when 'snippet_titles'
-        snippet_titles.page(page).per(per_page)
-      when 'snippet_blobs'
-        snippet_blobs.page(page).per(per_page)
-      else
-        super
-      end
+    def objects(scope, page: nil, per_page: DEFAULT_PER_PAGE, preload_method: nil)
+      paginated_objects(snippet_titles, page, per_page)
     end
 
-    def snippet_titles_count
-      @snippet_titles_count ||= snippet_titles.count
+    def formatted_count(scope)
+      formatted_limited_count(limited_snippet_titles_count)
     end
 
-    def snippet_blobs_count
-      @snippet_blobs_count ||= snippet_blobs.count
+    def limited_snippet_titles_count
+      @limited_snippet_titles_count ||= limited_count(snippet_titles)
     end
 
     private
 
+    # rubocop: disable CodeReuse/ActiveRecord
+    def snippets
+      SnippetsFinder.new(current_user, finder_params)
+        .execute
+        .includes(:author)
+        .reorder(updated_at: :desc)
+    end
+    # rubocop: enable CodeReuse/ActiveRecord
+
     def snippet_titles
-      limit_snippets.search(query).order('updated_at DESC').includes(:author)
+      snippets.search(query)
     end
 
-    def snippet_blobs
-      limit_snippets.search_code(query).order('updated_at DESC').includes(:author)
+    def paginated_objects(relation, page, per_page)
+      relation.page(page).per(per_page)
     end
 
-    def default_scope
-      'snippet_blobs'
+    def finder_params
+      {}
     end
   end
 end
+
+Gitlab::SnippetSearchResults.prepend_if_ee('::EE::Gitlab::SnippetSearchResults')

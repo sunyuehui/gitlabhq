@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe JobEntity do
+RSpec.describe JobEntity do
   let(:user) { create(:user) }
   let(:job) { create(:ci_build) }
   let(:project) { job.project }
@@ -38,12 +40,12 @@ describe JobEntity do
 
   it 'contains details' do
     expect(subject).to include :status
-    expect(subject[:status]).to include :icon, :favicon, :text, :label
+    expect(subject[:status]).to include :icon, :favicon, :text, :label, :tooltip
   end
 
   context 'when job is retryable' do
     before do
-      job.update(status: :failed)
+      job.update!(status: :failed)
     end
 
     it 'contains cancel path' do
@@ -53,7 +55,7 @@ describe JobEntity do
 
   context 'when job is cancelable' do
     before do
-      job.update(status: :running)
+      job.update!(status: :running)
     end
 
     it 'contains cancel path' do
@@ -109,6 +111,19 @@ describe JobEntity do
     end
   end
 
+  context 'when job is scheduled' do
+    let(:job) { create(:ci_build, :scheduled) }
+
+    it 'contains path to unschedule action' do
+      expect(subject).to include(:unschedule_path)
+    end
+
+    it 'contains scheduled_at' do
+      expect(subject[:scheduled]).to be_truthy
+      expect(subject[:scheduled_at]).to eq(job.scheduled_at)
+    end
+  end
+
   context 'when job is generic commit status' do
     let(:job) { create(:generic_commit_status, target_url: 'http://google.com') }
 
@@ -126,7 +141,93 @@ describe JobEntity do
 
     it 'contains details' do
       expect(subject).to include :status
-      expect(subject[:status]).to include :icon, :favicon, :text, :label
+      expect(subject[:status]).to include :icon, :favicon, :text, :label, :tooltip
+    end
+  end
+
+  context 'when job failed' do
+    let(:job) { create(:ci_build, :api_failure) }
+
+    it 'contains details' do
+      expect(subject[:status]).to include :icon, :favicon, :text, :label, :tooltip
+    end
+
+    it 'states that it failed' do
+      expect(subject[:status][:label]).to eq(s_('CiStatusLabel|failed'))
+    end
+
+    it 'indicates the failure reason on tooltip' do
+      expect(subject[:status][:tooltip]).to eq("#{s_('CiStatusLabel|failed')} - (API failure)")
+    end
+
+    it 'includes a callout message with a verbose output' do
+      expect(subject[:callout_message]).to eq('There has been an API failure, please try again')
+    end
+
+    it 'states that it is not recoverable' do
+      expect(subject[:recoverable]).to be_truthy
+    end
+  end
+
+  context 'when job is allowed to fail' do
+    let(:job) { create(:ci_build, :allowed_to_fail, :api_failure) }
+
+    it 'contains details' do
+      expect(subject[:status]).to include :icon, :favicon, :text, :label, :tooltip
+    end
+
+    it 'states that it failed' do
+      expect(subject[:status][:label]).to eq('failed (allowed to fail)')
+    end
+
+    it 'indicates the failure reason on tooltip' do
+      expect(subject[:status][:tooltip]).to eq("#{s_('CiStatusLabel|failed')} - (API failure) (allowed to fail)")
+    end
+
+    it 'includes a callout message with a verbose output' do
+      expect(subject[:callout_message]).to eq('There has been an API failure, please try again')
+    end
+
+    it 'states that it is not recoverable' do
+      expect(subject[:recoverable]).to be_truthy
+    end
+  end
+
+  context 'when the job failed with a script failure' do
+    let(:job) { create(:ci_build, :failed, :script_failure) }
+
+    it 'does not include callout message or recoverable keys' do
+      expect(subject).not_to include('callout_message')
+      expect(subject).not_to include('recoverable')
+    end
+  end
+
+  context 'when job failed and is recoverable' do
+    let(:job) { create(:ci_build, :api_failure) }
+
+    it 'states it is recoverable' do
+      expect(subject[:recoverable]).to be_truthy
+    end
+  end
+
+  context 'when job passed' do
+    let(:job) { create(:ci_build, :success) }
+
+    it 'does not include callout message or recoverable keys' do
+      expect(subject).not_to include('callout_message')
+      expect(subject).not_to include('recoverable')
+    end
+  end
+
+  context 'when job is a bridge' do
+    let(:job) { create(:ci_bridge) }
+
+    it 'does not include build path' do
+      expect(subject).not_to include(:build_path)
+    end
+
+    it 'does not include cancel path' do
+      expect(subject).not_to include(:cancel_path)
     end
   end
 end

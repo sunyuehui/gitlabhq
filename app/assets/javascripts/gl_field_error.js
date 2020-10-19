@@ -1,3 +1,6 @@
+import $ from 'jquery';
+import { __ } from '~/locale';
+
 /**
  * This class overrides the browser's validation error bubbles, displaying custom
  * error messages for invalid fields instead. To begin validating any form, add the
@@ -54,13 +57,13 @@ const inputErrorClass = 'gl-field-error-outline';
 const errorAnchorSelector = '.gl-field-error-anchor';
 const ignoreInputSelector = '.gl-field-error-ignore';
 
-class GlFieldError {
+export default class GlFieldError {
   constructor({ input, formErrors }) {
     this.inputElement = $(input);
     this.inputDomElement = this.inputElement.get(0);
     this.form = formErrors;
-    this.errorMessage = this.inputElement.attr('title') || 'This field is required.';
-    this.fieldErrorElement = $(`<p class='${errorMessageClass} hide'>${this.errorMessage}</p>`);
+    this.errorMessage = this.inputElement.attr('title') || __('This field is required.');
+    this.fieldErrorElement = $(`<p class='${errorMessageClass} hidden'>${this.errorMessage}</p>`);
 
     this.state = {
       valid: false,
@@ -111,10 +114,11 @@ class GlFieldError {
     this.state.empty = currentValue === '';
     this.state.submitted = true;
     this.renderValidity();
-    this.form.focusOnFirstInvalid.apply(this.form);
+    this.form.focusInvalid.apply(this.form);
 
     // For UX, wait til after first invalid submission to check each keyup
-    this.inputElement.off('keyup.fieldValidator')
+    this.inputElement
+      .off('keyup.fieldValidator')
       .on('keyup.fieldValidator', this.updateValidity.bind(this));
   }
 
@@ -144,8 +148,8 @@ class GlFieldError {
 
   renderInvalid() {
     this.inputElement.addClass(inputErrorClass);
-    this.scopedSiblings.hide();
-    return this.fieldErrorElement.show();
+    this.scopedSiblings.addClass('hidden');
+    return this.fieldErrorElement.removeClass('hidden');
   }
 
   renderClear() {
@@ -155,10 +159,7 @@ class GlFieldError {
       this.accessCurrentValue(trimmedInput);
     }
     this.inputElement.removeClass(inputErrorClass);
-    this.scopedSiblings.hide();
-    this.fieldErrorElement.hide();
+    this.scopedSiblings.addClass('hidden');
+    this.fieldErrorElement.addClass('hidden');
   }
 }
-
-window.gl = window.gl || {};
-window.gl.GlFieldError = GlFieldError;

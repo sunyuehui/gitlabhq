@@ -1,5 +1,5 @@
-## GitLab CI Services
+---
+redirect_to: 'README.md'
+---
 
-+ [Using MySQL](mysql.md)
-+ [Using PostgreSQL](postgres.md)
-+ [Using Redis](redis.md)
+This document was moved to [another location](README.md).

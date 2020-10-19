@@ -1,96 +1,113 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 require 'rake_helper'
 
-describe SystemCheck::SimpleExecutor do
-  class SimpleCheck < SystemCheck::BaseCheck
-    set_name 'my simple check'
-
-    def check?
-      true
-    end
-  end
-
-  class OtherCheck < SystemCheck::BaseCheck
-    set_name 'other check'
-
-    def check?
-      false
-    end
-
-    def show_error
-      $stdout.puts 'this is an error text'
-    end
-  end
-
-  class SkipCheck < SystemCheck::BaseCheck
-    set_name 'skip check'
-    set_skip_reason 'this is a skip reason'
-
-    def skip?
-      true
-    end
-
-    def check?
-      raise 'should not execute this'
-    end
-  end
-
-  class MultiCheck < SystemCheck::BaseCheck
-    set_name 'multi check'
-
-    def multi_check
-      $stdout.puts 'this is a multi output check'
-    end
-
-    def check?
-      raise 'should not execute this'
-    end
-  end
-
-  class SkipMultiCheck < SystemCheck::BaseCheck
-    set_name 'skip multi check'
-
-    def skip?
-      true
-    end
-
-    def multi_check
-      raise 'should not execute this'
-    end
-  end
-
-  class RepairCheck < SystemCheck::BaseCheck
-    set_name 'repair check'
-
-    def check?
-      false
-    end
-
-    def repair!
-      true
-    end
-
-    def show_error
-      $stdout.puts 'this is an error message'
-    end
-  end
-
-  class BugousCheck < SystemCheck::BaseCheck
-    CustomError = Class.new(StandardError)
-    set_name 'my bugous check'
-
-    def check?
-      raise CustomError, 'omg'
-    end
-  end
-
+RSpec.describe SystemCheck::SimpleExecutor do
   before do
-    @rainbow = Rainbow.enabled
-    Rainbow.enabled = false
-  end
+    stub_const('SimpleCheck', Class.new(SystemCheck::BaseCheck))
+    stub_const('OtherCheck', Class.new(SystemCheck::BaseCheck))
+    stub_const('SkipCheck', Class.new(SystemCheck::BaseCheck))
+    stub_const('DynamicSkipCheck', Class.new(SystemCheck::BaseCheck))
+    stub_const('MultiCheck', Class.new(SystemCheck::BaseCheck))
+    stub_const('SkipMultiCheck', Class.new(SystemCheck::BaseCheck))
+    stub_const('RepairCheck', Class.new(SystemCheck::BaseCheck))
+    stub_const('BugousCheck', Class.new(SystemCheck::BaseCheck))
 
-  after do
-    Rainbow.enabled = @rainbow
+    SimpleCheck.class_eval do
+      set_name 'my simple check'
+
+      def check?
+        true
+      end
+    end
+
+    OtherCheck.class_eval do
+      set_name 'other check'
+
+      def check?
+        false
+      end
+
+      def show_error
+        $stdout.puts 'this is an error text'
+      end
+    end
+
+    SkipCheck.class_eval do
+      set_name 'skip check'
+      set_skip_reason 'this is a skip reason'
+
+      def skip?
+        true
+      end
+
+      def check?
+        raise 'should not execute this'
+      end
+    end
+
+    DynamicSkipCheck.class_eval do
+      set_name 'dynamic skip check'
+      set_skip_reason 'this is a skip reason'
+
+      def skip?
+        self.skip_reason = 'this is a dynamic skip reason'
+        true
+      end
+
+      def check?
+        raise 'should not execute this'
+      end
+    end
+
+    MultiCheck.class_eval do
+      set_name 'multi check'
+
+      def multi_check
+        $stdout.puts 'this is a multi output check'
+      end
+
+      def check?
+        raise 'should not execute this'
+      end
+    end
+
+    SkipMultiCheck.class_eval do
+      set_name 'skip multi check'
+
+      def skip?
+        true
+      end
+
+      def multi_check
+        raise 'should not execute this'
+      end
+    end
+
+    RepairCheck.class_eval do
+      set_name 'repair check'
+
+      def check?
+        false
+      end
+
+      def repair!
+        true
+      end
+
+      def show_error
+        $stdout.puts 'this is an error message'
+      end
+    end
+
+    BugousCheck.class_eval do
+      set_name 'my bugous check'
+
+      def check?
+        raise StandardError, 'omg'
+      end
+    end
   end
 
   describe '#component' do
@@ -126,6 +143,10 @@ describe SystemCheck::SimpleExecutor do
       subject << SimpleCheck
 
       expect(subject.checks.size).to eq(1)
+    end
+
+    it 'errors out when passing multiple items' do
+      expect { subject << [SimpleCheck, OtherCheck] }.to raise_error(ArgumentError)
     end
   end
 
@@ -205,8 +226,12 @@ describe SystemCheck::SimpleExecutor do
         subject.run_check(SkipCheck)
       end
 
-      it 'displays #skip_reason' do
+      it 'displays .skip_reason' do
         expect { subject.run_check(SkipCheck) }.to output(/this is a skip reason/).to_stdout
+      end
+
+      it 'displays #skip_reason' do
+        expect { subject.run_check(DynamicSkipCheck) }.to output(/this is a dynamic skip reason/).to_stdout
       end
 
       it 'does not execute #check when #skip? is true' do

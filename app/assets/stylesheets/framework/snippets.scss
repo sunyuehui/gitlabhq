@@ -1,27 +1,29 @@
 .snippet-row {
   .title {
     margin-bottom: 2px;
+    font-weight: $gl-font-weight-bold;
   }
 
   .snippet-filename {
-    padding: 0 2px;
+    color: $gl-text-color-secondary;
+    font-weight: normal;
   }
-}
 
-.snippet-form-holder .file-holder .file-title {
-  padding: 2px;
-}
+  .snippet-info {
+    color: $gl-text-color-secondary;
+  }
 
-.markdown-snippet-copy {
-  position: fixed;
-  top: -10px;
-  left: -10px;
-  max-height: 0;
-  max-width: 0;
+  a {
+    color: $gl-text-color;
+  }
 }
 
 .snippet-file-content {
   border-radius: 3px;
+
+  + .snippet-file-content {
+    @include gl-mt-5;
+  }
 }
 
 .snippet-header {
@@ -29,20 +31,12 @@
 }
 
 .snippet-title {
-  font-size: 24px;
-  font-weight: 600;
+  color: $gl-text-color;
+  font-size: 2em;
+  font-weight: $gl-font-weight-bold;
+  min-height: $header-height;
 }
 
-.snippet-edited-ago {
-  color: $gray-darkest;
-}
-
-.snippet-actions {
-  @media (min-width: $screen-sm-min) {
-    float: right;
-  }
-}
-
-.snippet-scope-menu .btn-new {
+.snippet-scope-menu .btn-success {
   margin-top: 15px;
 }

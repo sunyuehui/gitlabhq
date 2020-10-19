@@ -1,36 +1,63 @@
+# frozen_string_literal: true
+
+# QuickActionsService class
+#
+# Executes quick actions commands extracted from note text
+#
+# Most commands returns parameters to be applied later
+# using QuickActionService#apply_updates
+#
 module Notes
   class QuickActionsService < BaseService
+    attr_reader :interpret_service
+
+    delegate :commands_executed_count, to: :interpret_service, allow_nil: true
+
     UPDATE_SERVICES = {
       'Issue' => Issues::UpdateService,
-      'MergeRequest' => MergeRequests::UpdateService
+      'MergeRequest' => MergeRequests::UpdateService,
+      'Commit' => Commits::TagService
     }.freeze
+    private_constant :UPDATE_SERVICES
 
-    def self.noteable_update_service(note)
-      UPDATE_SERVICES[note.noteable_type]
+    def self.update_services
+      UPDATE_SERVICES
     end
 
-    def self.supported?(note, current_user)
-      noteable_update_service(note) &&
-        current_user &&
-        current_user.can?(:"update_#{note.to_ability_name}", note.noteable)
+    def self.noteable_update_service(note)
+      update_services[note.noteable_type]
+    end
+
+    def self.supported?(note)
+      !!noteable_update_service(note)
     end
 
     def supported?(note)
-      self.class.supported?(note, current_user)
+      self.class.supported?(note)
     end
 
-    def extract_commands(note, options = {})
+    def execute(note, options = {})
       return [note.note, {}] unless supported?(note)
 
-      QuickActions::InterpretService.new(project, current_user, options)
-        .execute(note.note, note.noteable)
+      @interpret_service = QuickActions::InterpretService.new(project, current_user, options)
+
+      interpret_service.execute(note.note, note.noteable)
     end
 
-    def execute(command_params, note)
-      return if command_params.empty?
+    # Applies updates extracted to note#noteable
+    # The update parameters are extracted on self#execute
+    def apply_updates(update_params, note)
+      return if update_params.empty?
       return unless supported?(note)
 
-      self.class.noteable_update_service(note).new(project, current_user, command_params).execute(note.noteable)
+      # We need the `id` after the note is persisted
+      if update_params[:spend_time]
+        update_params[:spend_time][:note_id] = note.id
+      end
+
+      self.class.noteable_update_service(note).new(note.resource_parent, current_user, update_params).execute(note.noteable)
     end
   end
 end
+
+Notes::QuickActionsService.prepend_if_ee('EE::Notes::QuickActionsService')

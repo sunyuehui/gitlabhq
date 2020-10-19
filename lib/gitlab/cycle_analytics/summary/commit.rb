@@ -1,13 +1,15 @@
+# frozen_string_literal: true
+
 module Gitlab
   module CycleAnalytics
     module Summary
       class Commit < Base
         def title
-          n_('Commit', 'Commits', value)
+          n_('Commit', 'Commits', value.to_i)
         end
 
         def value
-          @value ||= count_commits
+          @value ||= commits_count ? Value::PrettyNumeric.new(commits_count) : Value::None.new
         end
 
         private
@@ -16,22 +18,14 @@ module Gitlab
         # a limit. Since we need a commit count, we _can't_ enforce a limit, so
         # the easiest way forward is to replicate the relevant portions of the
         # `log` function here.
-        def count_commits
+        def commits_count
           return unless ref
 
-          repository = @project.repository.raw_repository
-          sha = @project.repository.commit(ref).sha
+          @commits_count ||= gitaly_commit_client.commit_count(ref, after: @from, before: @to)
+        end
 
-          cmd = %W(git --git-dir=#{repository.path} log)
-          cmd << '--format=%H'
-          cmd << "--after=#{@from.iso8601}"
-          cmd << sha
-
-          output, status = Gitlab::Popen.popen(cmd)
-
-          raise IOError, output unless status.zero?
-
-          output.lines.count
+        def gitaly_commit_client
+          Gitlab::GitalyClient::CommitService.new(@project.repository.raw_repository)
         end
 
         def ref

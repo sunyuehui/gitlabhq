@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Labels::TransferService class
 #
 # User for recreate the missing group labels at project level
@@ -13,14 +15,18 @@ module Labels
     def execute
       return unless old_group.present?
 
+      # rubocop: disable CodeReuse/ActiveRecord
+      link_ids = group_labels_applied_to_issues.pluck("label_links.id") +
+                 group_labels_applied_to_merge_requests.pluck("label_links.id")
+      # rubocop: disable CodeReuse/ActiveRecord
+
       Label.transaction do
         labels_to_transfer.find_each do |label|
           new_label_id = find_or_create_label!(label)
 
           next if new_label_id == label.id
 
-          update_label_links(group_labels_applied_to_issues, old_label_id: label.id, new_label_id: new_label_id)
-          update_label_links(group_labels_applied_to_merge_requests, old_label_id: label.id, new_label_id: new_label_id)
+          update_label_links(link_ids, old_label_id: label.id, new_label_id: new_label_id)
           update_label_priorities(old_label_id: label.id, new_label_id: new_label_id)
         end
       end
@@ -30,49 +36,57 @@ module Labels
 
     attr_reader :current_user, :old_group, :project
 
+    # rubocop: disable CodeReuse/ActiveRecord
     def labels_to_transfer
-      label_ids = []
-      label_ids << group_labels_applied_to_issues.select(:id)
-      label_ids << group_labels_applied_to_merge_requests.select(:id)
-
-      union = Gitlab::SQL::Union.new(label_ids)
-
-      Label.where("labels.id IN (#{union.to_sql})").reorder(nil).uniq # rubocop:disable GitlabSecurity/SqlInjection
+      Label
+        .from_union([
+          group_labels_applied_to_issues,
+          group_labels_applied_to_merge_requests
+        ])
+        .reorder(nil)
+        .distinct
     end
+    # rubocop: enable CodeReuse/ActiveRecord
 
+    # rubocop: disable CodeReuse/ActiveRecord
     def group_labels_applied_to_issues
-      Label.joins(:issues)
+      @group_labels_applied_to_issues ||= Label.joins(:issues)
         .where(
           issues: { project_id: project.id },
-          labels: { type: 'GroupLabel', group_id: old_group.id }
+          labels: { group_id: old_group.self_and_ancestors }
         )
     end
+    # rubocop: enable CodeReuse/ActiveRecord
 
+    # rubocop: disable CodeReuse/ActiveRecord
     def group_labels_applied_to_merge_requests
-      Label.joins(:merge_requests)
+      @group_labels_applied_to_merge_requests ||= Label.joins(:merge_requests)
         .where(
           merge_requests: { target_project_id: project.id },
-          labels: { type: 'GroupLabel', group_id: old_group.id }
+          labels: { group_id: old_group.self_and_ancestors }
         )
     end
+    # rubocop: enable CodeReuse/ActiveRecord
 
     def find_or_create_label!(label)
       params    = label.attributes.slice('title', 'description', 'color')
-      new_label = FindOrCreateService.new(current_user, project, params).execute
+      new_label = FindOrCreateService.new(current_user, project, params.merge(include_ancestor_groups: true)).execute
 
       new_label.id
     end
 
-    def update_label_links(labels, old_label_id:, new_label_id:)
-      LabelLink.joins(:label)
-        .merge(labels)
-        .where(label_id: old_label_id)
+    # rubocop: disable CodeReuse/ActiveRecord
+    def update_label_links(link_ids, old_label_id:, new_label_id:)
+      LabelLink.where(id: link_ids, label_id: old_label_id)
         .update_all(label_id: new_label_id)
     end
+    # rubocop: enable CodeReuse/ActiveRecord
 
+    # rubocop: disable CodeReuse/ActiveRecord
     def update_label_priorities(old_label_id:, new_label_id:)
       LabelPriority.where(project_id: project.id, label_id: old_label_id)
         .update_all(label_id: new_label_id)
     end
+    # rubocop: enable CodeReuse/ActiveRecord
   end
 end

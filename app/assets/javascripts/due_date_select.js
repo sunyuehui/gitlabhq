@@ -1,8 +1,12 @@
-/* eslint-disable wrap-iife, func-names, space-before-function-paren, comma-dangle, prefer-template, consistent-return, class-methods-use-this, arrow-body-style, no-unused-vars, no-underscore-dangle, no-new, max-len, no-sequences, no-unused-expressions, no-param-reassign */
-/* global dateFormat */
-
+/* eslint-disable max-classes-per-file */
+import $ from 'jquery';
 import Pikaday from 'pikaday';
-import DateFix from './lib/utils/datefix';
+import dateFormat from 'dateformat';
+import { __ } from '~/locale';
+import axios from './lib/utils/axios_utils';
+import { timeFor, parsePikadayDate, pikadayToString } from './lib/utils/datetime_utility';
+import boardsStore from './boards/stores/boards_store';
+import initDeprecatedJQueryDropdown from '~/deprecated_jquery_dropdown';
 
 class DueDateSelect {
   constructor({ $dropdown, $loading } = {}) {
@@ -13,13 +17,14 @@ class DueDateSelect {
     this.$dropdownParent = $dropdownParent;
     this.$datePicker = $dropdownParent.find('.js-due-date-calendar');
     this.$block = $block;
+    this.$sidebarCollapsedValue = $block.find('.sidebar-collapsed-icon');
     this.$selectbox = $dropdown.closest('.selectbox');
     this.$value = $block.find('.value');
     this.$valueContent = $block.find('.value-content');
     this.$sidebarValue = $('.js-due-date-sidebar-value', $block);
-    this.fieldName = $dropdown.data('field-name'),
-    this.abilityName = $dropdown.data('ability-name'),
-    this.issueUpdateURL = $dropdown.data('issue-update');
+    this.fieldName = $dropdown.data('fieldName');
+    this.abilityName = $dropdown.data('abilityName');
+    this.issueUpdateURL = $dropdown.data('issueUpdate');
 
     this.rawSelectedDate = null;
     this.displayedDate = null;
@@ -31,7 +36,7 @@ class DueDateSelect {
   }
 
   initGlDropdown() {
-    this.$dropdown.glDropdown({
+    initDeprecatedJQueryDropdown(this.$dropdown, {
       opened: () => {
         const calendar = this.$datePicker.data('pikaday');
         calendar.show();
@@ -39,48 +44,50 @@ class DueDateSelect {
       hidden: () => {
         this.$selectbox.hide();
         this.$value.css('display', '');
-      }
+      },
+      shouldPropagate: false,
     });
   }
 
   initDatePicker() {
     const $dueDateInput = $(`input[name='${this.fieldName}']`);
-    const dateFix = DateFix.dashedFix($dueDateInput.val());
     const calendar = new Pikaday({
       field: $dueDateInput.get(0),
       theme: 'gitlab-theme',
       format: 'yyyy-mm-dd',
-      onSelect: (dateText) => {
-        const formattedDate = dateFormat(new Date(dateText), 'yyyy-mm-dd');
-        $dueDateInput.val(formattedDate);
+      parse: dateString => parsePikadayDate(dateString),
+      toString: date => pikadayToString(date),
+      onSelect: dateText => {
+        $dueDateInput.val(calendar.toString(dateText));
 
         if (this.$dropdown.hasClass('js-issue-boards-due-date')) {
-          gl.issueBoards.BoardsStore.detail.issue.dueDate = $dueDateInput.val();
+          boardsStore.detail.issue.dueDate = $dueDateInput.val();
           this.updateIssueBoardIssue();
         } else {
           this.saveDueDate(true);
         }
-      }
+      },
+      firstDay: gon.first_day_of_week,
     });
 
-    calendar.setDate(dateFix);
+    calendar.setDate(parsePikadayDate($dueDateInput.val()));
     this.$datePicker.append(calendar.el);
     this.$datePicker.data('pikaday', calendar);
   }
 
   initRemoveDueDate() {
-    this.$block.on('click', '.js-remove-due-date', (e) => {
+    this.$block.on('click', '.js-remove-due-date', e => {
       const calendar = this.$datePicker.data('pikaday');
       e.preventDefault();
 
       calendar.setDate(null);
 
       if (this.$dropdown.hasClass('js-issue-boards-due-date')) {
-        gl.issueBoards.BoardsStore.detail.issue.dueDate = '';
+        boardsStore.detail.issue.dueDate = '';
         this.updateIssueBoardIssue();
       } else {
-        $("input[name='" + this.fieldName + "']").val('');
-        return this.saveDueDate(false);
+        $(`input[name='${this.fieldName}']`).val('');
+        this.saveDueDate(false);
       }
     });
   }
@@ -100,7 +107,7 @@ class DueDateSelect {
       const dateObj = new Date(dateArray[0], dateArray[1] - 1, dateArray[2]);
       this.displayedDate = dateFormat(dateObj, 'mmm d, yyyy');
     } else {
-      this.displayedDate = 'No due date';
+      this.displayedDate = __('None');
     }
   }
 
@@ -111,99 +118,108 @@ class DueDateSelect {
     this.datePayload = datePayload;
   }
 
-  updateIssueBoardIssue () {
+  updateIssueBoardIssue() {
+    // eslint-disable-next-line no-jquery/no-fade
     this.$loading.fadeIn();
     this.$dropdown.trigger('loading.gl.dropdown');
     this.$selectbox.hide();
     this.$value.css('display', '');
     const fadeOutLoader = () => {
+      // eslint-disable-next-line no-jquery/no-fade
       this.$loading.fadeOut();
     };
 
-    gl.issueBoards.BoardsStore.detail.issue.update(this.$dropdown.attr('data-issue-update'))
+    boardsStore.detail.issue
+      .update(this.$dropdown.attr('data-issue-update'))
       .then(fadeOutLoader)
       .catch(fadeOutLoader);
   }
 
   submitSelectedDate(isDropdown) {
-    return $.ajax({
-      type: 'PUT',
-      url: this.issueUpdateURL,
-      data: this.datePayload,
-      dataType: 'json',
-      beforeSend: () => {
-        const selectedDateValue = this.datePayload[this.abilityName].due_date;
-        const displayedDateStyle = this.displayedDate !== 'No due date' ? 'bold' : 'no-value';
+    const selectedDateValue = this.datePayload[this.abilityName].due_date;
+    const hasDueDate = this.displayedDate !== __('None');
+    const displayedDateStyle = hasDueDate ? 'bold' : 'no-value';
 
-        this.$loading.removeClass('hidden').fadeIn();
+    // eslint-disable-next-line no-jquery/no-fade
+    this.$loading.removeClass('hidden').fadeIn();
 
-        if (isDropdown) {
-          this.$dropdown.trigger('loading.gl.dropdown');
-          this.$selectbox.hide();
-        }
+    if (isDropdown) {
+      this.$dropdown.trigger('loading.gl.dropdown');
+      this.$selectbox.hide();
+    }
 
-        this.$value.css('display', '');
-        this.$valueContent.html(`<span class='${displayedDateStyle}'>${this.displayedDate}</span>`);
-        this.$sidebarValue.html(this.displayedDate);
+    this.$value.css('display', '');
+    this.$valueContent.html(`<span class='${displayedDateStyle}'>${this.displayedDate}</span>`);
+    this.$sidebarValue.html(this.displayedDate);
 
-        return selectedDateValue.length ?
-          $('.js-remove-due-date-holder').removeClass('hidden') :
-          $('.js-remove-due-date-holder').addClass('hidden');
-      }
-    }).done((data) => {
+    $('.js-remove-due-date-holder').toggleClass('hidden', selectedDateValue.length);
+
+    return axios.put(this.issueUpdateURL, this.datePayload).then(() => {
+      const tooltipText = hasDueDate
+        ? `${__('Due date')}<br />${selectedDateValue} (${timeFor(selectedDateValue)})`
+        : __('Due date');
       if (isDropdown) {
         this.$dropdown.trigger('loaded.gl.dropdown');
         this.$dropdown.dropdown('toggle');
       }
+      this.$sidebarCollapsedValue.attr('data-original-title', tooltipText);
+
+      // eslint-disable-next-line no-jquery/no-fade
       return this.$loading.fadeOut();
     });
   }
 }
 
-class DueDateSelectors {
+export default class DueDateSelectors {
   constructor() {
     this.initMilestoneDatePicker();
     this.initIssuableSelect();
   }
-
+  // eslint-disable-next-line class-methods-use-this
   initMilestoneDatePicker() {
-    $('.datepicker').each(function() {
+    $('.datepicker').each(function initPikadayMilestone() {
       const $datePicker = $(this);
-      const dateFix = DateFix.dashedFix($datePicker.val());
+      const datePickerVal = $datePicker.val();
+
       const calendar = new Pikaday({
         field: $datePicker.get(0),
         theme: 'gitlab-theme animate-picker',
         format: 'yyyy-mm-dd',
         container: $datePicker.parent().get(0),
+        parse: dateString => parsePikadayDate(dateString),
+        toString: date => pikadayToString(date),
         onSelect(dateText) {
-          $datePicker.val(dateFormat(new Date(dateText), 'yyyy-mm-dd'));
-        }
+          $datePicker.val(calendar.toString(dateText));
+        },
+        firstDay: gon.first_day_of_week,
       });
 
-      calendar.setDate(dateFix);
+      calendar.setDate(parsePikadayDate(datePickerVal));
 
       $datePicker.data('pikaday', calendar);
     });
 
-    $('.js-clear-due-date,.js-clear-start-date').on('click', (e) => {
+    $('.js-clear-due-date,.js-clear-start-date').on('click', e => {
       e.preventDefault();
-      const calendar = $(e.target).siblings('.datepicker').data('pikaday');
+      const calendar = $(e.target)
+        .siblings('.datepicker')
+        .data('pikaday');
       calendar.setDate(null);
     });
   }
-
+  // eslint-disable-next-line class-methods-use-this
   initIssuableSelect() {
-    const $loading = $('.js-issuable-update .due_date').find('.block-loading').hide();
+    const $loading = $('.js-issuable-update .due_date')
+      .find('.block-loading')
+      .hide();
 
     $('.js-due-date-select').each((i, dropdown) => {
       const $dropdown = $(dropdown);
+      // eslint-disable-next-line no-new
       new DueDateSelect({
         $dropdown,
-        $loading
+        $loading,
       });
     });
   }
 }
-
-window.gl = window.gl || {};
-window.gl.DueDateSelectors = DueDateSelectors;

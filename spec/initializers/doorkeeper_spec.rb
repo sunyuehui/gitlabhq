@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 require_relative '../../config/initializers/doorkeeper'
 
-describe Doorkeeper.configuration do
+RSpec.describe Doorkeeper.configuration do
   describe '#default_scopes' do
     it 'matches Gitlab::Auth::DEFAULT_SCOPES' do
       expect(subject.default_scopes).to eq Gitlab::Auth::DEFAULT_SCOPES
@@ -9,8 +11,8 @@ describe Doorkeeper.configuration do
   end
 
   describe '#optional_scopes' do
-    it 'matches Gitlab::Auth::OPTIONAL_SCOPES' do
-      expect(subject.optional_scopes).to eq Gitlab::Auth::OPTIONAL_SCOPES
+    it 'matches Gitlab::Auth.optional_scopes' do
+      expect(subject.optional_scopes).to eq Gitlab::Auth.optional_scopes - Gitlab::Auth::REGISTRY_SCOPES
     end
   end
 

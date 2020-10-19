@@ -1,11 +1,17 @@
+# frozen_string_literal: true
+
 class Projects::RefsController < Projects::ApplicationController
   include ExtractsPath
   include TreeHelper
+
+  around_action :allow_gitaly_ref_name_caching, only: [:logs_tree]
 
   before_action :require_non_empty_project
   before_action :validate_ref_id
   before_action :assign_ref_vars
   before_action :authorize_download_code!
+
+  feature_category :source_code_management
 
   def switch
     respond_to do |format|
@@ -25,7 +31,7 @@ class Projects::RefsController < Projects::ApplicationController
           when "graphs_commits"
             commits_project_graph_path(@project, @id)
           when "badges"
-            project_pipelines_settings_path(@project, ref: @id)
+            project_settings_ci_cd_path(@project, ref: @id)
           else
             project_commits_path(@project, @id)
           end
@@ -36,38 +42,19 @@ class Projects::RefsController < Projects::ApplicationController
   end
 
   def logs_tree
-    @offset = if params[:offset].present?
-                params[:offset].to_i
-              else
-                0
-              end
-
-    @limit = 25
-
-    @path = params[:path]
-
-    contents = []
-    contents.push(*tree.trees)
-    contents.push(*tree.blobs)
-    contents.push(*tree.submodules)
-
-    @logs = contents[@offset, @limit].to_a.map do |content|
-      file = @path ? File.join(@path, content.name) : content.name
-      last_commit = @repo.last_commit_for_path(@commit.id, file)
-      {
-        file_name: content.name,
-        commit: last_commit
-      }
-    end
-
-    offset = (@offset + @limit)
-    if contents.size > offset
-      @more_log_url = logs_file_project_ref_path(@project, @ref, @path || '', offset: offset)
-    end
+    tree_summary = ::Gitlab::TreeSummary.new(
+      @commit, @project, current_user,
+      path: @path, offset: params[:offset], limit: 25)
 
     respond_to do |format|
       format.html { render_404 }
-      format.js
+      format.json do
+        logs, next_offset = tree_summary.fetch_logs
+
+        response.headers["More-Logs-Offset"] = next_offset.to_s if next_offset
+
+        render json: logs
+      end
     end
   end
 

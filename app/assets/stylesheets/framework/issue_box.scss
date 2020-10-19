@@ -11,25 +11,28 @@
   padding: 5px 11px;
   margin-top: 4px;
   /* Small devices (tablets, 768px and up) */
-  @media (min-width: $screen-sm-min) {
+  @include media-breakpoint-up(sm) {
     padding: 0 $gl-btn-padding;
     margin-top: 5px;
   }
 
-  border-radius: 3px;
+  border-radius: $border-radius-default;
   display: block;
   float: left;
-  margin-right: 10px;
-  color: $white-light;
+  margin-right: $gl-padding-8;
+  color: $white;
   font-size: $gl-font-size;
-  line-height: 25px;
+  line-height: $gl-line-height-24;
 
-  &.status-box-closed {
-    background-color: $gl-danger;
+  &.status-box-closed,
+  &.status-box-mr-closed {
+    background-color: $red-500;
   }
 
-  &.status-box-merged {
-    background-color: $gl-primary;
+  &.status-box-issue-closed,
+  &.status-box-alert-resolved,
+  &.status-box-mr-merged {
+    background-color: $blue-500;
   }
 
   &.status-box-open {
@@ -37,7 +40,7 @@
   }
 
   &.status-box-expired {
-    background-color: $issue-status-expired;
+    background-color: $orange-500;
   }
 
   &.status-box-upcoming {

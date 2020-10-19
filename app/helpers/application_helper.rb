@@ -1,10 +1,37 @@
+# frozen_string_literal: true
+
 require 'digest/md5'
 require 'uri'
 
 module ApplicationHelper
+  include StartupCssHelper
+
+  # See https://docs.gitlab.com/ee/development/ee_features.html#code-in-appviews
+  # rubocop: disable CodeReuse/ActiveRecord
+  # We allow partial to be nil so that collection views can be passed in
+  # `render partial: 'some/view', collection: @some_collection`
+  def render_if_exists(partial = nil, **options)
+    return unless partial_exists?(partial || options[:partial])
+
+    if partial.nil?
+      render(**options)
+    else
+      render(partial, options)
+    end
+  end
+
+  def partial_exists?(partial)
+    lookup_context.exists?(partial, [], true)
+  end
+
+  def template_exists?(template)
+    lookup_context.exists?(template, [], false)
+  end
+  # rubocop: enable CodeReuse/ActiveRecord
+
   # Check if a particular controller is the current one
   #
-  # args - One or more controller names to check
+  # args - One or more controller names to check (using path notation when inside namespaces)
   #
   # Examples
   #
@@ -12,6 +39,11 @@ module ApplicationHelper
   #   current_controller?(:tree)           # => true
   #   current_controller?(:commits)        # => false
   #   current_controller?(:commits, :tree) # => true
+  #
+  #   # On Admin::ApplicationController
+  #   current_controller?(:application)         # => true
+  #   current_controller?('admin/application')  # => true
+  #   current_controller?('gitlab/application') # => false
   def current_controller?(*args)
     args.any? do |v|
       v.to_s.downcase == controller.controller_name || v.to_s.downcase == controller.controller_path
@@ -32,64 +64,8 @@ module ApplicationHelper
     args.any? { |v| v.to_s.downcase == action_name }
   end
 
-  def project_icon(project_id, options = {})
-    project =
-      if project_id.is_a?(Project)
-        project_id
-      else
-        Project.find_by_full_path(project_id)
-      end
-
-    if project.avatar_url
-      image_tag project.avatar_url, options
-    else # generated icon
-      project_identicon(project, options)
-    end
-  end
-
-  def project_identicon(project, options = {})
-    allowed_colors = {
-      red: 'FFEBEE',
-      purple: 'F3E5F5',
-      indigo: 'E8EAF6',
-      blue: 'E3F2FD',
-      teal: 'E0F2F1',
-      orange: 'FBE9E7',
-      gray: 'EEEEEE'
-    }
-
-    options[:class] ||= ''
-    options[:class] << ' identicon'
-    bg_key = project.id % 7
-    style = "background-color: ##{allowed_colors.values[bg_key]}; color: #555"
-
-    content_tag(:div, class: options[:class], style: style) do
-      project.name[0, 1].upcase
-    end
-  end
-
-  def avatar_icon(user_or_email = nil, size = nil, scale = 2, only_path: true)
-    user =
-      if user_or_email.is_a?(User)
-        user_or_email
-      else
-        User.find_by_any_email(user_or_email.try(:downcase))
-      end
-
-    if user
-      user.avatar_url(size: size, only_path: only_path) || default_avatar
-    else
-      gravatar_icon(user_or_email, size, scale)
-    end
-  end
-
-  def gravatar_icon(user_email = '', size = nil, scale = 2)
-    GravatarService.new.execute(user_email, size, scale) ||
-      default_avatar
-  end
-
-  def default_avatar
-    'no_avatar.png'
+  def admin_section?
+    controller.class.ancestors.include?(Admin::ApplicationController)
   end
 
   def last_commit(project)
@@ -104,6 +80,7 @@ module ApplicationHelper
 
   # Define whenever show last push event
   # with suggestion to create MR
+  # rubocop: disable CodeReuse/ActiveRecord
   def show_last_push_widget?(event)
     # Skip if event is not about added or modified non-master branch
     return false unless event && event.last_push_to_non_root? && !event.rm_ref?
@@ -121,6 +98,7 @@ module ApplicationHelper
 
     true
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def hexdigest(string)
     Digest::SHA1.hexdigest string
@@ -128,6 +106,26 @@ module ApplicationHelper
 
   def simple_sanitize(str)
     sanitize(str, tags: %w(a span))
+  end
+
+  def body_data
+    {
+      page: body_data_page,
+      page_type_id: controller.params[:id],
+      find_file: find_file_path,
+      group: @group&.path
+    }.merge(project_data)
+  end
+
+  def project_data
+    return {} unless @project
+
+    {
+      project_id: @project.id,
+      project: @project.path,
+      group: @project.group&.path,
+      namespace_id: @project.namespace&.id
+    }
   end
 
   def body_data_page
@@ -142,6 +140,11 @@ module ApplicationHelper
   # shortcut for gitlab extra config
   def extra_config
     Gitlab.config.extra
+  end
+
+  # shortcut for gitlab registry config
+  def registry_config
+    Gitlab.config.registry
   end
 
   # Render a `time` element with Javascript-based relative date and tooltip
@@ -161,11 +164,11 @@ module ApplicationHelper
   #
   # Returns an HTML-safe String
   def time_ago_with_tooltip(time, placement: 'top', html_class: '', short_format: false)
-    css_classes = short_format ? 'js-short-timeago' : 'js-timeago'
-    css_classes << " #{html_class}" unless html_class.blank?
+    css_classes = [short_format ? 'js-short-timeago' : 'js-timeago']
+    css_classes << html_class unless html_class.blank?
 
     element = content_tag :time, l(time, format: "%b %d, %Y"),
-      class: css_classes,
+      class: css_classes.join(' '),
       title: l(time.to_time.in_time_zone, format: :timeago_tooltip),
       datetime: time.to_time.getutc.iso8601,
       data: {
@@ -178,7 +181,7 @@ module ApplicationHelper
   end
 
   def edited_time_ago_with_tooltip(object, placement: 'top', html_class: 'time_ago', exclude_author: false)
-    return unless object.is_edited?
+    return unless object.edited?
 
     content_tag :small, class: 'edited-text' do
       output = content_tag(:span, 'Edited ')
@@ -201,27 +204,41 @@ module ApplicationHelper
     'https://' + promo_host
   end
 
+  def contact_sales_url
+    promo_url + '/sales'
+  end
+
   def support_url
-    current_application_settings.help_page_support_url.presence || promo_url + '/getting-help/'
+    Gitlab::CurrentSettings.current_application_settings.help_page_support_url.presence || promo_url + '/getting-help/'
+  end
+
+  def instance_review_permitted?
+    ::Gitlab::CurrentSettings.instance_review_permitted? && current_user&.admin?
+  end
+
+  def static_objects_external_storage_enabled?
+    Gitlab::CurrentSettings.static_objects_external_storage_enabled?
+  end
+
+  def external_storage_url_or_path(path, project = @project)
+    return path if @snippet || !static_objects_external_storage_enabled?
+
+    uri = URI(Gitlab::CurrentSettings.static_objects_external_storage_url)
+    path = URI(path) # `path` could have query parameters, so we need to split query and path apart
+
+    query = Rack::Utils.parse_nested_query(path.query)
+    query['token'] = current_user.static_object_token unless project.public?
+
+    uri.path = path.path
+    uri.query = query.to_query unless query.empty?
+
+    uri.to_s
   end
 
   def page_filter_path(options = {})
     without = options.delete(:without)
-    add_label = options.delete(:label)
 
-    exist_opts = {
-      state: params[:state],
-      scope: params[:scope],
-      milestone_title: params[:milestone_title],
-      assignee_id: params[:assignee_id],
-      assignee_username: params[:assignee_username],
-      author_id: params[:author_id],
-      author_username: params[:author_username],
-      search: params[:search],
-      label_name: params[:label_name]
-    }
-
-    options = exist_opts.merge(options)
+    options = request.query_parameters.merge(options)
 
     if without.present?
       without.each do |key|
@@ -229,15 +246,19 @@ module ApplicationHelper
       end
     end
 
-    params = options.compact
+    "#{request.path}?#{options.compact.to_param}"
+  end
 
-    params.delete(:label_name) unless add_label
-
-    "#{request.path}?#{params.to_param}"
+  def stylesheet_link_tag_defer(path)
+    if use_startup_css?
+      stylesheet_link_tag(path, media: "print", crossorigin: ActionController::Base.asset_host ? 'anonymous' : nil)
+    else
+      stylesheet_link_tag(path, media: "all")
+    end
   end
 
   def outdated_browser?
-    browser.ie? && browser.version.to_i < 10
+    browser.ie?
   end
 
   def path_to_key(key, admin = false)
@@ -266,7 +287,19 @@ module ApplicationHelper
   def page_class
     class_names = []
     class_names << 'issue-boards-page' if current_controller?(:boards)
+    class_names << 'environment-logs-page' if current_controller?(:logs)
     class_names << 'with-performance-bar' if performance_bar_enabled?
+    class_names << system_message_class
+    class_names
+  end
+
+  def system_message_class
+    class_names = []
+
+    return class_names unless appearance
+
+    class_names << 'with-system-header' if appearance.show_header?
+    class_names << 'with-system-footer' if appearance.show_footer?
 
     class_names
   end
@@ -286,7 +319,7 @@ module ApplicationHelper
 
   def linkedin_url(user)
     name = user.linkedin
-    if name =~ %r{\Ahttps?:\/\/(www\.)?linkedin\.com\/in\/}
+    if name =~ %r{\Ahttps?://(www\.)?linkedin\.com/in/}
       name
     else
       "https://www.linkedin.com/in/#{name}"
@@ -295,22 +328,82 @@ module ApplicationHelper
 
   def twitter_url(user)
     name = user.twitter
-    if name =~ %r{\Ahttps?:\/\/(www\.)?twitter\.com\/}
+    if name =~ %r{\Ahttps?://(www\.)?twitter\.com/}
       name
     else
-      "https://www.twitter.com/#{name}"
+      "https://twitter.com/#{name}"
     end
-  end
-
-  def show_new_nav?
-    cookies["new_nav"] == "true"
   end
 
   def collapsed_sidebar?
     cookies["sidebar_collapsed"] == "true"
   end
 
-  def show_new_repo?
-    cookies["new_repo"] == "true" && body_data_page != 'projects:show'
+  def locale_path
+    asset_path("locale/#{Gitlab::I18n.locale}/app.js")
+  end
+
+  # Overridden in EE
+  def read_only_message
+    return unless Gitlab::Database.read_only?
+
+    _('You are on a read-only GitLab instance.')
+  end
+
+  def client_class_list
+    "gl-browser-#{browser.id} gl-platform-#{browser.platform.id}"
+  end
+
+  def client_js_flags
+    {
+      "is#{browser.id.to_s.titlecase}": true,
+      "is#{browser.platform.id.to_s.titlecase}": true
+    }
+  end
+
+  def add_page_specific_style(path)
+    content_for :page_specific_styles do
+      stylesheet_link_tag_defer path
+    end
+  end
+
+  def page_startup_api_calls
+    @api_startup_calls
+  end
+
+  def add_page_startup_api_call(api_path, options: {})
+    @api_startup_calls ||= {}
+    @api_startup_calls[api_path] = options
+  end
+
+  def autocomplete_data_sources(object, noteable_type)
+    return {} unless object && noteable_type
+
+    {
+      members: members_project_autocomplete_sources_path(object, type: noteable_type, type_id: params[:id]),
+      issues: issues_project_autocomplete_sources_path(object),
+      mergeRequests: merge_requests_project_autocomplete_sources_path(object),
+      labels: labels_project_autocomplete_sources_path(object, type: noteable_type, type_id: params[:id]),
+      milestones: milestones_project_autocomplete_sources_path(object),
+      commands: commands_project_autocomplete_sources_path(object, type: noteable_type, type_id: params[:id]),
+      snippets: snippets_project_autocomplete_sources_path(object)
+    }
+  end
+
+  def asset_to_string(name)
+    app = Rails.application
+    if Rails.configuration.assets.compile
+      app.assets.find_asset(name).to_s
+    else
+      controller.view_context.render(file: Rails.root.join('public/assets', app.assets_manifest.assets[name]).to_s)
+    end
+  end
+
+  private
+
+  def appearance
+    ::Appearance.current
   end
 end
+
+ApplicationHelper.prepend_if_ee('EE::ApplicationHelper')

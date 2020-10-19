@@ -1,104 +1,327 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe EventsHelper do
-  describe '#event_note' do
-    let(:user) { build(:user) }
+RSpec.describe EventsHelper do
+  include Gitlab::Routing
 
-    before do
-      allow(helper).to receive(:current_user).and_return(user)
+  describe '#event_commit_title' do
+    let(:message) { 'foo & bar ' + 'A' * 70 + '\n' + 'B' * 80 }
+
+    subject { helper.event_commit_title(message) }
+
+    it 'returns the first line, truncated to 70 chars' do
+      is_expected.to eq(message[0..66] + "...")
     end
 
-    it 'displays one line of plain text without alteration' do
-      input = 'A short, plain note'
-      expect(helper.event_note(input)).to match(input)
-      expect(helper.event_note(input)).not_to match(/\.\.\.\z/)
+    it 'is not html-safe' do
+      is_expected.not_to be_a(ActiveSupport::SafeBuffer)
     end
 
-    it 'displays inline code' do
-      input = 'A note with `inline code`'
-      expected = 'A note with <code>inline code</code>'
-
-      expect(helper.event_note(input)).to match(expected)
+    it 'handles empty strings' do
+      expect(helper.event_commit_title("")).to eq("")
     end
 
-    it 'truncates a note with multiple paragraphs' do
-      input = "Paragraph 1\n\nParagraph 2"
-      expected = 'Paragraph 1...'
-
-      expect(helper.event_note(input)).to match(expected)
+    it 'handles nil values' do
+      expect(helper.event_commit_title(nil)).to eq('')
     end
 
-    it 'displays the first line of a code block' do
-      input = "```\nCode block\nwith two lines\n```"
-      expected = %r{<pre.+><code><span class="line">Code block\.\.\.</span>\n</code></pre>}
-
-      expect(helper.event_note(input)).to match(expected)
+    it 'does not escape HTML entities' do
+      expect(helper.event_commit_title('foo & bar')).to eq('foo & bar')
     end
+  end
 
-    it 'truncates a single long line of text' do
-      text = 'The quick brown fox jumped over the lazy dog twice' # 50 chars
-      input = text * 4
-      expected = (text * 2).sub(/.{3}/, '...')
+  describe '#event_feed_url' do
+    let(:event) { create(:event).present }
+    let(:project) { create(:project, :public, :repository) }
 
-      expect(helper.event_note(input)).to match(expected)
-    end
-
-    it 'preserves a link href when link text is truncated' do
-      text = 'The quick brown fox jumped over the lazy dog' # 44 chars
-      input = "#{text}#{text}#{text} " # 133 chars
-      link_url = 'http://example.com/foo/bar/baz' # 30 chars
-      input << link_url
-      expected_link_text = 'http://example...</a>'
-
-      expect(helper.event_note(input)).to match(link_url)
-      expect(helper.event_note(input)).to match(expected_link_text)
-    end
-
-    it 'preserves code color scheme' do
-      input = "```ruby\ndef test\n  'hello world'\nend\n```"
-      expected = "\n<pre class=\"code highlight js-syntax-highlight ruby\">" \
-        "<code><span class=\"line\"><span class=\"k\">def</span> <span class=\"nf\">test</span>...</span>\n" \
-        "</code></pre>"
-      expect(helper.event_note(input)).to eq(expected)
-    end
-
-    context 'labels formatting' do
-      let(:input) { 'this should be ~label_1' }
-
-      def format_event_note(project)
-        create(:label, title: 'label_1', project: project)
-
-        helper.event_note(input, { project: project })
+    context 'issue' do
+      before do
+        event.target = create(:issue)
       end
 
-      it 'preserves style attribute for a label that can be accessed by current_user' do
-        project = create(:project, :public)
-
-        expect(format_event_note(project)).to match(/span class=.*style=.*/)
+      it 'returns the project issue url' do
+        expect(helper.event_feed_url(event)).to eq(project_issue_url(event.project, event.target))
       end
 
-      it 'does not style a label that can not be accessed by current_user' do
-        project = create(:project, :private)
+      it 'contains the project issue IID link' do
+        expect(helper.event_feed_title(event)).to include("##{event.target.iid}")
+      end
+    end
 
-        expect(format_event_note(project)).to eq("<p>#{input}</p>")
+    context 'merge request' do
+      before do
+        event.target = create(:merge_request)
+      end
+
+      it 'returns the project merge request url' do
+        expect(helper.event_feed_url(event)).to eq(project_merge_request_url(event.project, event.target))
+      end
+
+      it 'contains the project merge request IID link' do
+        expect(helper.event_feed_title(event)).to include("!#{event.target.iid}")
+      end
+    end
+
+    it 'returns project commit url' do
+      event.target = create(:note_on_commit, project: project)
+
+      expect(helper.event_feed_url(event)).to eq(project_commit_url(event.project, event.note_target))
+    end
+
+    it 'returns event note target url' do
+      event.target = create(:note)
+
+      expect(helper.event_feed_url(event)).to eq(event_note_target_url(event))
+    end
+
+    it 'returns project url' do
+      event.project = project
+      event.action = 1
+
+      expect(helper.event_feed_url(event)).to eq(project_url(event.project))
+    end
+
+    it 'returns push event feed url' do
+      event = create(:push_event)
+      create(:push_event_payload, event: event, action: :pushed)
+
+      expect(helper.event_feed_url(event)).to eq(push_event_feed_url(event))
+    end
+  end
+
+  describe '#event_preposition' do
+    context 'for wiki page events' do
+      let(:event) { create(:wiki_page_event) }
+
+      it 'returns a suitable phrase' do
+        expect(helper.event_preposition(event)).to eq('in the wiki for')
+      end
+    end
+
+    context 'for push action events' do
+      let(:event) { create(:push_event) }
+
+      it 'returns a suitable phrase' do
+        expect(helper.event_preposition(event)).to eq('at')
+      end
+    end
+
+    context 'for commented actions' do
+      let(:event) { create(:event, :commented) }
+
+      it 'returns a suitable phrase' do
+        expect(helper.event_preposition(event)).to eq('at')
+      end
+    end
+
+    context 'for any event with a target' do
+      let(:event) { create(:event, target: create(:issue)) }
+
+      it 'returns a suitable phrase' do
+        expect(helper.event_preposition(event)).to eq('at')
+      end
+    end
+
+    context 'for milestone events' do
+      let(:event) { create(:event, target: create(:milestone)) }
+
+      it 'returns a suitable phrase' do
+        expect(helper.event_preposition(event)).to eq('in')
+      end
+    end
+
+    context 'for non-matching events' do
+      let(:event) { create(:event, :created) }
+
+      it 'returns no preposition' do
+        expect(helper.event_preposition(event)).to be_nil
       end
     end
   end
 
-  describe '#event_commit_title' do
-    let(:message) { "foo & bar " + "A" * 70 + "\n" + "B" * 80 }
-    subject { helper.event_commit_title(message) }
+  describe 'event_wiki_page_target_url' do
+    let(:project) { create(:project) }
+    let(:wiki_page) { create(:wiki_page, wiki: create(:project_wiki, project: project)) }
+    let(:event) { create(:wiki_page_event, project: project, wiki_page: wiki_page) }
 
-    it "returns the first line, truncated to 70 chars" do
-      is_expected.to eq(message[0..66] + "...")
+    it 'links to the wiki page' do
+      url = helper.project_wiki_url(project, wiki_page.slug)
+
+      expect(helper.event_wiki_page_target_url(event)).to eq(url)
     end
 
-    it "is not html-safe" do
-      is_expected.not_to be_a(ActiveSupport::SafeBuffer)
+    context 'there is no canonical slug' do
+      let(:event) { create(:wiki_page_event, project: project) }
+
+      before do
+        event.target.slugs.update_all(canonical: false)
+        event.target.clear_memoization(:canonical_slug)
+      end
+
+      it 'links to the home page' do
+        url = helper.project_wiki_url(project, Wiki::HOMEPAGE)
+
+        expect(helper.event_wiki_page_target_url(event)).to eq(url)
+      end
+    end
+  end
+
+  describe '#event_wiki_title_html' do
+    let(:event) { create(:wiki_page_event) }
+
+    it 'produces a suitable title chunk' do
+      url = helper.event_wiki_page_target_url(event)
+      title = event.target_title
+      html = [
+        "<span class=\"event-target-type gl-mr-2\">wiki page</span>",
+        "<a title=\"#{title}\" class=\"has-tooltip event-target-link gl-mr-2\" href=\"#{url}\">",
+        title,
+        "</a>"
+      ].join
+
+      expect(helper.event_wiki_title_html(event)).to eq(html)
+    end
+  end
+
+  describe '#event_note_target_url' do
+    let(:project) { create(:project, :public, :repository) }
+    let(:event) { create(:event, project: project) }
+    let(:project_base_url) { namespace_project_url(namespace_id: project.namespace, id: project) }
+
+    subject { helper.event_note_target_url(event) }
+
+    it 'returns a commit note url' do
+      event.target = create(:note_on_commit, note: '+1 from me')
+
+      expect(subject).to eq("#{project_base_url}/-/commit/#{event.target.commit_id}#note_#{event.target.id}")
     end
 
-    it "handles empty strings" do
-      expect(helper.event_commit_title("")).to eq("")
+    it 'returns a project snippet note url' do
+      event.target = create(:note_on_project_snippet, note: 'keep going')
+
+      expect(subject).to eq("#{project_base_url}/-/snippets/#{event.note_target.id}#note_#{event.target.id}")
+    end
+
+    it 'returns a project issue url' do
+      event.target = create(:note_on_issue, note: 'nice work')
+
+      expect(subject).to eq("#{project_base_url}/-/issues/#{event.note_target.iid}#note_#{event.target.id}")
+    end
+
+    it 'returns a merge request url' do
+      event.target = create(:note_on_merge_request, note: 'LGTM!')
+
+      expect(subject).to eq("#{project_base_url}/-/merge_requests/#{event.note_target.iid}#note_#{event.target.id}")
+    end
+
+    context 'for design note events' do
+      let(:event) { create(:event, :for_design, project: project) }
+
+      it 'returns an appropriate URL' do
+        iid = event.note_target.issue.iid
+        filename = event.note_target.filename
+        note_id  = event.target.id
+
+        expect(subject).to eq("#{project_base_url}/-/issues/#{iid}/designs/#{filename}#note_#{note_id}")
+      end
+    end
+  end
+
+  describe '#event_filter_visible' do
+    include DesignManagementTestHelpers
+
+    let_it_be(:project) { create(:project) }
+    let_it_be(:current_user) { create(:user) }
+
+    subject { helper.event_filter_visible(key) }
+
+    before do
+      enable_design_management
+      project.add_reporter(current_user)
+      allow(helper).to receive(:current_user).and_return(current_user)
+    end
+
+    def disable_read_design_activity(object)
+      allow(Ability).to receive(:allowed?)
+        .with(current_user, :read_design_activity, eq(object))
+        .and_return(false)
+    end
+
+    context 'for :designs' do
+      let(:key) { :designs }
+
+      context 'there is no relevant instance variable' do
+        it { is_expected.to be(true) }
+      end
+
+      context 'a project has been assigned' do
+        before do
+          assign(:project, project)
+        end
+
+        it { is_expected.to be(true) }
+
+        context 'the current user cannot read design activity' do
+          before do
+            disable_read_design_activity(project)
+          end
+
+          it { is_expected.to be(false) }
+        end
+      end
+
+      context 'projects have been assigned' do
+        before do
+          assign(:projects, Project.where(id: project.id))
+        end
+
+        it { is_expected.to be(true) }
+
+        context 'the collection is empty' do
+          before do
+            assign(:projects, Project.none)
+          end
+
+          it { is_expected.to be(false) }
+        end
+
+        context 'the current user cannot read design activity' do
+          before do
+            disable_read_design_activity(project)
+          end
+
+          it { is_expected.to be(false) }
+        end
+      end
+
+      context 'a group has been assigned' do
+        let_it_be(:group) { create(:group) }
+
+        before do
+          assign(:group, group)
+        end
+
+        context 'there are no projects in the group' do
+          it { is_expected.to be(false) }
+        end
+
+        context 'the group has at least one project' do
+          before do
+            create(:project_group_link, project: project, group: group)
+          end
+
+          it { is_expected.to be(true) }
+
+          context 'the current user cannot read design activity' do
+            before do
+              disable_read_design_activity(group)
+            end
+
+            it { is_expected.to be(false) }
+          end
+        end
+      end
     end
   end
 end

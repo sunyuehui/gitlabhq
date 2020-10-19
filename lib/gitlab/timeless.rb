@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Timeless
     def self.timeless(model, &block)
@@ -9,6 +11,7 @@ module Gitlab
       else
         block.call
       end
+
     ensure
       model.record_timestamps = original_record_timestamps
     end

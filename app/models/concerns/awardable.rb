@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Awardable
   extend ActiveSupport::Concern
 
@@ -10,16 +12,47 @@ module Awardable
     end
   end
 
-  module ClassMethods
+  class_methods do
+    def awarded(user, name = nil)
+      award_emoji_table = Arel::Table.new('award_emoji')
+      inner_query = award_emoji_table
+                .project('true')
+                .where(award_emoji_table[:user_id].eq(user.id))
+                .where(award_emoji_table[:awardable_type].eq(self.name))
+                .where(award_emoji_table[:awardable_id].eq(self.arel_table[:id]))
+
+      inner_query = inner_query.where(award_emoji_table[:name].eq(name)) if name.present?
+
+      where(inner_query.exists)
+    end
+
+    def not_awarded(user, name = nil)
+      award_emoji_table = Arel::Table.new('award_emoji')
+      inner_query = award_emoji_table
+                .project('true')
+                .where(award_emoji_table[:user_id].eq(user.id))
+                .where(award_emoji_table[:awardable_type].eq(self.name))
+                .where(award_emoji_table[:awardable_id].eq(self.arel_table[:id]))
+
+      inner_query = inner_query.where(award_emoji_table[:name].eq(name)) if name.present?
+
+      where(inner_query.exists.not)
+    end
+
     def order_upvotes_desc
-      order_votes_desc(AwardEmoji::UPVOTE_NAME)
+      order_votes(AwardEmoji::UPVOTE_NAME, 'DESC')
+    end
+
+    def order_upvotes_asc
+      order_votes(AwardEmoji::UPVOTE_NAME, 'ASC')
     end
 
     def order_downvotes_desc
-      order_votes_desc(AwardEmoji::DOWNVOTE_NAME)
+      order_votes(AwardEmoji::DOWNVOTE_NAME, 'DESC')
     end
 
-    def order_votes_desc(emoji_name)
+    # Order votes by emoji, optional sort order param `descending` defaults to true
+    def order_votes(emoji_name, direction)
       awardable_table = self.arel_table
       awards_table = AwardEmoji.arel_table
 
@@ -31,7 +64,9 @@ module Awardable
         )
       ).join_sources
 
-      joins(join_clause).group(awardable_table[:id]).reorder("COUNT(award_emoji.id) DESC")
+      joins(join_clause).group(awardable_table[:id]).reorder(
+        Arel.sql("COUNT(award_emoji.id) #{direction}")
+      )
     end
   end
 
@@ -39,7 +74,7 @@ module Awardable
     # By default we always load award_emoji user association
     awards = award_emoji.group_by(&:name)
 
-    if with_thumbs
+    if with_thumbs && (!project || project.show_default_award_emojis?)
       awards[AwardEmoji::UPVOTE_NAME]   ||= []
       awards[AwardEmoji::DOWNVOTE_NAME] ||= []
     end
@@ -59,16 +94,8 @@ module Awardable
     true
   end
 
-  def awardable_votes?(name)
-    AwardEmoji::UPVOTE_NAME == name || AwardEmoji::DOWNVOTE_NAME == name
-  end
-
-  def user_can_award?(current_user, name)
-    if user_authored?(current_user)
-      !awardable_votes?(normalize_name(name))
-    else
-      true
-    end
+  def user_can_award?(current_user)
+    Ability.allowed?(current_user, :award_emoji, self)
   end
 
   def user_authored?(current_user)
@@ -78,29 +105,6 @@ module Awardable
   end
 
   def awarded_emoji?(emoji_name, current_user)
-    award_emoji.where(name: emoji_name, user: current_user).exists?
-  end
-
-  def create_award_emoji(name, current_user)
-    return unless emoji_awardable?
-    award_emoji.create(name: normalize_name(name), user: current_user)
-  end
-
-  def remove_award_emoji(name, current_user)
-    award_emoji.where(name: name, user: current_user).destroy_all
-  end
-
-  def toggle_award_emoji(emoji_name, current_user)
-    if awarded_emoji?(emoji_name, current_user)
-      remove_award_emoji(emoji_name, current_user)
-    else
-      create_award_emoji(emoji_name, current_user)
-    end
-  end
-
-  private
-
-  def normalize_name(name)
-    Gitlab::Emoji.normalize_emoji_name(name)
+    award_emoji.named(emoji_name).awarded_by(current_user).exists?
   end
 end

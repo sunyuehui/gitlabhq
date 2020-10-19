@@ -1,5 +1,7 @@
+import $ from 'jquery';
 import ProtectedTagAccessDropdown from './protected_tag_access_dropdown';
-import ProtectedTagDropdown from './protected_tag_dropdown';
+import CreateItemDropdown from '../create_item_dropdown';
+import { __ } from '~/locale';
 
 export default class ProtectedTagCreate {
   constructor() {
@@ -21,12 +23,15 @@ export default class ProtectedTagCreate {
     });
 
     // Select default
-    $allowedToCreateDropdown.data('glDropdown').selectRowAtIndex(0);
+    $allowedToCreateDropdown.data('deprecatedJQueryDropdown').selectRowAtIndex(0);
 
     // Protected tag dropdown
-    this.protectedTagDropdown = new ProtectedTagDropdown({
+    this.createItemDropdown = new CreateItemDropdown({
       $dropdown: this.$form.find('.js-protected-tag-select'),
+      defaultToggleLabel: __('Protected Tag'),
+      fieldName: 'protected_tag[name]',
       onSelect: this.onSelectCallback,
+      getData: ProtectedTagCreate.getProtectedTags,
     });
   }
 
@@ -36,6 +41,12 @@ export default class ProtectedTagCreate {
     const $tagInput = this.$form.find('input[name="protected_tag[name]"]');
     const $allowedToCreateInput = this.$form.find('#create_access_levels_attributes');
 
-    this.$form.find('input[type="submit"]').attr('disabled', !($tagInput.val() && $allowedToCreateInput.length));
+    this.$form
+      .find('input[type="submit"]')
+      .prop('disabled', !($tagInput.val() && $allowedToCreateInput.length));
+  }
+
+  static getProtectedTags(term, callback) {
+    callback(gon.open_tags);
   }
 }

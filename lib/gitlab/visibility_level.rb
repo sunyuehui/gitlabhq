@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Gitlab::VisibilityLevel module
 #
 # Define allowed public modes that can be used for
@@ -5,7 +7,6 @@
 #
 module Gitlab
   module VisibilityLevel
-    extend CurrentSettings
     extend ActiveSupport::Concern
 
     included do
@@ -28,7 +29,7 @@ module Gitlab
       def levels_for_user(user = nil)
         return [PUBLIC] unless user
 
-        if user.full_private_access?
+        if user.can_read_all_resources?
           [PRIVATE, INTERNAL, PUBLIC]
         elsif user.external?
           [PUBLIC]
@@ -57,31 +58,45 @@ module Gitlab
         }
       end
 
-      def highest_allowed_level
-        restricted_levels = current_application_settings.restricted_visibility_levels
+      def allowed_levels
+        restricted_levels = Gitlab::CurrentSettings.restricted_visibility_levels
 
-        allowed_levels = self.values - restricted_levels
-        allowed_levels.max || PRIVATE
+        self.values - Array(restricted_levels)
+      end
+
+      def closest_allowed_level(target_level)
+        highest_allowed_level = allowed_levels.select { |level| level <= target_level }.max
+
+        # If all levels are restricted, fall back to PRIVATE
+        highest_allowed_level || PRIVATE
       end
 
       def allowed_for?(user, level)
         user.admin? || allowed_level?(level.to_i)
       end
 
+      # Level should be a numeric value, e.g. `20`
       # Return true if the specified level is allowed for the current user.
-      # Level should be a numeric value, e.g. `20`.
       def allowed_level?(level)
         valid_level?(level) && non_restricted_level?(level)
       end
 
       def non_restricted_level?(level)
-        restricted_levels = current_application_settings.restricted_visibility_levels
+        !restricted_level?(level)
+      end
+
+      def restricted_level?(level)
+        restricted_levels = Gitlab::CurrentSettings.restricted_visibility_levels
 
         if restricted_levels.nil?
-          true
+          false
         else
-          !restricted_levels.include?(level)
+          restricted_levels.include?(level)
         end
+      end
+
+      def public_visibility_restricted?
+        restricted_level?(PUBLIC)
       end
 
       def valid_level?(level)
@@ -99,12 +114,25 @@ module Gitlab
 
       def level_value(level)
         return level.to_i if level.to_i.to_s == level.to_s && string_options.key(level.to_i)
+
         string_options[level] || PRIVATE
       end
 
       def string_level(level)
         string_options.key(level)
       end
+    end
+
+    def visibility_level_decreased?
+      return false unless visibility_level_previous_changes
+
+      before, after = visibility_level_previous_changes
+
+      before && after && after < before
+    end
+
+    def visibility_level_previous_changes
+      previous_changes[:visibility_level]
     end
 
     def private?
@@ -129,6 +157,19 @@ module Gitlab
 
     def visibility=(level)
       self[visibility_level_field] = Gitlab::VisibilityLevel.level_value(level)
+    end
+
+    def visibility_attribute_present?(attributes)
+      visibility_level_attributes.each do |attr|
+        return true if attributes[attr].present?
+      end
+
+      false
+    end
+
+    def visibility_level_attributes
+      [visibility_level_field, visibility_level_field.to_s,
+       :visibility, 'visibility']
     end
   end
 end

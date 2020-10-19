@@ -1,5 +1,9 @@
+# frozen_string_literal: true
+
 class Projects::BuildsController < Projects::ApplicationController
   before_action :authorize_read_build!
+
+  feature_category :continuous_integration
 
   def index
     redirect_to project_jobs_path(project)

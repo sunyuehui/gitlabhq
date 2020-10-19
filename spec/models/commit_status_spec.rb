@@ -1,17 +1,21 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe CommitStatus do
-  let(:project) { create(:project, :repository) }
+RSpec.describe CommitStatus do
+  let_it_be(:project) { create(:project, :repository) }
 
-  let(:pipeline) do
+  let_it_be(:pipeline) do
     create(:ci_pipeline, project: project, sha: project.commit.id)
   end
 
-  let(:commit_status) { create_status }
+  let(:commit_status) { create_status(stage: 'test') }
 
-  def create_status(args = {})
-    create(:commit_status, args.merge(pipeline: pipeline))
+  def create_status(**opts)
+    create(:commit_status, pipeline: pipeline, **opts)
   end
+
+  it_behaves_like 'having unique enum values'
 
   it { is_expected.to belong_to(:pipeline) }
   it { is_expected.to belong_to(:user) }
@@ -46,6 +50,51 @@ describe CommitStatus do
       expect(ExpireJobCacheWorker).to receive(:perform_async).with(commit_status.id)
 
       commit_status.success!
+    end
+
+    describe 'transitioning to running' do
+      let(:commit_status) { create(:commit_status, :pending, started_at: nil) }
+
+      it 'records the started at time' do
+        commit_status.run!
+
+        expect(commit_status.started_at).to be_present
+      end
+    end
+  end
+
+  describe '#processed' do
+    subject { commit_status.processed }
+
+    context 'status is latest' do
+      before do
+        commit_status.update!(retried: false, status: :pending)
+      end
+
+      it { is_expected.to be_falsey }
+    end
+
+    context 'status is retried' do
+      before do
+        commit_status.update!(retried: true, status: :pending)
+      end
+
+      it { is_expected.to be_truthy }
+    end
+
+    it "processed state is always persisted" do
+      commit_status.update!(retried: false, status: :pending)
+
+      # another process does mark object as processed
+      CommitStatus.find(commit_status.id).update_column(:processed, true)
+
+      # subsequent status transitions on the same instance
+      # always saves processed=false to DB even though
+      # the current value did not change
+      commit_status.update!(retried: false, status: :running)
+
+      # we look at a persisted state in DB
+      expect(CommitStatus.find(commit_status.id).processed).to eq(false)
     end
   end
 
@@ -129,6 +178,20 @@ describe CommitStatus do
     end
   end
 
+  describe '#cancel' do
+    subject { job.cancel }
+
+    context 'when status is scheduled' do
+      let(:job) { build(:commit_status, :scheduled) }
+
+      it 'updates the status' do
+        subject
+
+        expect(job).to be_canceled
+      end
+    end
+  end
+
   describe '#auto_canceled?' do
     subject { commit_status.auto_canceled? }
 
@@ -171,7 +234,7 @@ describe CommitStatus do
 
     context 'if the building process has started' do
       before do
-        commit_status.started_at = Time.now - 1.minute
+        commit_status.started_at = Time.current - 1.minute
         commit_status.finished_at = nil
       end
 
@@ -284,6 +347,72 @@ describe CommitStatus do
     end
   end
 
+  describe '.for_ref' do
+    subject { described_class.for_ref('bb').order(:id) }
+
+    let(:statuses) do
+      [create_status(ref: 'aa'),
+       create_status(ref: 'bb'),
+       create_status(ref: 'cc')]
+    end
+
+    it 'returns statuses with the specified ref' do
+      is_expected.to eq(statuses.values_at(1))
+    end
+  end
+
+  describe '.by_name' do
+    subject { described_class.by_name('bb').order(:id) }
+
+    let(:statuses) do
+      [create_status(name: 'aa'),
+       create_status(name: 'bb'),
+       create_status(name: 'cc')]
+    end
+
+    it 'returns statuses with the specified name' do
+      is_expected.to eq(statuses.values_at(1))
+    end
+  end
+
+  describe '.for_project_paths' do
+    subject do
+      described_class
+        .for_project_paths(paths)
+        .order(:id)
+    end
+
+    context 'with a single path' do
+      let(:other_project) { create(:project, :repository) }
+      let(:paths) { other_project.full_path }
+
+      let(:other_pipeline) do
+        create(:ci_pipeline, project: other_project, sha: other_project.commit.id)
+      end
+
+      let(:statuses) do
+        [create_status(pipeline: pipeline),
+         create_status(pipeline: other_pipeline)]
+      end
+
+      it 'returns statuses for other_project' do
+        is_expected.to eq(statuses.values_at(1))
+      end
+    end
+
+    context 'with array of paths' do
+      let(:paths) { [project.full_path] }
+
+      let(:statuses) do
+        [create_status(pipeline: pipeline)]
+      end
+
+      it 'returns statuses for project' do
+        is_expected.to eq(statuses.values_at(0))
+      end
+    end
+  end
+
   describe '.status' do
     context 'when there are multiple statuses present' do
       before do
@@ -293,7 +422,7 @@ describe CommitStatus do
       end
 
       it 'returns a correct compound status' do
-        expect(described_class.all.status).to eq 'running'
+        expect(described_class.all.composite_status).to eq 'running'
       end
     end
 
@@ -303,7 +432,7 @@ describe CommitStatus do
       end
 
       it 'returns status that indicates success' do
-        expect(described_class.all.status).to eq 'success'
+        expect(described_class.all.composite_status).to eq 'success'
       end
     end
 
@@ -314,8 +443,21 @@ describe CommitStatus do
       end
 
       it 'returns status according to the scope' do
-        expect(described_class.latest.status).to eq 'success'
+        expect(described_class.latest.composite_status).to eq 'success'
       end
+    end
+  end
+
+  describe '.match_id_and_lock_version' do
+    let(:status_1) { create_status(lock_version: 1) }
+    let(:status_2) { create_status(lock_version: 2) }
+
+    it 'returns statuses that match the given id and lock versions' do
+      params = [
+        { id: status_1.id, lock_version: 1 },
+        { id: status_2.id, lock_version: 3 }
+      ]
+      expect(described_class.match_id_and_lock_version(params)).to contain_exactly(status_1)
     end
   end
 
@@ -351,31 +493,104 @@ describe CommitStatus do
     end
   end
 
-  describe '#group_name' do
-    subject { commit_status.group_name }
+  context 'with the one_dimensional_matrix feature flag disabled' do
+    describe '#group_name' do
+      before do
+        stub_feature_flags(one_dimensional_matrix: false)
+      end
 
-    tests = {
-      'rspec:windows' => 'rspec:windows',
-      'rspec:windows 0' => 'rspec:windows 0',
-      'rspec:windows 0 test' => 'rspec:windows 0 test',
-      'rspec:windows 0 1' => 'rspec:windows',
-      'rspec:windows 0 1 name' => 'rspec:windows name',
-      'rspec:windows 0/1' => 'rspec:windows',
-      'rspec:windows 0/1 name' => 'rspec:windows name',
-      'rspec:windows 0:1' => 'rspec:windows',
-      'rspec:windows 0:1 name' => 'rspec:windows name',
-      'rspec:windows 10000 20000' => 'rspec:windows',
-      'rspec:windows 0 : / 1' => 'rspec:windows',
-      'rspec:windows 0 : / 1 name' => 'rspec:windows name',
-      '0 1 name ruby' => 'name ruby',
-      '0 :/ 1 name ruby' => 'name ruby'
-    }
+      let(:commit_status) do
+        build(:commit_status, pipeline: pipeline, stage: 'test')
+      end
 
-    tests.each do |name, group_name|
-      it "'#{name}' puts in '#{group_name}'" do
-        commit_status.name = name
+      subject { commit_status.group_name }
 
-        is_expected.to eq(group_name)
+      tests = {
+        'rspec:windows' => 'rspec:windows',
+        'rspec:windows 0' => 'rspec:windows 0',
+        'rspec:windows 0 test' => 'rspec:windows 0 test',
+        'rspec:windows 0 1' => 'rspec:windows',
+        'rspec:windows 0 1 name' => 'rspec:windows name',
+        'rspec:windows 0/1' => 'rspec:windows',
+        'rspec:windows 0/1 name' => 'rspec:windows name',
+        'rspec:windows 0:1' => 'rspec:windows',
+        'rspec:windows 0:1 name' => 'rspec:windows name',
+        'rspec:windows 10000 20000' => 'rspec:windows',
+        'rspec:windows 0 : / 1' => 'rspec:windows',
+        'rspec:windows 0 : / 1 name' => 'rspec:windows name',
+        '0 1 name ruby' => 'name ruby',
+        '0 :/ 1 name ruby' => 'name ruby',
+        'rspec: [aws]' => 'rspec: [aws]',
+        'rspec: [aws] 0/1' => 'rspec: [aws]',
+        'rspec: [aws, max memory]' => 'rspec',
+        'rspec:linux: [aws, max memory, data]' => 'rspec:linux',
+        'rspec: [inception: [something, other thing], value]' => 'rspec',
+        'rspec:windows 0/1: [name, other]' => 'rspec:windows',
+        'rspec:windows: [name, other] 0/1' => 'rspec:windows',
+        'rspec:windows: [name, 0/1] 0/1' => 'rspec:windows',
+        'rspec:windows: [0/1, name]' => 'rspec:windows',
+        'rspec:windows: [, ]' => 'rspec:windows',
+        'rspec:windows: [name]' => 'rspec:windows: [name]',
+        'rspec:windows: [name,other]' => 'rspec:windows: [name,other]'
+      }
+
+      tests.each do |name, group_name|
+        it "'#{name}' puts in '#{group_name}'" do
+          commit_status.name = name
+
+          is_expected.to eq(group_name)
+        end
+      end
+    end
+  end
+
+  context 'with one_dimensional_matrix feature flag enabled' do
+    describe '#group_name' do
+      before do
+        stub_feature_flags(one_dimensional_matrix: true)
+      end
+
+      let(:commit_status) do
+        build(:commit_status, pipeline: pipeline, stage: 'test')
+      end
+
+      subject { commit_status.group_name }
+
+      tests = {
+        'rspec:windows' => 'rspec:windows',
+        'rspec:windows 0' => 'rspec:windows 0',
+        'rspec:windows 0 test' => 'rspec:windows 0 test',
+        'rspec:windows 0 1' => 'rspec:windows',
+        'rspec:windows 0 1 name' => 'rspec:windows name',
+        'rspec:windows 0/1' => 'rspec:windows',
+        'rspec:windows 0/1 name' => 'rspec:windows name',
+        'rspec:windows 0:1' => 'rspec:windows',
+        'rspec:windows 0:1 name' => 'rspec:windows name',
+        'rspec:windows 10000 20000' => 'rspec:windows',
+        'rspec:windows 0 : / 1' => 'rspec:windows',
+        'rspec:windows 0 : / 1 name' => 'rspec:windows name',
+        '0 1 name ruby' => 'name ruby',
+        '0 :/ 1 name ruby' => 'name ruby',
+        'rspec: [aws]' => 'rspec',
+        'rspec: [aws] 0/1' => 'rspec',
+        'rspec: [aws, max memory]' => 'rspec',
+        'rspec:linux: [aws, max memory, data]' => 'rspec:linux',
+        'rspec: [inception: [something, other thing], value]' => 'rspec',
+        'rspec:windows 0/1: [name, other]' => 'rspec:windows',
+        'rspec:windows: [name, other] 0/1' => 'rspec:windows',
+        'rspec:windows: [name, 0/1] 0/1' => 'rspec:windows',
+        'rspec:windows: [0/1, name]' => 'rspec:windows',
+        'rspec:windows: [, ]' => 'rspec:windows',
+        'rspec:windows: [name]' => 'rspec:windows',
+        'rspec:windows: [name,other]' => 'rspec:windows'
+      }
+
+      tests.each do |name, group_name|
+        it "'#{name}' puts in '#{group_name}'" do
+          commit_status.name = name
+
+          is_expected.to eq(group_name)
+        end
       end
     end
   end
@@ -421,7 +636,7 @@ describe CommitStatus do
       end
 
       it "lock" do
-        is_expected.to be true
+        is_expected.to be_truthy
       end
 
       it "raise exception when trying to update" do
@@ -435,12 +650,221 @@ describe CommitStatus do
       end
 
       it "do not lock" do
-        is_expected.to be false
+        is_expected.to be_falsey
       end
 
       it "save correctly" do
         expect(commit_status.save).to be true
       end
+    end
+  end
+
+  describe 'set failure_reason when drop' do
+    let(:commit_status) { create(:commit_status, :created) }
+
+    subject do
+      commit_status.drop!(reason)
+      commit_status
+    end
+
+    context 'when failure_reason is nil' do
+      let(:reason) { }
+
+      it { is_expected.to be_unknown_failure }
+    end
+
+    context 'when failure_reason is script_failure' do
+      let(:reason) { :script_failure }
+
+      it { is_expected.to be_script_failure }
+    end
+
+    context 'when failure_reason is unmet_prerequisites' do
+      let(:reason) { :unmet_prerequisites }
+
+      it { is_expected.to be_unmet_prerequisites }
+    end
+  end
+
+  describe 'ensure stage assignment' do
+    context 'when commit status has a stage_id assigned' do
+      let!(:stage) do
+        create(:ci_stage_entity, project: project, pipeline: pipeline)
+      end
+
+      let(:commit_status) do
+        create(:commit_status, stage_id: stage.id, name: 'rspec', stage: 'test')
+      end
+
+      it 'does not create a new stage' do
+        expect { commit_status }.not_to change { Ci::Stage.count }
+        expect(commit_status.stage_id).to eq stage.id
+      end
+    end
+
+    context 'when commit status does not have a stage_id assigned' do
+      let(:commit_status) do
+        create(:commit_status, name: 'rspec', stage: 'test', status: :success)
+      end
+
+      let(:stage) { Ci::Stage.first }
+
+      it 'creates a new stage', :sidekiq_might_not_need_inline do
+        expect { commit_status }.to change { Ci::Stage.count }.by(1)
+
+        expect(stage.name).to eq 'test'
+        expect(stage.project).to eq commit_status.project
+        expect(stage.pipeline).to eq commit_status.pipeline
+        expect(stage.status).to eq commit_status.status
+        expect(commit_status.stage_id).to eq stage.id
+      end
+    end
+
+    context 'when commit status does not have stage but it exists' do
+      let!(:stage) do
+        create(:ci_stage_entity, project: project,
+                                 pipeline: pipeline,
+                                 name: 'test')
+      end
+
+      let(:commit_status) do
+        create(:commit_status, project: project,
+                               pipeline: pipeline,
+                               name: 'rspec',
+                               stage: 'test',
+                               status: :success)
+      end
+
+      it 'uses existing stage', :sidekiq_might_not_need_inline do
+        expect { commit_status }.not_to change { Ci::Stage.count }
+
+        expect(commit_status.stage_id).to eq stage.id
+        expect(stage.reload.status).to eq commit_status.status
+      end
+    end
+
+    context 'when commit status is being imported' do
+      let(:commit_status) do
+        create(:commit_status, name: 'rspec', stage: 'test', importing: true)
+      end
+
+      it 'does not create a new stage' do
+        expect { commit_status }.not_to change { Ci::Stage.count }
+        expect(commit_status.stage_id).not_to be_present
+      end
+    end
+  end
+
+  describe '#all_met_to_become_pending?' do
+    subject { commit_status.all_met_to_become_pending? }
+
+    let(:commit_status) { create(:commit_status) }
+
+    it { is_expected.to eq(true) }
+
+    context 'when build requires a resource' do
+      before do
+        allow(commit_status).to receive(:requires_resource?) { true }
+      end
+
+      it { is_expected.to eq(false) }
+    end
+
+    context 'when build has a prerequisite' do
+      before do
+        allow(commit_status).to receive(:any_unmet_prerequisites?) { true }
+      end
+
+      it { is_expected.to eq(false) }
+    end
+  end
+
+  describe '#enqueue' do
+    let!(:current_time) { Time.zone.local(2018, 4, 5, 14, 0, 0) }
+
+    before do
+      allow(Time).to receive(:now).and_return(current_time)
+      expect(commit_status.any_unmet_prerequisites?).to eq false
+    end
+
+    shared_examples 'commit status enqueued' do
+      it 'sets queued_at value when enqueued' do
+        expect { commit_status.enqueue }.to change { commit_status.reload.queued_at }.from(nil).to(current_time)
+      end
+    end
+
+    context 'when initial state is :created' do
+      let(:commit_status) { create(:commit_status, :created) }
+
+      it_behaves_like 'commit status enqueued'
+    end
+
+    context 'when initial state is :skipped' do
+      let(:commit_status) { create(:commit_status, :skipped) }
+
+      it_behaves_like 'commit status enqueued'
+    end
+
+    context 'when initial state is :manual' do
+      let(:commit_status) { create(:commit_status, :manual) }
+
+      it_behaves_like 'commit status enqueued'
+    end
+
+    context 'when initial state is :scheduled' do
+      let(:commit_status) { create(:commit_status, :scheduled) }
+
+      it_behaves_like 'commit status enqueued'
+    end
+  end
+
+  describe '#present' do
+    subject { commit_status.present }
+
+    it { is_expected.to be_a(CommitStatusPresenter) }
+  end
+
+  describe '#recoverable?' do
+    using RSpec::Parameterized::TableSyntax
+
+    let(:commit_status) { create(:commit_status, :pending) }
+
+    subject(:recoverable?) { commit_status.recoverable? }
+
+    context 'when commit status is failed' do
+      before do
+        commit_status.drop!
+      end
+
+      where(:failure_reason, :recoverable) do
+        :script_failure | false
+        :missing_dependency_failure | false
+        :archived_failure | false
+        :scheduler_failure | false
+        :data_integrity_failure | false
+        :unknown_failure | true
+        :api_failure | true
+        :stuck_or_timeout_failure | true
+        :runner_system_failure | true
+      end
+
+      with_them do
+        context "when failure reason is #{params[:failure_reason]}" do
+          before do
+            commit_status.update_attribute(:failure_reason, failure_reason)
+          end
+
+          it { is_expected.to eq(recoverable) }
+        end
+      end
+    end
+
+    context 'when commit status is not failed' do
+      before do
+        commit_status.success!
+      end
+
+      it { is_expected.to eq(false) }
     end
   end
 end

@@ -1,38 +1,63 @@
+# frozen_string_literal: true
+
 class Projects::ReleasesController < Projects::ApplicationController
   # Authorize
-  before_action :require_non_empty_project
-  before_action :authorize_download_code!
-  before_action :authorize_push_code!
-  before_action :tag
-  before_action :release
+  before_action :require_non_empty_project, except: [:index]
+  before_action :release, only: %i[edit show update downloads]
+  before_action :authorize_read_release!
+  before_action do
+    push_frontend_feature_flag(:graphql_release_data, project, default_enabled: true)
+    push_frontend_feature_flag(:graphql_milestone_stats, project, default_enabled: true)
+    push_frontend_feature_flag(:graphql_releases_page, project, default_enabled: true)
+    push_frontend_feature_flag(:graphql_individual_release_page, project)
+  end
+  before_action :authorize_update_release!, only: %i[edit update]
+  before_action :authorize_create_release!, only: :new
 
-  def edit
+  feature_category :release_orchestration
+
+  def index
+    respond_to do |format|
+      format.html do
+        require_non_empty_project
+      end
+      format.json { render json: releases }
+    end
   end
 
-  def update
-    # Release belongs to Tag which is not active record object,
-    # it exists only to save a description to each Tag.
-    # If description is empty we should destroy the existing record.
-    if release_params[:description].present?
-      release.update_attributes(release_params)
-    else
-      release.destroy
+  def new
+    unless Feature.enabled?(:new_release_page, project, default_enabled: true)
+      redirect_to(new_project_tag_path(@project))
     end
+  end
 
-    redirect_to project_tag_path(@project, @tag.name)
+  def downloads
+    redirect_to link.url
   end
 
   private
 
-  def tag
-    @tag ||= @repository.find_tag(params[:tag_id])
+  def releases
+    ReleasesFinder.new(@project, current_user).execute
+  end
+
+  def authorize_update_release!
+    access_denied! unless can?(current_user, :update_release, release)
   end
 
   def release
-    @release ||= @project.releases.find_or_initialize_by(tag: @tag.name)
+    @release ||= project.releases.find_by_tag!(sanitized_tag_name)
   end
 
-  def release_params
-    params.require(:release).permit(:description)
+  def link
+    release.links.find_by_filepath!(sanitized_filepath)
+  end
+
+  def sanitized_filepath
+    CGI.unescape(params[:filepath])
+  end
+
+  def sanitized_tag_name
+    CGI.unescape(params[:tag])
   end
 end

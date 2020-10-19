@@ -1,34 +1,36 @@
-/* eslint-disable class-methods-use-this */
-import Vue from 'vue';
-import VueResource from 'vue-resource';
-
-Vue.use(VueResource);
+import axios from '../../lib/utils/axios_utils';
+import Api from '~/api';
+import { validateParams } from '../utils';
 
 export default class PipelinesService {
-
   /**
-  * Commits and merge request endpoints need to be requested with `.json`.
-  *
-  * The url provided to request the pipelines in the new merge request
-  * page already has `.json`.
-  *
-  * @param  {String} root
-  */
+   * Commits and merge request endpoints need to be requested with `.json`.
+   *
+   * The url provided to request the pipelines in the new merge request
+   * page already has `.json`.
+   *
+   * @param  {String} root
+   */
   constructor(root) {
-    let endpoint;
-
     if (root.indexOf('.json') === -1) {
-      endpoint = `${root}.json`;
+      this.endpoint = `${root}.json`;
     } else {
-      endpoint = root;
+      this.endpoint = root;
     }
-
-    this.pipelines = Vue.resource(endpoint);
   }
 
   getPipelines(data = {}) {
     const { scope, page } = data;
-    return this.pipelines.get({ scope, page });
+    const { CancelToken } = axios;
+
+    const queryParams = { scope, page, ...validateParams(data) };
+
+    this.cancelationSource = CancelToken.source();
+
+    return axios.get(this.endpoint, {
+      params: queryParams,
+      cancelToken: this.cancelationSource.token,
+    });
   }
 
   /**
@@ -37,7 +39,13 @@ export default class PipelinesService {
    * @param  {String} endpoint
    * @return {Promise}
    */
+  // eslint-disable-next-line class-methods-use-this
   postAction(endpoint) {
-    return Vue.http.post(`${endpoint}.json`);
+    return axios.post(`${endpoint}.json`);
+  }
+
+  // eslint-disable-next-line class-methods-use-this
+  runMRPipeline({ projectId, mergeRequestId }) {
+    return Api.postMergeRequestPipeline(projectId, { mergeRequestId });
   }
 }

@@ -1,20 +1,32 @@
-class ProjectHook < WebHook
-  TRIGGERS = {
-    push_hooks:               :push_events,
-    tag_push_hooks:           :tag_push_events,
-    issue_hooks:              :issues_events,
-    confidential_issue_hooks: :confidential_issues_events,
-    note_hooks:               :note_events,
-    merge_request_hooks:      :merge_requests_events,
-    job_hooks:                :job_events,
-    pipeline_hooks:           :pipeline_events,
-    wiki_page_hooks:          :wiki_page_events
-  }.freeze
+# frozen_string_literal: true
 
-  TRIGGERS.each do |trigger, event|
-    scope trigger, -> { where(event => true) }
-  end
+class ProjectHook < WebHook
+  include TriggerableHooks
+  include Presentable
+  include Limitable
+
+  self.limit_scope = :project
+
+  triggerable_hooks [
+    :push_hooks,
+    :tag_push_hooks,
+    :issue_hooks,
+    :confidential_issue_hooks,
+    :note_hooks,
+    :confidential_note_hooks,
+    :merge_request_hooks,
+    :job_hooks,
+    :pipeline_hooks,
+    :wiki_page_hooks,
+    :deployment_hooks
+  ]
 
   belongs_to :project
   validates :project, presence: true
+
+  def pluralized_name
+    _('Webhooks')
+  end
 end
+
+ProjectHook.prepend_if_ee('EE::ProjectHook')

@@ -1,13 +1,15 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Projects::BlameController do
+RSpec.describe Projects::BlameController do
   let(:project) { create(:project, :repository) }
   let(:user)    { create(:user) }
 
   before do
     sign_in(user)
 
-    project.team << [user, :master]
+    project.add_maintainer(user)
     controller.instance_variable_set(:@project, project)
   end
 
@@ -16,19 +18,32 @@ describe Projects::BlameController do
 
     before do
       get(:show,
-          namespace_id: project.namespace,
-          project_id: project,
-          id: id)
+          params: {
+            namespace_id: project.namespace,
+            project_id: project,
+            id: id
+          })
     end
 
-    context "valid file" do
+    context "valid branch, valid file" do
       let(:id) { 'master/files/ruby/popen.rb' }
+
       it { is_expected.to respond_with(:success) }
     end
 
-    context "invalid file" do
-      let(:id) { 'master/files/ruby/missing_file.rb'}
-      it { expect(response).to have_http_status(404) }
+    context "valid branch, invalid file" do
+      let(:id) { 'master/files/ruby/invalid-path.rb' }
+
+      it 'redirects' do
+        expect(subject)
+            .to redirect_to("/#{project.full_path}/-/tree/master")
+      end
+    end
+
+    context "invalid branch, valid file" do
+      let(:id) { 'invalid-branch/files/ruby/missing_file.rb'}
+
+      it { is_expected.to respond_with(:not_found) }
     end
   end
 end

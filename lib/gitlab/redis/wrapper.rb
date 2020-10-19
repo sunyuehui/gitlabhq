@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # This file should only be used by sub-classes, not directly by any clients of the sub-classes
 # please require all dependencies below:
 require 'active_support/core_ext/hash/keys'
@@ -6,24 +8,27 @@ require 'active_support/core_ext/module/delegation'
 module Gitlab
   module Redis
     class Wrapper
-      DEFAULT_REDIS_URL = 'redis://localhost:6379'.freeze
-      REDIS_CONFIG_ENV_VAR_NAME = 'GITLAB_REDIS_CONFIG_FILE'.freeze
+      DEFAULT_REDIS_URL = 'redis://localhost:6379'
+      REDIS_CONFIG_ENV_VAR_NAME = 'GITLAB_REDIS_CONFIG_FILE'
 
       class << self
         delegate :params, :url, to: :new
 
         def with
+          pool.with { |redis| yield redis }
+        end
+
+        def pool
           @pool ||= ConnectionPool.new(size: pool_size) { ::Redis.new(params) }
-          @pool.with { |redis| yield redis }
         end
 
         def pool_size
           # heuristic constant 5 should be a config setting somewhere -- related to CPU count?
           size = 5
-          if Sidekiq.server?
-            # the pool will be used in a multi-threaded context
-            size += Sidekiq.options[:concurrency]
+          if Gitlab::Runtime.multi_threaded?
+            size += Gitlab::Runtime.max_threads
           end
+
           size
         end
 
@@ -66,6 +71,10 @@ module Gitlab
           # nil will force use of DEFAULT_REDIS_URL when config file is absent
           nil
         end
+
+        def instrumentation_class
+          raise NotImplementedError
+        end
       end
 
       def initialize(rails_env = nil)
@@ -95,6 +104,8 @@ module Gitlab
         redis_url = config.delete(:url)
         redis_uri = URI.parse(redis_url)
 
+        config[:instrumentation_class] ||= self.class.instrumentation_class
+
         if redis_uri.scheme == 'unix'
           # Redis::Store does not handle Unix sockets well, so let's do it for them
           config[:path] = redis_uri.path
@@ -104,6 +115,7 @@ module Gitlab
             db_numbers = queries["db"] if queries.key?("db")
             config[:db] = db_numbers[0].to_i if db_numbers.any?
           end
+
           config
         else
           redis_hash = ::Redis::Store::Factory.extract_host_options_from_uri(redis_url)

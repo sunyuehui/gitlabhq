@@ -1,6 +1,11 @@
+import DropdownUtils from './dropdown_utils';
+import FilteredSearchDropdownManager from './filtered_search_dropdown_manager';
+import FilteredSearchVisualTokens from './filtered_search_visual_tokens';
+import { FILTER_TYPE } from './constants';
+
 const DATA_DROPDOWN_TRIGGER = 'data-dropdown-trigger';
 
-class FilteredSearchDropdown {
+export default class FilteredSearchDropdown {
   constructor({ droplab, dropdown, input, filter }) {
     this.droplab = droplab;
     this.hookId = input && input.id;
@@ -8,7 +13,7 @@ class FilteredSearchDropdown {
     this.filter = filter;
     this.dropdown = dropdown;
     this.loadingTemplate = `<div class="filter-dropdown-loading">
-      <i class="fa fa-spinner fa-spin"></i>
+      <span class="spinner"></span>
     </div>`;
     this.bindEvents();
   }
@@ -28,13 +33,26 @@ class FilteredSearchDropdown {
 
   itemClicked(e, getValueFunction) {
     const { selected } = e.detail;
-
     if (selected.tagName === 'LI' && selected.innerHTML) {
-      const dataValueSet = gl.DropdownUtils.setDataValueIfSelected(this.filter, selected);
+      const {
+        lastVisualToken: visualToken,
+      } = FilteredSearchVisualTokens.getLastVisualTokenBeforeInput();
+      const { tokenOperator } = DropdownUtils.getVisualTokenValues(visualToken);
+
+      const dataValueSet = DropdownUtils.setDataValueIfSelected(
+        this.filter,
+        tokenOperator,
+        selected,
+      );
 
       if (!dataValueSet) {
         const value = getValueFunction(selected);
-        gl.FilteredSearchDropdownManager.addWordToInput(this.filter, value, true);
+        FilteredSearchDropdownManager.addWordToInput({
+          tokenName: this.filter,
+          tokenOperator,
+          tokenValue: value,
+          clicked: true,
+        });
       }
 
       this.resetFilters();
@@ -57,6 +75,9 @@ class FilteredSearchDropdown {
 
   renderContent(forceShowList = false) {
     const currentHook = this.getCurrentHook();
+
+    FilteredSearchDropdown.hideDropdownItemsforNotOperator(currentHook);
+
     if (forceShowList && currentHook && currentHook.list.hidden) {
       currentHook.list.show();
     }
@@ -82,12 +103,14 @@ class FilteredSearchDropdown {
   }
 
   dispatchInputEvent() {
-    // Propogate input change to FilteredSearchDropdownManager
+    // Propagate input change to FilteredSearchDropdownManager
     // so that it can determine which dropdowns to open
-    this.input.dispatchEvent(new CustomEvent('input', {
-      bubbles: true,
-      cancelable: true,
-    }));
+    this.input.dispatchEvent(
+      new CustomEvent('input', {
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
   }
 
   dispatchFormSubmitEvent() {
@@ -108,7 +131,10 @@ class FilteredSearchDropdown {
 
     if (hook) {
       const data = hook.list.data || [];
-      const results = data.map((o) => {
+
+      if (!data) return;
+
+      const results = data.map(o => {
         const updated = o;
         updated.droplab_hidden = false;
         return updated;
@@ -116,7 +142,41 @@ class FilteredSearchDropdown {
       hook.list.render(results);
     }
   }
-}
 
-window.gl = window.gl || {};
-gl.FilteredSearchDropdown = FilteredSearchDropdown;
+  /**
+   * Hide None & Any options from the current dropdown.
+   * Hiding happens only for NOT operator.
+   */
+  static hideDropdownItemsforNotOperator(currentHook) {
+    const lastOperator = FilteredSearchVisualTokens.getLastTokenOperator();
+
+    if (lastOperator === '!=') {
+      const { list: dropdownEl } = currentHook.list;
+
+      let shouldHideDivider = true;
+
+      // Iterate over all the static dropdown values,
+      // then hide `None` and `Any` items.
+      Array.from(dropdownEl.querySelectorAll('li[data-value]')).forEach(itemEl => {
+        const {
+          dataset: { value },
+        } = itemEl;
+
+        if (value.toLowerCase() === FILTER_TYPE.none || value.toLowerCase() === FILTER_TYPE.any) {
+          itemEl.classList.add('hidden');
+        } else {
+          // If we encountered any element other than None/Any, then
+          // we shouldn't hide the divider
+          shouldHideDivider = false;
+        }
+      });
+
+      if (shouldHideDivider) {
+        const divider = dropdownEl.querySelector('li.divider');
+        if (divider) {
+          divider.classList.add('hidden');
+        }
+      }
+    }
+  }
+}

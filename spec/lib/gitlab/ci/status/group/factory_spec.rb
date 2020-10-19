@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Status::Group::Factory do
+RSpec.describe Gitlab::Ci::Status::Group::Factory do
   it 'inherits from the core factory' do
     expect(described_class)
       .to be < Gitlab::Ci::Status::Factory

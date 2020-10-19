@@ -1,17 +1,16 @@
+# frozen_string_literal: true
+
+# Generated HTML is transformed back to GFM by app/assets/javascripts/behaviors/markdown/nodes/emoji.js
 module Banzai
   module Filter
     # HTML filter that replaces :emoji: and unicode with images.
     #
     # Based on HTML::Pipeline::EmojiFilter
-    #
-    # Context options:
-    #   :asset_root
-    #   :asset_host
     class EmojiFilter < HTML::Pipeline::Filter
       IGNORED_ANCESTOR_TAGS = %w(pre code tt).to_set
 
       def call
-        search_text_nodes(doc).each do |node|
+        doc.search(".//text()").each do |node|
           content = node.to_html
           next if has_ancestor?(node, IGNORED_ANCESTOR_TAGS)
 
@@ -34,7 +33,7 @@ module Banzai
       # Returns a String with :emoji: replaced with gl-emoji unicode.
       def emoji_name_element_unicode_filter(text)
         text.gsub(emoji_pattern) do |match|
-          name = $1
+          name = Regexp.last_match(1)
           Gitlab::Emoji.gl_emoji_tag(name)
         end
       end
@@ -54,9 +53,9 @@ module Banzai
       # Build a regexp that matches all valid :emoji: names.
       def self.emoji_pattern
         @emoji_pattern ||=
-          /(?<=[^[:alnum:]:]|\n|^)
+          %r{(?<=[^[:alnum:]:]|\n|^)
           :(#{Gitlab::Emoji.emojis_names.map { |name| Regexp.escape(name) }.join('|')}):
-          (?=[^[:alnum:]:]|$)/x
+          (?=[^[:alnum:]:]|$)}x
       end
 
       # Build a regexp that matches all valid unicode emojis names.

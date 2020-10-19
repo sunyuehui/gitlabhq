@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 require 'sidekiq/api'
 
 module API
-  class SidekiqMetrics < Grape::API
+  class SidekiqMetrics < ::API::Base
     before { authenticated_as_admin! }
 
     helpers do
@@ -15,7 +17,7 @@ module API
       end
 
       def process_metrics
-        Sidekiq::ProcessSet.new.map do |process|
+        Sidekiq::ProcessSet.new(false).map do |process|
           {
             hostname:    process['hostname'],
             pid:         process['pid'],
@@ -34,7 +36,8 @@ module API
         {
           processed: stats.processed,
           failed: stats.failed,
-          enqueued: stats.enqueued
+          enqueued: stats.enqueued,
+          dead: stats.dead_size
         }
       end
     end

@@ -1,7 +1,10 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Metrics::Subscribers::ActionView do
-  let(:transaction) { Gitlab::Metrics::Transaction.new }
+RSpec.describe Gitlab::Metrics::Subscribers::ActionView do
+  let(:env) { {} }
+  let(:transaction) { Gitlab::Metrics::WebTransaction.new(env) }
 
   let(:subscriber) { described_class.new }
 
@@ -18,14 +21,16 @@ describe Gitlab::Metrics::Subscribers::ActionView do
 
   describe '#render_template' do
     it 'tracks rendering of a template' do
-      values = { duration: 2.1 }
-      tags   = { view: 'app/views/x.html.haml' }
-
       expect(transaction).to receive(:increment)
-        .with(:view_duration, 2.1)
+        .with(:gitlab_transaction_view_duration_total, 2.1)
 
-      expect(transaction).to receive(:add_metric)
-        .with(described_class::SERIES, values, tags)
+      subscriber.render_template(event)
+    end
+
+    it 'observes view rendering time' do
+      expect(transaction)
+        .to receive(:observe)
+        .with(:gitlab_view_rendering_duration_seconds, 2.1, { view: "app/views/x.html.haml" })
 
       subscriber.render_template(event)
     end

@@ -1,11 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::ReferenceParser::CommitParser do
+RSpec.describe Banzai::ReferenceParser::CommitParser do
   include ReferenceParserHelpers
 
   let(:project) { create(:project, :public) }
   let(:user) { create(:user) }
-  subject { described_class.new(project, user) }
+  subject { described_class.new(Banzai::RenderContext.new(project, user)) }
+
   let(:link) { empty_html_link }
 
   describe '#nodes_visible_to_user' do
@@ -32,8 +35,9 @@ describe Banzai::ReferenceParser::CommitParser do
         it 'returns an Array of commits' do
           commit = double(:commit)
 
-          allow_any_instance_of(Project).to receive(:valid_repo?)
-            .and_return(true)
+          allow_next_instance_of(Project) do |instance|
+            allow(instance).to receive(:valid_repo?).and_return(true)
+          end
 
           expect(subject).to receive(:find_commits)
             .with(project, ['123'])
@@ -43,8 +47,9 @@ describe Banzai::ReferenceParser::CommitParser do
         end
 
         it 'returns an empty Array when the commit could not be found' do
-          allow_any_instance_of(Project).to receive(:valid_repo?)
-            .and_return(true)
+          allow_next_instance_of(Project) do |instance|
+            allow(instance).to receive(:valid_repo?).and_return(true)
+          end
 
           expect(subject).to receive(:find_commits)
             .with(project, ['123'])
@@ -54,8 +59,9 @@ describe Banzai::ReferenceParser::CommitParser do
         end
 
         it 'skips projects without valid repositories' do
-          allow_any_instance_of(Project).to receive(:valid_repo?)
-            .and_return(false)
+          allow_next_instance_of(Project) do |instance|
+            allow(instance).to receive(:valid_repo?).and_return(false)
+          end
 
           expect(subject.referenced_by([link])).to eq([])
         end
@@ -63,8 +69,9 @@ describe Banzai::ReferenceParser::CommitParser do
 
       context 'when the link does not have a data-commit attribute' do
         it 'returns an empty Array' do
-          allow_any_instance_of(Project).to receive(:valid_repo?)
-            .and_return(true)
+          allow_next_instance_of(Project) do |instance|
+            allow(instance).to receive(:valid_repo?).and_return(true)
+          end
 
           expect(subject.referenced_by([link])).to eq([])
         end
@@ -73,8 +80,9 @@ describe Banzai::ReferenceParser::CommitParser do
 
     context 'when the link does not have a data-project attribute' do
       it 'returns an empty Array' do
-        allow_any_instance_of(Project).to receive(:valid_repo?)
-          .and_return(true)
+        allow_next_instance_of(Project) do |instance|
+          allow(instance).to receive(:valid_repo?).and_return(true)
+        end
 
         expect(subject.referenced_by([link])).to eq([])
       end
@@ -119,5 +127,23 @@ describe Banzai::ReferenceParser::CommitParser do
 
       expect(subject.find_commits(project, %w{123})).to eq([])
     end
+  end
+
+  context 'when checking commits on another projects' do
+    let(:control_links) do
+      [commit_link]
+    end
+
+    let(:actual_links) do
+      control_links + [commit_link, commit_link]
+    end
+
+    def commit_link
+      project = create(:project, :repository, :public)
+
+      Nokogiri::HTML.fragment(%Q{<a data-commit="#{project.commit.id}" data-project="#{project.id}"></a>}).children[0]
+    end
+
+    it_behaves_like 'no project N+1 queries'
   end
 end

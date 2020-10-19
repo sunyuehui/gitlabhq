@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Sherlock
     class Transaction
@@ -89,7 +91,9 @@ module Gitlab
         ActiveSupport::Notifications.subscribe('sql.active_record') do |_, start, finish, _, data|
           next unless same_thread?
 
-          track_query(data[:sql].strip, data[:binds], start, finish)
+          unless data.fetch(:cached, data[:name] == 'CACHE')
+            track_query(data[:sql].strip, data[:binds], start, finish)
+          end
         end
       end
 

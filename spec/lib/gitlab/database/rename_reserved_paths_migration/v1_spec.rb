@@ -1,19 +1,21 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-shared_examples 'renames child namespaces' do |type|
+RSpec.shared_examples 'renames child namespaces' do |type|
   it 'renames namespaces' do
     rename_namespaces = double
     expect(described_class::RenameNamespaces)
-      .to receive(:new).with(['first-path', 'second-path'], subject)
+      .to receive(:new).with(%w[first-path second-path], subject)
            .and_return(rename_namespaces)
     expect(rename_namespaces).to receive(:rename_namespaces)
                                    .with(type: :child)
 
-    subject.rename_wildcard_paths(['first-path', 'second-path'])
+    subject.rename_wildcard_paths(%w[first-path second-path])
   end
 end
 
-describe Gitlab::Database::RenameReservedPathsMigration::V1, :truncate do
+RSpec.describe Gitlab::Database::RenameReservedPathsMigration::V1, :delete do
   let(:subject) { FakeRenameReservedPathMigrationV1.new }
 
   before do
@@ -27,7 +29,7 @@ describe Gitlab::Database::RenameReservedPathsMigration::V1, :truncate do
   describe '#rename_wildcard_paths' do
     it_behaves_like 'renames child namespaces'
 
-    it 'should rename projects' do
+    it 'renames projects' do
       rename_projects = double
       expect(described_class::RenameProjects)
         .to receive(:new).with(['the-path'], subject)
@@ -40,7 +42,7 @@ describe Gitlab::Database::RenameReservedPathsMigration::V1, :truncate do
   end
 
   describe '#rename_root_paths' do
-    it 'should rename namespaces' do
+    it 'renames namespaces' do
       rename_namespaces = double
       expect(described_class::RenameNamespaces)
         .to receive(:new).with(['the-path'], subject)

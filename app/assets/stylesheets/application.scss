@@ -1,45 +1,38 @@
-/*
- * This is a manifest file that'll automatically include all the stylesheets available in this directory
- * and any sub-directories. You're free to add application-wide styles to this file and they'll appear at
- * the top of the compiled file, but it's generally better to create a new file per style scope.
- *= require jquery.atwho
- *= require select2
- *= require_self
- *= require dropzone/basic
- *= require cropper.css
-*/
+// Welcome to GitLab css!
+// If you need to add or modify UI component that is common for many pages
+// like a table or typography then make changes in the framework/ directory.
+// If you need to add unique style that should affect only one page - use pages/
+// directory.
+@import '@gitlab/at.js/dist/css/jquery.atwho';
+@import 'dropzone/dist/basic';
+@import 'select2';
 
-/*
- * Welcome to GitLab css!
- * If you need to add or modify UI component that is common for many pages
- * like a table or typography then make changes in the framework/ directory.
- * If you need to add unique style that should affect only one page - use pages/
- * directory.
- */
+// GitLab UI framework
+@import 'framework';
 
-@import "../../../node_modules/pikaday/scss/pikaday";
+// Custom Fontawesome icons
+@import 'fontawesome_custom';
 
-/*
- * GitLab UI framework
- */
-@import "framework";
+// Page specific styles (issues, projects etc):
+@import 'page_specific_files';
 
-/*
- * Font icons
- */
-@import "font-awesome";
+// Component specific styles, will be moved to gitlab-ui
+@import 'components/**/*';
 
-/*
- * Page specific styles (issues, projects etc):
- */
-@import "pages/**/*";
+// Vendors specific styles
+@import 'vendors/**/*';
 
-/*
- * Code highlight
- */
-@import "highlight/**/*";
+// Styles for JS behaviors.
+@import 'behaviors';
 
-/*
- * Styles for JS behaviors.
- */
-@import "behaviors";
+// EE-only stylesheets
+@import 'application_ee';
+
+/* print styles */
+@media print {
+  @import 'print';
+}
+
+/* Rules for overriding cloaking in startup-general.scss */
+@import 'startup/cloaking';
+@include cloak-startup-scss(block);

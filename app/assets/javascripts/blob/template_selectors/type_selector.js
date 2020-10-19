@@ -1,4 +1,5 @@
 import FileTemplateSelector from '../file_template_selector';
+import initDeprecatedJQueryDropdown from '~/deprecated_jquery_dropdown';
 
 export default class FileTemplateTypeSelector extends FileTemplateSelector {
   constructor({ mediator, dropdownData }) {
@@ -12,14 +13,12 @@ export default class FileTemplateTypeSelector extends FileTemplateSelector {
   }
 
   initDropdown() {
-    this.$dropdown.glDropdown({
+    initDeprecatedJQueryDropdown(this.$dropdown, {
       data: this.config.dropdownData,
       filterable: false,
       selectable: true,
-      toggleLabel: item => item.name,
       clicked: options => this.mediator.selectTemplateTypeOptions(options),
       text: item => item.name,
     });
   }
-
 }

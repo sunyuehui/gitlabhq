@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module SystemCheck
   module App
     class InitScriptExistsCheck < SystemCheck::BaseCheck
@@ -18,7 +20,7 @@ module SystemCheck
           'Install the init script'
         )
         for_more_information(
-          see_installation_guide_section 'Install Init Script'
+          see_installation_guide_section('Install Init Script')
         )
         fix_and_rerun
       end

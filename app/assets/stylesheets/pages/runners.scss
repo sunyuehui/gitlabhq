@@ -1,27 +1,27 @@
 .runner-state {
   padding: 6px 12px;
   margin-right: 10px;
-  color: $white-light;
+  color: $white;
 
   &.runner-state-shared {
-    background: $runner-state-shared-bg;
+    background: $green-400;
   }
 
   &.runner-state-specific {
-    background: $runner-state-specific-bg;
+    background: $blue-400;
   }
 }
 
 .runner-status-online {
-  color: $runner-status-online-color;
+  color: $green-600;
 }
 
 .runner-status-offline {
-  color: $runner-status-offline-color;
+  color: $gray-darkest;
 }
 
 .runner-status-paused {
-  color: $runner-status-paused-color;
+  color: $red-500;
 }
 
 .runner {
@@ -30,7 +30,7 @@
   }
 
   h4 {
-    font-weight: normal;
+    font-weight: $gl-font-weight-normal;
   }
 }
 
@@ -44,9 +44,11 @@
   .btn-default {
     color: $gl-text-color-secondary;
   }
+}
 
-  .fa-pause,
-  .fa-play {
-    font-size: 11px;
+@include media-breakpoint-down(md) {
+  .runners-content {
+    width: 100%;
+    overflow: auto;
   }
 }

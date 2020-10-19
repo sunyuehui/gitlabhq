@@ -9,13 +9,13 @@ when running `rake db:migrate`.
 For example, this would run all migrations including any post deployment
 migrations:
 
-```bash
+```shell
 bundle exec rake db:migrate
 ```
 
 This however will skip post deployment migrations:
 
-```bash
+```shell
 SKIP_POST_DEPLOYMENT_MIGRATIONS=true bundle exec rake db:migrate
 ```
 
@@ -26,7 +26,7 @@ post deployment migrations after deploying a new version. Let's assume you
 normally use the command `chef-client` to do so. To make use of this feature
 you'd have to run this command as follows:
 
-```bash
+```shell
 SKIP_POST_DEPLOYMENT_MIGRATIONS=true sudo chef-client
 ```
 
@@ -41,7 +41,7 @@ server but with the variable _unset_.
 
 To create a post deployment migration you can use the following Rails generator:
 
-```bash
+```shell
 bundle exec rails g post_deployment_migration migration_name_here
 ```
 
@@ -57,19 +57,19 @@ depends on this column being present while it's running. Normally you'd follow
 these steps in such a case:
 
 1. Stop the GitLab instance
-2. Run the migration removing the column
-3. Start the GitLab instance again
+1. Run the migration removing the column
+1. Start the GitLab instance again
 
 Using post deployment migrations we can instead follow these steps:
 
 1. Deploy a new version of GitLab while ignoring post deployment migrations
-2. Re-run `rake db:migrate` but without the environment variable set
+1. Re-run `rake db:migrate` but without the environment variable set
 
 Here we don't need any downtime as the migration takes place _after_ a new
 version (which doesn't depend on the column anymore) has been deployed.
 
 Some other examples where these migrations are useful:
 
-* Cleaning up data generated due to a bug in GitLab
-* Removing tables
-* Migrating jobs from one Sidekiq queue to another
+- Cleaning up data generated due to a bug in GitLab
+- Removing tables
+- Migrating jobs from one Sidekiq queue to another

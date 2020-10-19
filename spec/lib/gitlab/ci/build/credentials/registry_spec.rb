@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Build::Credentials::Registry do
+RSpec.describe Gitlab::Ci::Build::Credentials::Registry do
   let(:build) { create(:ci_build, name: 'spinach', stage: 'test', stage_idx: 0) }
   let(:registry_url) { 'registry.example.com:5005' }
 

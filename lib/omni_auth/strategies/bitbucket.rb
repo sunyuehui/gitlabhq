@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'omniauth-oauth2'
 
 module OmniAuth
@@ -35,6 +37,10 @@ module OmniAuth
       def emails
         email_response = access_token.get('api/2.0/user/emails').parsed
         @emails ||= email_response && email_response['values'] || nil
+      end
+
+      def callback_url
+        options[:redirect_uri] || (full_host + script_name + callback_path)
       end
     end
   end

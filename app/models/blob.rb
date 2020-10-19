@@ -1,9 +1,15 @@
-# Blob is a Rails-specific wrapper around Gitlab::Git::Blob objects
+# frozen_string_literal: true
+
+# Blob is a Rails-specific wrapper around Gitlab::Git::Blob, SnippetBlob and Ci::ArtifactBlob
 class Blob < SimpleDelegator
+  include Presentable
+  include BlobLanguageFromGitAttributes
+  include BlobActiveModel
+
+  MODE_SYMLINK = '120000' # The STRING 120000 is the git-reported octal filemode for a symlink
+
   CACHE_TIME = 60 # Cache raw blobs referred to by a (mutable) ref for 1 minute
   CACHE_TIME_IMMUTABLE = 3600 # Cache blobs referred to by an immutable reference for 1 hour
-
-  MAXIMUM_TEXT_HIGHLIGHT_SIZE = 1.megabyte
 
   # Finding a viewer for a blob happens based only on extension and whether the
   # blob is binary or text, which means 1 blob should only be matched by 1 viewer,
@@ -23,12 +29,14 @@ class Blob < SimpleDelegator
     BlobViewer::Markup,
     BlobViewer::Notebook,
     BlobViewer::SVG,
+    BlobViewer::OpenApi,
 
     BlobViewer::Image,
     BlobViewer::Sketch,
     BlobViewer::Balsamiq,
 
     BlobViewer::Video,
+    BlobViewer::Audio,
 
     BlobViewer::PDF,
 
@@ -44,12 +52,15 @@ class Blob < SimpleDelegator
     BlobViewer::License,
     BlobViewer::Contributing,
     BlobViewer::Changelog,
+    BlobViewer::MetricsDashboardYml,
 
+    BlobViewer::CargoToml,
     BlobViewer::Cartfile,
     BlobViewer::ComposerJson,
     BlobViewer::Gemfile,
     BlobViewer::Gemspec,
     BlobViewer::GodepsJson,
+    BlobViewer::GoMod,
     BlobViewer::PackageJson,
     BlobViewer::Podfile,
     BlobViewer::Podspec,
@@ -58,7 +69,10 @@ class Blob < SimpleDelegator
     BlobViewer::YarnLock
   ].freeze
 
-  attr_reader :project
+  attr_reader :container
+
+  delegate :repository, to: :container, allow_nil: true
+  delegate :project, to: :repository, allow_nil: true
 
   # Wrap a Gitlab::Git::Blob object, or return nil when given nil
   #
@@ -70,16 +84,28 @@ class Blob < SimpleDelegator
   #
   #     blob = Blob.decorate(nil)
   #     puts "truthy" if blob # No output
-  def self.decorate(blob, project = nil)
+  def self.decorate(blob, container = nil)
     return if blob.nil?
 
-    new(blob, project)
+    new(blob, container)
   end
 
-  def initialize(blob, project = nil)
-    @project = project
+  def self.lazy(repository, commit_id, path, blob_size_limit: Gitlab::Git::Blob::MAX_DATA_DISPLAY_SIZE)
+    BatchLoader.for([commit_id, path]).batch(key: repository) do |items, loader, args|
+      args[:key].blobs_at(items, blob_size_limit: blob_size_limit).each do |blob|
+        loader.call([blob.commit_id, blob.path], blob) if blob
+      end
+    end
+  end
+
+  def initialize(blob, container = nil)
+    @container = container
 
     super(blob)
+  end
+
+  def inspect
+    "#<#{self.class.name} oid:#{id[0..8]} commit:#{commit_id[0..8]} path:#{path}>"
   end
 
   # Returns the data of the blob.
@@ -87,7 +113,7 @@ class Blob < SimpleDelegator
   # If the blob is a text based blob the content is converted to UTF-8 and any
   # invalid byte sequences are replaced.
   def data
-    if binary?
+    if binary_in_repo?
       super
     else
       @data ||= super.encode(Encoding::UTF_8, invalid: :replace, undef: :replace)
@@ -95,11 +121,10 @@ class Blob < SimpleDelegator
   end
 
   def load_all_data!
-    super(project.repository) if project
-  end
-
-  def no_highlighting?
-    raw_size && raw_size > MAXIMUM_TEXT_HIGHLIGHT_SIZE
+    # Endpoint needed: https://gitlab.com/gitlab-org/gitaly/issues/756
+    Gitlab::GitalyClient.allow_n_plus_1_calls do
+      super(repository) if container
+    end
   end
 
   def empty?
@@ -108,7 +133,7 @@ class Blob < SimpleDelegator
 
   def external_storage_error?
     if external_storage == :lfs
-      !project&.lfs_enabled?
+      !repository.lfs_enabled?
     else
       false
     end
@@ -135,11 +160,11 @@ class Blob < SimpleDelegator
   # an LFS pointer, we assume the file stored in LFS is binary, unless a
   # text-based rich blob viewer matched on the file's extension. Otherwise, this
   # depends on the type of the blob itself.
-  def raw_binary?
+  def binary?
     if stored_externally?
       if rich_viewer
         rich_viewer.binary?
-      elsif Linguist::Language.find_by_filename(name).any?
+      elsif known_extension?
         false
       elsif _mime_type
         _mime_type.binary?
@@ -147,7 +172,7 @@ class Blob < SimpleDelegator
         true
       end
     else
-      binary?
+      binary_in_repo?
     end
   end
 
@@ -156,15 +181,21 @@ class Blob < SimpleDelegator
   end
 
   def file_type
-    Gitlab::FileDetector.type_of(path)
+    name = File.basename(path)
+
+    Gitlab::FileDetector.type_of(path) || Gitlab::FileDetector.type_of(name)
   end
 
   def video?
-    UploaderHelper::VIDEO_EXT.include?(extension)
+    UploaderHelper::SAFE_VIDEO_EXT.include?(extension)
+  end
+
+  def audio?
+    UploaderHelper::SAFE_AUDIO_EXT.include?(extension)
   end
 
   def readable_text?
-    text? && !stored_externally? && !truncated?
+    text_in_repo? && !stored_externally? && !truncated?
   end
 
   def simple_viewer
@@ -204,7 +235,7 @@ class Blob < SimpleDelegator
   def simple_viewer_class
     if empty?
       BlobViewer::Empty
-    elsif raw_binary?
+    elsif binary?
       BlobViewer::Download
     else # text
       BlobViewer::Text

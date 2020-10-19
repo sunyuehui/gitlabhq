@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe DiffHelper do
+RSpec.describe DiffHelper do
   include RepoHelpers
 
   let(:project) { create(:project, :repository) }
@@ -140,6 +142,32 @@ describe DiffHelper do
       expect(marked_new_line).to eq(%q{abc <span class="idiff left right addition">&quot;def&quot;</span>})
       expect(marked_new_line).to be_html_safe
     end
+
+    context 'when given HTML' do
+      it 'sanitizes it' do
+        old_line = %{test.txt}
+        new_line = %{<img src=x onerror=alert(document.domain)>}
+
+        marked_old_line, marked_new_line = mark_inline_diffs(old_line, new_line)
+
+        expect(marked_old_line).to eq(%q{<span class="idiff left right deletion">test.txt</span>})
+        expect(marked_old_line).to be_html_safe
+        expect(marked_new_line).to eq(%q{<span class="idiff left right addition">&lt;img src=x onerror=alert(document.domain)&gt;</span>})
+        expect(marked_new_line).to be_html_safe
+      end
+
+      it 'sanitizes the entire line, not just the changes' do
+        old_line = %{<img src=x onerror=alert(document.domain)>}
+        new_line = %{<img src=y onerror=alert(document.domain)>}
+
+        marked_old_line, marked_new_line = mark_inline_diffs(old_line, new_line)
+
+        expect(marked_old_line).to eq(%q{&lt;img src=<span class="idiff left right deletion">x</span> onerror=alert(document.domain)&gt;})
+        expect(marked_old_line).to be_html_safe
+        expect(marked_new_line).to eq(%q{&lt;img src=<span class="idiff left right addition">y</span> onerror=alert(document.domain)&gt;})
+        expect(marked_new_line).to be_html_safe
+      end
+    end
   end
 
   describe '#parallel_diff_discussions' do
@@ -230,40 +258,72 @@ describe DiffHelper do
     end
   end
 
-  context 'viewer related' do
-    let(:viewer) { diff_file.simple_viewer }
+  describe '#render_overflow_warning?' do
+    let(:diffs_collection) { instance_double(Gitlab::Diff::FileCollection::MergeRequestDiff, raw_diff_files: diff_files) }
+    let(:diff_files) { Gitlab::Git::DiffCollection.new(files) }
+    let(:safe_file) { { too_large: false, diff: '' } }
+    let(:large_file) { { too_large: true, diff: '' } }
+    let(:files) { [safe_file, safe_file] }
 
     before do
-      assign(:project, project)
+      allow(diff_files).to receive(:overflow?).and_return(false)
     end
 
-    describe '#diff_render_error_reason' do
-      context 'for error :too_large' do
-        before do
-          expect(viewer).to receive(:render_error).and_return(:too_large)
-        end
+    context 'when neither collection nor individual file hit the limit' do
+      it 'returns false and does not log any overflow events' do
+        expect(Gitlab::Metrics).not_to receive(:add_event).with(:diffs_overflow_collection_limits)
+        expect(Gitlab::Metrics).not_to receive(:add_event).with(:diffs_overflow_single_file_limits)
 
-        it 'returns an error message' do
-          expect(helper.diff_render_error_reason(viewer)).to eq('it is too large')
-        end
-      end
-
-      context 'for error :server_side_but_stored_externally' do
-        before do
-          expect(viewer).to receive(:render_error).and_return(:server_side_but_stored_externally)
-          expect(diff_file).to receive(:external_storage).and_return(:lfs)
-        end
-
-        it 'returns an error message' do
-          expect(helper.diff_render_error_reason(viewer)).to eq('it is stored in LFS')
-        end
+        expect(render_overflow_warning?(diffs_collection)).to be false
       end
     end
 
-    describe '#diff_render_error_options' do
-      it 'includes a "view the blob" link' do
-        expect(helper.diff_render_error_options(viewer)).to include(/view the blob/)
+    context 'when the file collection has an overflow' do
+      before do
+        allow(diff_files).to receive(:overflow?).and_return(true)
       end
+
+      it 'returns false and only logs collection overflow event' do
+        expect(Gitlab::Metrics).to receive(:add_event).with(:diffs_overflow_collection_limits).exactly(:once)
+        expect(Gitlab::Metrics).not_to receive(:add_event).with(:diffs_overflow_single_file_limits)
+
+        expect(render_overflow_warning?(diffs_collection)).to be true
+      end
+    end
+
+    context 'when two individual files are too big' do
+      let(:files) { [safe_file, large_file, large_file] }
+
+      it 'returns false and only logs single file overflow events' do
+        expect(Gitlab::Metrics).to receive(:add_event).with(:diffs_overflow_single_file_limits).exactly(:once)
+        expect(Gitlab::Metrics).not_to receive(:add_event).with(:diffs_overflow_collection_limits)
+
+        expect(render_overflow_warning?(diffs_collection)).to be false
+      end
+    end
+  end
+
+  describe '#diff_file_html_data' do
+    let(:project) { build(:project) }
+    let(:path) { 'path/to/file' }
+    let(:sha) { '1234567890' }
+
+    subject do
+      helper.diff_file_html_data(project, path, sha)
+    end
+
+    it 'returns data for project files' do
+      expect(subject).to include(blob_diff_path: helper.project_blob_diff_path(project, "#{sha}/#{path}"))
+    end
+  end
+
+  describe '#diff_file_path_text' do
+    it 'returns full path by default' do
+      expect(diff_file_path_text(diff_file)).to eq(diff_file.new_path)
+    end
+
+    it 'returns truncated path' do
+      expect(diff_file_path_text(diff_file, max: 10)).to eq("...open.rb")
     end
   end
 end

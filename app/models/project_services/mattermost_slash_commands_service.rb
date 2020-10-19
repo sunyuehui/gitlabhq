@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class MattermostSlashCommandsService < SlashCommandsService
   include TriggersHelper
 
@@ -34,10 +36,14 @@ class MattermostSlashCommandsService < SlashCommandsService
     [[], e.message]
   end
 
+  def chat_responder
+    ::Gitlab::Chat::Responder::Mattermost
+  end
+
   private
 
   def command(params)
-    pretty_project_name = project.name_with_namespace
+    pretty_project_name = project.full_name
 
     params.merge(
       auto_complete: true,

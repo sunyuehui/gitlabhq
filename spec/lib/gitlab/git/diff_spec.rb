@@ -1,13 +1,27 @@
+# frozen_string_literal: true
+
 require "spec_helper"
 
-describe Gitlab::Git::Diff, seed_helper: true do
-  let(:repository) { Gitlab::Git::Repository.new('default', TEST_REPO_PATH) }
+RSpec.describe Gitlab::Git::Diff, :seed_helper do
+  let(:repository) { Gitlab::Git::Repository.new('default', TEST_REPO_PATH, '', 'group/project') }
+  let(:gitaly_diff) do
+    Gitlab::GitalyClient::Diff.new(
+      from_path: '.gitmodules',
+      to_path: '.gitmodules',
+      old_mode: 0100644,
+      new_mode: 0100644,
+      from_id: '0792c58905eff3432b721f8c4a64363d8e28d9ae',
+      to_id: 'efd587ccb47caf5f31fc954edb21f0a713d9ecc3',
+      overflow_marker: false,
+      collapsed: false,
+      too_large: false,
+      patch: "@@ -4,3 +4,6 @@\n [submodule \"gitlab-shell\"]\n \tpath = gitlab-shell\n \turl = https://github.com/gitlabhq/gitlab-shell.git\n+[submodule \"gitlab-grack\"]\n+\tpath = gitlab-grack\n+\turl = https://gitlab.com/gitlab-org/gitlab-grack.git\n"
+    )
+  end
 
   before do
     @raw_diff_hash = {
       diff: <<EOT.gsub(/^ {8}/, "").sub(/\n$/, ""),
-        --- a/.gitmodules
-        +++ b/.gitmodules
         @@ -4,3 +4,6 @@
          [submodule "gitlab-shell"]
          \tpath = gitlab-shell
@@ -26,39 +40,6 @@ EOT
       deleted_file: false,
       too_large: false
     }
-
-    @rugged_diff = repository.rugged.diff("5937ac0a7beb003549fc5fd26fc247adbce4a52e^", "5937ac0a7beb003549fc5fd26fc247adbce4a52e", paths:
-                                          [".gitmodules"]).patches.first
-  end
-
-  describe 'size limit feature toggles' do
-    context 'when the feature gitlab_git_diff_size_limit_increase is enabled' do
-      before do
-        stub_feature_flags(gitlab_git_diff_size_limit_increase: true)
-      end
-
-      it 'returns 200 KB for size_limit' do
-        expect(described_class.size_limit).to eq(200.kilobytes)
-      end
-
-      it 'returns 100 KB for collapse_limit' do
-        expect(described_class.collapse_limit).to eq(100.kilobytes)
-      end
-    end
-
-    context 'when the feature gitlab_git_diff_size_limit_increase is disabled' do
-      before do
-        stub_feature_flags(gitlab_git_diff_size_limit_increase: false)
-      end
-
-      it 'returns 100 KB for size_limit' do
-        expect(described_class.size_limit).to eq(100.kilobytes)
-      end
-
-      it 'returns 10 KB for collapse_limit' do
-        expect(described_class.collapse_limit).to eq(10.kilobytes)
-      end
-    end
   end
 
   describe '.new' do
@@ -77,83 +58,28 @@ EOT
 
       context 'using a diff that is too large' do
         it 'prunes the diff' do
-          diff = described_class.new(diff: 'a' * (described_class.size_limit + 1))
+          diff = described_class.new(diff: 'a' * 204800)
 
           expect(diff.diff).to be_empty
           expect(diff).to be_too_large
-        end
-      end
-    end
-
-    context 'using a Rugged::Patch' do
-      context 'with a small diff' do
-        let(:diff) { described_class.new(@rugged_diff) }
-
-        it 'initializes the diff' do
-          expect(diff.to_hash).to eq(@raw_diff_hash)
-        end
-
-        it 'does not prune the diff' do
-          expect(diff).not_to be_too_large
-        end
-      end
-
-      context 'using a diff that is too large' do
-        it 'prunes the diff' do
-          expect_any_instance_of(String).to receive(:bytesize)
-            .and_return(1024 * 1024 * 1024)
-
-          diff = described_class.new(@rugged_diff)
-
-          expect(diff.diff).to be_empty
-          expect(diff).to be_too_large
-        end
-      end
-
-      context 'using a collapsable diff that is too large' do
-        before do
-          # The patch total size is 200, with lines between 21 and 54.
-          # This is a quick-and-dirty way to test this. Ideally, a new patch is
-          # added to the test repo with a size that falls between the real limits.
-          allow(Gitlab::Git::Diff).to receive(:size_limit).and_return(150)
-          allow(Gitlab::Git::Diff).to receive(:collapse_limit).and_return(100)
-        end
-
-        it 'prunes the diff as a large diff instead of as a collapsed diff' do
-          diff = described_class.new(@rugged_diff, expanded: false)
-
-          expect(diff.diff).to be_empty
-          expect(diff).to be_too_large
-          expect(diff).not_to be_collapsed
-        end
-      end
-
-      context 'using a large binary diff' do
-        it 'does not prune the diff' do
-          expect_any_instance_of(Rugged::Diff::Delta).to receive(:binary?)
-            .and_return(true)
-
-          diff = described_class.new(@rugged_diff)
-
-          expect(diff.diff).not_to be_empty
         end
       end
     end
 
     context 'using a GitalyClient::Diff' do
-      let(:diff) do
-        described_class.new(
-          Gitlab::GitalyClient::Diff.new(
-            to_path: ".gitmodules",
-            from_path: ".gitmodules",
-            old_mode: 0100644,
-            new_mode: 0100644,
-            from_id: '357406f3075a57708d0163752905cc1576fceacc',
-            to_id: '8e5177d718c561d36efde08bad36b43687ee6bf0',
-            patch: raw_patch
-          )
+      let(:gitaly_diff) do
+        Gitlab::GitalyClient::Diff.new(
+          to_path: ".gitmodules",
+          from_path: ".gitmodules",
+          old_mode: 0100644,
+          new_mode: 0100644,
+          from_id: '357406f3075a57708d0163752905cc1576fceacc',
+          to_id: '8e5177d718c561d36efde08bad36b43687ee6bf0',
+          patch: raw_patch
         )
       end
+
+      let(:diff) { described_class.new(gitaly_diff) }
 
       context 'with a small diff' do
         let(:raw_patch) { @raw_diff_hash[:diff] }
@@ -176,12 +102,56 @@ EOT
         end
       end
 
+      context 'using a collapsable diff that is too large' do
+        let(:raw_patch) { 'a' * 204800 }
+
+        it 'prunes the diff as a large diff instead of as a collapsed diff' do
+          gitaly_diff.too_large = true
+          diff = described_class.new(gitaly_diff, expanded: false)
+
+          expect(diff.diff).to be_empty
+          expect(diff).to be_too_large
+          expect(diff).not_to be_collapsed
+        end
+      end
+
       context 'when the patch passed is not UTF-8-encoded' do
         let(:raw_patch) { @raw_diff_hash[:diff].encode(Encoding::ASCII_8BIT) }
 
         it 'encodes diff patch to UTF-8' do
           expect(diff.diff).to be_utf8
         end
+      end
+    end
+
+    context 'using a Gitaly::CommitDelta' do
+      let(:commit_delta) do
+        Gitaly::CommitDelta.new(
+          to_path: ".gitmodules",
+          from_path: ".gitmodules",
+          old_mode: 0100644,
+          new_mode: 0100644,
+          from_id: '357406f3075a57708d0163752905cc1576fceacc',
+          to_id: '8e5177d718c561d36efde08bad36b43687ee6bf0'
+        )
+      end
+
+      let(:diff) { described_class.new(commit_delta) }
+
+      it 'initializes the diff' do
+        expect(diff.to_hash).to eq(@raw_diff_hash.merge(diff: ''))
+      end
+
+      it 'is not too large' do
+        expect(diff).not_to be_too_large
+      end
+
+      it 'has an empty diff' do
+        expect(diff.diff).to be_empty
+      end
+
+      it 'is not a binary' do
+        expect(diff).not_to have_binary_notice
       end
     end
   end
@@ -211,6 +181,7 @@ EOT
 
   describe '.between' do
     let(:diffs) { described_class.between(repository, 'feature', 'master') }
+
     subject { diffs }
 
     it { is_expected.to be_kind_of Gitlab::Git::DiffCollection }
@@ -246,7 +217,7 @@ EOT
     context "without default options" do
       let(:filtered_options) { described_class.filter_diff_options(options) }
 
-      it "should filter invalid options" do
+      it "filters invalid options" do
         expect(filtered_options).not_to have_key(:invalid_opt)
       end
     end
@@ -257,37 +228,74 @@ EOT
         described_class.filter_diff_options(options, default_options)
       end
 
-      it "should filter invalid options" do
+      it "filters invalid options" do
         expect(filtered_options).not_to have_key(:invalid_opt)
         expect(filtered_options).not_to have_key(:bad_opt)
       end
 
-      it "should merge with default options" do
+      it "merges with default options" do
         expect(filtered_options).to have_key(:ignore_whitespace_change)
       end
 
-      it "should override default options" do
+      it "overrides default options" do
         expect(filtered_options).to have_key(:max_files)
         expect(filtered_options[:max_files]).to eq(100)
       end
     end
   end
 
-  describe '#submodule?' do
-    before do
-      commit = repository.lookup('5937ac0a7beb003549fc5fd26fc247adbce4a52e')
-      @diffs = commit.parents[0].diff(commit).patches
+  describe '#json_safe_diff' do
+    let(:project) { create(:project, :repository) }
+
+    it 'fake binary message when it detects binary' do
+      # Rugged will not detect this as binary, but we can fake it
+      diff_message = "Binary files files/images/icn-time-tracking.pdf and files/images/icn-time-tracking.pdf differ\n"
+      binary_diff = described_class.between(project.repository, 'add-pdf-text-binary', 'add-pdf-text-binary^').first
+
+      expect(binary_diff.diff).not_to be_empty
+      expect(binary_diff.json_safe_diff).to eq(diff_message)
     end
 
-    it { expect(described_class.new(@diffs[0]).submodule?).to eq(false) }
-    it { expect(described_class.new(@diffs[1]).submodule?).to eq(true) }
+    it 'leave non-binary diffs as-is' do
+      diff = described_class.new(gitaly_diff)
+
+      expect(diff.json_safe_diff).to eq(diff.diff)
+    end
+  end
+
+  describe '#submodule?' do
+    let(:gitaly_submodule_diff) do
+      Gitlab::GitalyClient::Diff.new(
+        from_path: 'gitlab-grack',
+        to_path: 'gitlab-grack',
+        old_mode: 0,
+        new_mode: 57344,
+        from_id: '0000000000000000000000000000000000000000',
+        to_id: '645f6c4c82fd3f5e06f67134450a570b795e55a6',
+        overflow_marker: false,
+        collapsed: false,
+        too_large: false,
+        patch: "@@ -0,0 +1 @@\n+Subproject commit 645f6c4c82fd3f5e06f67134450a570b795e55a6\n"
+      )
+    end
+
+    it { expect(described_class.new(gitaly_diff).submodule?).to eq(false) }
+    it { expect(described_class.new(gitaly_submodule_diff).submodule?).to eq(true) }
   end
 
   describe '#line_count' do
-    it 'returns the correct number of lines' do
-      diff = described_class.new(@rugged_diff)
+    let(:diff) { described_class.new(gitaly_diff) }
 
-      expect(diff.line_count).to eq(9)
+    it 'returns the correct number of lines' do
+      expect(diff.line_count).to eq(7)
+    end
+  end
+
+  describe "#diff_bytesize" do
+    let(:diff) { described_class.new(gitaly_diff) }
+
+    it "returns the size of the diff in bytes" do
+      expect(diff.diff_bytesize).to eq(diff.diff.bytesize)
     end
   end
 
@@ -337,7 +345,7 @@ EOT
 
   describe '#collapsed?' do
     it 'returns true for a diff that is quite large' do
-      diff = described_class.new({ diff: 'a' * (described_class.collapse_limit + 1) }, expanded: false)
+      diff = described_class.new({ diff: 'a' * 20480 }, expanded: false)
 
       expect(diff).to be_collapsed
     end

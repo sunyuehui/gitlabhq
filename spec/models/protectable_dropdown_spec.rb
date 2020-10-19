@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ProtectableDropdown do
+RSpec.describe ProtectableDropdown do
   let(:project) { create(:project, :repository) }
   let(:subject) { described_class.new(project, :branches) }
 

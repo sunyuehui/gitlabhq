@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module CommitsHelper
   # Returns a link to the commit author. If the author has a matching user and
   # is a member of the current @project it will link to the team member page.
@@ -16,7 +18,7 @@ module CommitsHelper
   end
 
   def commit_to_html(commit, ref, project)
-    render 'projects/commits/commit',
+    render 'projects/commits/commit.html',
       commit: commit,
       ref: ref,
       project: project
@@ -27,7 +29,7 @@ module CommitsHelper
     return unless @project && @ref
 
     # Add the root project link and the arrow icon
-    crumbs = content_tag(:li) do
+    crumbs = content_tag(:li, class: 'breadcrumb-item') do
       link_to(
         @project.path,
         project_commits_path(@project, @ref)
@@ -38,7 +40,7 @@ module CommitsHelper
       parts = @path.split('/')
 
       parts.each_with_index do |part, i|
-        crumbs << content_tag(:li) do
+        crumbs << content_tag(:li, class: 'breadcrumb-item') do
           # The text is just the individual part, but the link needs all the parts before it
           link_to(
             part,
@@ -60,48 +62,51 @@ module CommitsHelper
     branches.include?(project.default_branch) ? branches.delete(project.default_branch) : branches.pop
   end
 
+  # Returns a link formatted as a commit branch link
+  def commit_branch_link(url, text)
+    link_to(url, class: 'badge badge-gray ref-name branch-link') do
+      sprite_icon('branch', size: 12, css_class: 'fork-svg') + "#{text}"
+    end
+  end
+
   # Returns the sorted alphabetically links to branches, separated by a comma
   def commit_branches_links(project, branches)
     branches.sort.map do |branch|
-      link_to(project_ref_path(project, branch), class: "label label-gray ref-name") do
-        icon('code-fork') + " #{branch}"
-      end
-    end.join(" ").html_safe
+      commit_branch_link(project_ref_path(project, branch), branch)
+    end.join(' ').html_safe
+  end
+
+  # Returns a link formatted as a commit tag link
+  def commit_tag_link(url, text)
+    link_to(url, class: 'badge badge-gray ref-name') do
+      sprite_icon('tag', size: 12, css_class: 'gl-mr-2 vertical-align-middle') + "#{text}"
+    end
   end
 
   # Returns the sorted links to tags, separated by a comma
   def commit_tags_links(project, tags)
     sorted = VersionSorter.rsort(tags)
     sorted.map do |tag|
-      link_to(project_ref_path(project, tag), class: "label label-gray ref-name") do
-        icon('tag') + " #{tag}"
-      end
-    end.join(" ").html_safe
+      commit_tag_link(project_ref_path(project, tag), tag)
+    end.join(' ').html_safe
   end
 
   def link_to_browse_code(project, commit)
     return unless current_controller?(:commits)
 
     if @path.blank?
-      return link_to(
-        _("Browse Files"),
-        project_tree_path(project, commit),
-        class: "btn btn-default"
-      )
+      url = project_tree_path(project, commit)
+      tooltip = _("Browse Files")
     elsif @repo.blob_at(commit.id, @path)
-      return link_to(
-        _("Browse File"),
-        project_blob_path(project,
-                                    tree_join(commit.id, @path)),
-        class: "btn btn-default"
-      )
+      url = project_blob_path(project, tree_join(commit.id, @path))
+      tooltip = _("Browse File")
     elsif @path.present?
-      return link_to(
-        _("Browse Directory"),
-        project_tree_path(project,
-                                    tree_join(commit.id, @path)),
-        class: "btn btn-default"
-      )
+      url = project_tree_path(project, tree_join(commit.id, @path))
+      tooltip = _("Browse Directory")
+    end
+
+    link_to url, class: "btn btn-default has-tooltip", title: tooltip, data: { container: "body" } do
+      sprite_icon('folder-open')
     end
   end
 
@@ -114,7 +119,7 @@ module CommitsHelper
   end
 
   def commit_signature_badge_classes(additional_classes)
-    %w(btn status-box gpg-status-box) + Array(additional_classes)
+    %w(btn gpg-status-box) + Array(additional_classes)
   end
 
   protected
@@ -137,20 +142,19 @@ module CommitsHelper
 
     text =
       if options[:avatar]
-        %Q{<span class="commit-#{options[:source]}-name">#{person_name}</span>}
+        content_tag(:span, person_name, class: "commit-#{options[:source]}-name")
       else
         person_name
       end
 
-    options = {
-      class: "commit-#{options[:source]}-link has-tooltip",
-      title: source_email
+    link_options = {
+      class: "commit-#{options[:source]}-link"
     }
 
     if user.nil?
-      mail_to(source_email, text.html_safe, options)
+      mail_to(source_email, text, link_options)
     else
-      link_to(text.html_safe, user_path(user), options)
+      link_to(text, user_path(user), { class: "commit-#{options[:source]}-link js-user-link", data: { user_id: user.id } })
     end
   end
 
@@ -160,7 +164,7 @@ module CommitsHelper
     tooltip = "#{action.capitalize} this #{commit.change_type_title(current_user)} in a new merge request" if has_tooltip
     btn_class = "btn btn-#{btn_class}" unless btn_class.nil?
 
-    if can_collaborate_with_project?
+    if can_collaborate_with_project?(@project)
       link_to action.capitalize, "#modal-#{action}-commit", 'data-toggle' => 'modal', 'data-container' => 'body', title: (tooltip if has_tooltip), class: "#{btn_class} #{'has-tooltip' if has_tooltip}"
     elsif can?(current_user, :fork_project, @project)
       continue_params = {
@@ -176,14 +180,12 @@ module CommitsHelper
     end
   end
 
-  def view_file_button(commit_sha, diff_new_path, project)
-    link_to(
-      project_blob_path(project,
-                                  tree_join(commit_sha, diff_new_path)),
-      class: 'btn view-file js-view-file'
-    ) do
-      raw('View file @ ') + content_tag(:span, Commit.truncate_sha(commit_sha),
-                                       class: 'commit-sha')
+  def view_file_button(commit_sha, diff_new_path, project, replaced: false)
+    path = project_blob_path(project, tree_join(commit_sha, diff_new_path))
+    title = replaced ? _('View replaced file @ ') : _('View file @ ')
+
+    link_to(path, class: 'btn') do
+      raw(title) + content_tag(:span, truncate_sha(commit_sha), class: 'commit-sha')
     end
   end
 
@@ -206,14 +208,13 @@ module CommitsHelper
     Sanitize.clean(string, remove_contents: true)
   end
 
-  def limited_commits(commits)
-    if commits.size > MergeRequestDiff::COMMITS_SAFE_SIZE
-      [
-        commits.first(MergeRequestDiff::COMMITS_SAFE_SIZE),
-        commits.size - MergeRequestDiff::COMMITS_SAFE_SIZE
-      ]
+  def commit_path(project, commit, merge_request: nil)
+    if merge_request&.persisted?
+      diffs_project_merge_request_path(project, merge_request, commit_id: commit.id)
+    elsif merge_request
+      project_commit_path(merge_request&.source_project, commit)
     else
-      [commits, 0]
+      project_commit_path(project, commit)
     end
   end
 end

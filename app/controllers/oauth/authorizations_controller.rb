@@ -1,7 +1,14 @@
+# frozen_string_literal: true
+
 class Oauth::AuthorizationsController < Doorkeeper::AuthorizationsController
+  include Gitlab::Experimentation::ControllerConcern
+  include InitializesCurrentUserMode
+
+  before_action :verify_confirmed_email!
+
   layout 'profile'
 
-  # Overriden from Doorkeeper::AuthorizationsController to
+  # Overridden from Doorkeeper::AuthorizationsController to
   # include the call to session.delete
   def new
     if pre_auth.authorizable?
@@ -15,5 +22,14 @@ class Oauth::AuthorizationsController < Doorkeeper::AuthorizationsController
     else
       render "doorkeeper/authorizations/error"
     end
+  end
+
+  private
+
+  def verify_confirmed_email!
+    return if current_user&.confirmed?
+
+    pre_auth.error = :unconfirmed_email
+    render "doorkeeper/authorizations/error"
   end
 end

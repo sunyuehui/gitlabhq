@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe 'Search bar', js: true do
+require 'spec_helper'
+
+RSpec.describe 'Search bar', :js do
   include FilteredSearchHelpers
 
   let!(:project) { create(:project) }
@@ -8,7 +10,7 @@ describe 'Search bar', js: true do
   let(:filtered_search) { find('.filtered-search') }
 
   before do
-    project.team << [user, :master]
+    project.add_maintainer(user)
     sign_in(user)
     create(:issue, project: project)
 
@@ -32,7 +34,7 @@ describe 'Search bar', js: true do
     it 'selects item' do
       filtered_search.native.send_keys(:down, :down, :enter)
 
-      expect_tokens([author_token])
+      expect_tokens([{ name: 'Assignee' }])
       expect_filtered_search_input_empty
     end
   end
@@ -76,7 +78,7 @@ describe 'Search bar', js: true do
       filtered_search.click
       original_size = page.all('#js-dropdown-hint .filter-dropdown .filter-dropdown-item').size
 
-      filtered_search.set('author')
+      filtered_search.set('autho')
 
       expect(find('#js-dropdown-hint')).to have_selector('.filter-dropdown .filter-dropdown-item', count: 1)
 
@@ -86,7 +88,7 @@ describe 'Search bar', js: true do
       expect(find('#js-dropdown-hint')).to have_selector('.filter-dropdown .filter-dropdown-item', count: original_size)
     end
 
-    it 'resets the dropdown filters' do
+    it 'resets the dropdown filters', quarantine: 'https://gitlab.com/gitlab-org/gitlab/-/issues/9985' do
       filtered_search.click
 
       hint_offset = get_left_style(find('#js-dropdown-hint')['style'])
@@ -100,7 +102,7 @@ describe 'Search bar', js: true do
       find('.filtered-search-box .clear-search').click
       filtered_search.click
 
-      expect(find('#js-dropdown-hint')).to have_selector('.filter-dropdown .filter-dropdown-item', count: 4)
+      expect(find('#js-dropdown-hint')).to have_selector('.filter-dropdown .filter-dropdown-item', count: 6)
       expect(get_left_style(find('#js-dropdown-hint')['style'])).to eq(hint_offset)
     end
   end

@@ -1,12 +1,18 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ProjectHook do
+RSpec.describe ProjectHook do
   describe 'associations' do
     it { is_expected.to belong_to :project }
   end
 
   describe 'validations' do
     it { is_expected.to validate_presence_of(:project) }
+  end
+
+  it_behaves_like 'includes Limitable concern' do
+    subject { build(:project_hook, project: create(:project)) }
   end
 
   describe '.push_hooks' do

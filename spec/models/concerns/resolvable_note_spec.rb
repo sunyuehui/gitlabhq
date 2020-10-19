@@ -1,8 +1,11 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Note, ResolvableNote do
+RSpec.describe Note, ResolvableNote do
   let(:project) { create(:project, :repository) }
   let(:merge_request) { create(:merge_request, source_project: project) }
+
   subject { create(:discussion_note_on_merge_request, noteable: merge_request, project: project) }
 
   context 'resolvability scopes' do
@@ -189,8 +192,8 @@ describe Note, ResolvableNote do
         allow(subject).to receive(:resolvable?).and_return(false)
       end
 
-      it "returns nil" do
-        expect(subject.resolve!(current_user)).to be_nil
+      it "returns false" do
+        expect(subject.resolve!(current_user)).to be_falsey
       end
 
       it "doesn't set resolved_at" do
@@ -224,8 +227,8 @@ describe Note, ResolvableNote do
           subject.resolve!(user)
         end
 
-        it "returns nil" do
-          expect(subject.resolve!(current_user)).to be_nil
+        it "returns false" do
+          expect(subject.resolve!(current_user)).to be_falsey
         end
 
         it "doesn't change resolved_at" do
@@ -279,8 +282,8 @@ describe Note, ResolvableNote do
         allow(subject).to receive(:resolvable?).and_return(false)
       end
 
-      it "returns nil" do
-        expect(subject.unresolve!).to be_nil
+      it "returns false" do
+        expect(subject.unresolve!).to be_falsey
       end
     end
 
@@ -320,10 +323,18 @@ describe Note, ResolvableNote do
       end
 
       context "when not resolved" do
-        it "returns nil" do
-          expect(subject.unresolve!).to be_nil
+        it "returns false" do
+          expect(subject.unresolve!).to be_falsey
         end
       end
+    end
+  end
+
+  describe "#potentially_resolvable?" do
+    it 'returns false if noteable could not be found' do
+      allow(subject).to receive(:noteable).and_return(nil)
+
+      expect(subject.potentially_resolvable?).to be_falsey
     end
   end
 end

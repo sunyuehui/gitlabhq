@@ -1,7 +1,7 @@
-/* eslint-disable no-new */
-/* global Flash */
-
+import { deprecatedCreateFlash as flash } from '../flash';
+import axios from '../lib/utils/axios_utils';
 import ProtectedTagAccessDropdown from './protected_tag_access_dropdown';
+import { __ } from '~/locale';
 
 export default class ProtectedTagEdit {
   constructor(options) {
@@ -22,31 +22,37 @@ export default class ProtectedTagEdit {
   }
 
   onSelect() {
-    const $allowedToCreateInput = this.$wrap.find(`input[name="${this.$allowedToCreateDropdownButton.data('fieldName')}"]`);
+    const $allowedToCreateInput = this.$wrap.find(
+      `input[name="${this.$allowedToCreateDropdownButton.data('fieldName')}"]`,
+    );
 
     // Do not update if one dropdown has not selected any option
     if (!$allowedToCreateInput.length) return;
 
     this.$allowedToCreateDropdownButton.disable();
 
-    $.ajax({
-      type: 'POST',
-      url: this.$wrap.data('url'),
-      dataType: 'json',
-      data: {
-        _method: 'PATCH',
+    axios
+      .patch(this.$wrap.data('url'), {
         protected_tag: {
-          create_access_levels_attributes: [{
-            id: this.$allowedToCreateDropdownButton.data('access-level-id'),
-            access_level: $allowedToCreateInput.val(),
-          }],
+          create_access_levels_attributes: [
+            {
+              id: this.$allowedToCreateDropdownButton.data('accessLevelId'),
+              access_level: $allowedToCreateInput.val(),
+            },
+          ],
         },
-      },
-      error() {
-        new Flash('Failed to update tag!', null, $('.js-protected-tags-list'));
-      },
-    }).always(() => {
-      this.$allowedToCreateDropdownButton.enable();
-    });
+      })
+      .then(() => {
+        this.$allowedToCreateDropdownButton.enable();
+      })
+      .catch(() => {
+        this.$allowedToCreateDropdownButton.enable();
+
+        flash(
+          __('Failed to update tag!'),
+          'alert',
+          document.querySelector('.js-protected-tags-list'),
+        );
+      });
   }
 }

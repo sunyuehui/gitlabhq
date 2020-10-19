@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Search
   class GroupService < Search::GlobalService
     attr_accessor :group
@@ -8,6 +10,17 @@ module Search
       @group = group
     end
 
+    def execute
+      Gitlab::GroupSearchResults.new(
+        current_user,
+        params[:search],
+        projects,
+        group: group,
+        sort: params[:sort],
+        filters: { state: params[:state], confidential: params[:confidential] }
+      )
+    end
+
     def projects
       return Project.none unless group
       return @projects if defined? @projects
@@ -16,3 +29,5 @@ module Search
     end
   end
 end
+
+Search::GroupService.prepend_if_ee('EE::Search::GroupService')

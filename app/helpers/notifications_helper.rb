@@ -1,23 +1,38 @@
+# frozen_string_literal: true
+
 module NotificationsHelper
   include IconsHelper
 
   def notification_icon_class(level)
     case level.to_sym
-    when :disabled
-      'microphone-slash'
+    when :disabled, :owner_disabled
+      'notifications-off'
     when :participating
-      'volume-up'
+      'notifications'
     when :watch
       'eye'
     when :mention
       'at'
     when :global
-      'globe'
+      'earth'
     end
   end
 
-  def notification_icon(level, text = nil)
-    icon("#{notification_icon_class(level)} fw", text: text)
+  def notification_icon_level(notification_setting, emails_disabled = false)
+    if emails_disabled
+      'owner_disabled'
+    elsif notification_setting.global?
+      current_user.global_notification_setting.level
+    else
+      notification_setting.level
+    end
+  end
+
+  def notification_icon(level)
+    icon = notification_icon_class(level)
+    return '' unless icon
+
+    sprite_icon(icon)
   end
 
   def notification_title(level)
@@ -51,6 +66,8 @@ module NotificationsHelper
       _('Use your global notification setting')
     when :custom
       _('You will only receive notifications for the events you choose')
+    when :owner_disabled
+      _('Notifications have been disabled by the project or group owner')
     end
   end
 
@@ -78,26 +95,32 @@ module NotificationsHelper
   # Create hidden field to send notification setting source to controller
   def hidden_setting_source_input(notification_setting)
     return unless notification_setting.source_type
+
     hidden_field_tag "#{notification_setting.source_type.downcase}_id", notification_setting.source_id
   end
 
   def notification_event_name(event)
-    # All values from NotificationSetting::EMAIL_EVENTS
+    # All values from NotificationSetting.email_events
     case event
     when :success_pipeline
       s_('NotificationEvent|Successful pipeline')
     else
-      N_('NotificationEvent|New note')
-      N_('NotificationEvent|New issue')
-      N_('NotificationEvent|Reopen issue')
-      N_('NotificationEvent|Close issue')
-      N_('NotificationEvent|Reassign issue')
-      N_('NotificationEvent|New merge request')
-      N_('NotificationEvent|Close merge request')
-      N_('NotificationEvent|Reassign merge request')
-      N_('NotificationEvent|Merge merge request')
-      N_('NotificationEvent|Failed pipeline')
       s_(event.to_s.humanize)
     end
+  end
+
+  def notification_setting_icon(notification_setting = nil)
+    sprite_icon(
+      !notification_setting.present? || notification_setting.disabled? ? "notifications-off" : "notifications",
+      css_class: "icon notifications-icon js-notifications-icon"
+    )
+  end
+
+  def show_unsubscribe_title?(noteable)
+    can?(current_user, "read_#{noteable.to_ability_name}".to_sym, noteable)
+  end
+
+  def can_read_project?(project)
+    can?(current_user, :read_project, project)
   end
 end

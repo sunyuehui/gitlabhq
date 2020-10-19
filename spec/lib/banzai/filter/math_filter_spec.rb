@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::MathFilter do
+RSpec.describe Banzai::Filter::MathFilter do
   include FilterSpecHelper
 
   it 'leaves regular inline code unchanged' do

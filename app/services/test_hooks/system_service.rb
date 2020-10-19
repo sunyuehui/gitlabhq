@@ -1,48 +1,29 @@
+# frozen_string_literal: true
+
 module TestHooks
   class SystemService < TestHooks::BaseService
+    include Gitlab::Utils::StrongMemoize
+
     private
 
-    def project
-      @project ||= begin
-        project = Project.first
-
-        throw(:validation_error, 'Ensure that at least one project exists.') unless project
-
-        project
+    def data
+      strong_memoize(:data) do
+        case trigger
+        when 'push_events', 'tag_push_events'
+          Gitlab::DataBuilder::Push.sample_data
+        when 'repository_update_events'
+          Gitlab::DataBuilder::Repository.sample_data
+        when 'merge_requests_events'
+          merge_requests_events_data
+        end
       end
     end
 
-    def push_events_data
-      if project.empty_repo?
-        throw(:validation_error, "Ensure project \"#{project.human_name}\" has commits.")
-      end
+    def merge_requests_events_data
+      merge_request = MergeRequest.of_projects(current_user.projects.select(:id)).first
+      return { error: s_('TestHooks|Ensure one of your projects has merge requests.') } unless merge_request.present?
 
-      Gitlab::DataBuilder::Push.build_sample(project, current_user)
-    end
-
-    def tag_push_events_data
-      if project.repository.tags.empty?
-        throw(:validation_error, "Ensure project \"#{project.human_name}\" has tags.")
-      end
-
-      Gitlab::DataBuilder::Push.build_sample(project, current_user)
-    end
-
-    def repository_update_events_data
-      commit = project.commit
-      ref = "#{Gitlab::Git::BRANCH_REF_PREFIX}#{project.default_branch}"
-
-      unless commit
-        throw(:validation_error, "Ensure project \"#{project.human_name}\" has commits.")
-      end
-
-      change = Gitlab::DataBuilder::Repository.single_change(
-        commit.parent_id || Gitlab::Git::BLANK_SHA,
-        commit.id,
-        ref
-      )
-
-      Gitlab::DataBuilder::Repository.update(project, current_user, [change], [ref])
+      merge_request.to_hook_data(current_user)
     end
   end
 end

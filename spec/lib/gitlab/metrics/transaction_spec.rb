@@ -1,21 +1,30 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Metrics::Transaction do
+RSpec.describe Gitlab::Metrics::Transaction do
   let(:transaction) { described_class.new }
+
+  let(:sensitive_tags) do
+    {
+      path: 'private',
+      branch: 'sensitive'
+    }
+  end
 
   describe '#duration' do
     it 'returns the duration of a transaction in seconds' do
-      transaction.run { sleep(0.5) }
+      transaction.run { }
 
-      expect(transaction.duration).to be >= 0.5
+      expect(transaction.duration).to be > 0
     end
   end
 
-  describe '#allocated_memory' do
-    it 'returns the allocated memory in bytes' do
-      transaction.run { 'a' * 32 }
+  describe '#thread_cpu_duration' do
+    it 'returns the duration of a transaction in seconds' do
+      transaction.run { }
 
-      expect(transaction.allocated_memory).to be_a_kind_of(Numeric)
+      expect(transaction.thread_cpu_duration).to be > 0
     end
   end
 
@@ -26,178 +35,170 @@ describe Gitlab::Metrics::Transaction do
 
     it 'stores the transaction in the current thread' do
       transaction.run do
-        expect(Thread.current[described_class::THREAD_KEY]).to eq(transaction)
+        expect(described_class.current).to eq(transaction)
       end
     end
 
     it 'removes the transaction from the current thread upon completion' do
       transaction.run { }
 
-      expect(Thread.current[described_class::THREAD_KEY]).to be_nil
-    end
-  end
-
-  describe '#add_metric' do
-    it 'adds a metric to the transaction' do
-      expect(Gitlab::Metrics::Metric).to receive(:new)
-        .with('rails_foo', { number: 10 }, {})
-
-      transaction.add_metric('foo', number: 10)
+      expect(described_class.current).to be_nil
     end
   end
 
   describe '#method_call_for' do
     it 'returns a MethodCall' do
-      method = transaction.method_call_for('Foo#bar')
+      method = transaction.method_call_for('Foo#bar', :Foo, '#bar')
 
       expect(method).to be_an_instance_of(Gitlab::Metrics::MethodCall)
     end
   end
 
+  describe '#add_event' do
+    let(:prometheus_metric) { instance_double(Prometheus::Client::Counter, increment: nil, base_labels: {}) }
+
+    it 'adds a metric' do
+      expect(prometheus_metric).to receive(:increment)
+      expect(described_class).to receive(:fetch_metric).with(:counter, :gitlab_transaction_event_meow_total).and_return(prometheus_metric)
+
+      transaction.add_event(:meow)
+    end
+
+    it 'allows tracking of custom tags' do
+      expect(prometheus_metric).to receive(:increment).with(hash_including(animal: "dog"))
+      expect(described_class).to receive(:fetch_metric).with(:counter, :gitlab_transaction_event_bau_total).and_return(prometheus_metric)
+
+      transaction.add_event(:bau, animal: 'dog')
+    end
+
+    context 'with sensitive tags' do
+      before do
+        transaction.add_event(:baubau, **sensitive_tags.merge(sane: 'yes'))
+        allow(described_class).to receive(:prometheus_metric).and_return(prometheus_metric)
+      end
+
+      it 'filters tags' do
+        expect(prometheus_metric).not_to receive(:increment).with(hash_including(sensitive_tags))
+
+        transaction.add_event(:baubau, **sensitive_tags.merge(sane: 'yes'))
+      end
+    end
+  end
+
   describe '#increment' do
-    it 'increments a counter' do
-      transaction.increment(:time, 1)
-      transaction.increment(:time, 2)
+    let(:prometheus_metric) { instance_double(Prometheus::Client::Counter, increment: nil, base_labels: {}) }
 
-      values = { duration: 0.0, time: 3, allocated_memory: a_kind_of(Numeric) }
+    it 'adds a metric' do
+      expect(prometheus_metric).to receive(:increment)
+      expect(::Gitlab::Metrics).to receive(:counter).with(:meow, 'Meow counter', hash_including(:controller, :action)).and_return(prometheus_metric)
 
-      expect(transaction).to receive(:add_metric)
-        .with('transactions', values, {})
+      transaction.increment(:meow, 1)
+    end
 
-      transaction.track_self
+    context 'with block' do
+      it 'overrides docstring' do
+        expect(::Gitlab::Metrics).to receive(:counter).with(:block_docstring, 'test', hash_including(:controller, :action)).and_return(prometheus_metric)
+
+        transaction.increment(:block_docstring, 1) do
+          docstring 'test'
+        end
+      end
+
+      it 'overrides labels' do
+        expect(::Gitlab::Metrics).to receive(:counter).with(:block_labels, 'Block labels counter', hash_including(:controller, :action, :sane)).and_return(prometheus_metric)
+
+        labels = { sane: 'yes' }
+        transaction.increment(:block_labels, 1, labels) do
+          label_keys %i(sane)
+        end
+      end
+
+      it 'filters sensitive tags' do
+        expect(::Gitlab::Metrics).to receive(:counter).with(:metric_with_sensitive_block, 'Metric with sensitive block counter', hash_excluding(sensitive_tags)).and_return(prometheus_metric)
+
+        labels_keys = sensitive_tags.keys
+        transaction.increment(:metric_with_sensitive_block, 1, sensitive_tags) do
+          label_keys labels_keys
+        end
+      end
     end
   end
 
   describe '#set' do
-    it 'sets a value' do
-      transaction.set(:number, 10)
+    let(:prometheus_metric) { instance_double(Prometheus::Client::Gauge, set: nil, base_labels: {}) }
 
-      values = {
-        duration:         0.0,
-        number:           10,
-        allocated_memory: a_kind_of(Numeric)
-      }
-
-      expect(transaction).to receive(:add_metric)
-        .with('transactions', values, {})
-
-      transaction.track_self
-    end
-  end
-
-  describe '#add_tag' do
-    it 'adds a tag' do
-      transaction.add_tag(:foo, 'bar')
-
-      expect(transaction.tags).to eq({ foo: 'bar' })
-    end
-  end
-
-  describe '#finish' do
-    it 'tracks the transaction details and submits them to Sidekiq' do
-      expect(transaction).to receive(:track_self)
-      expect(transaction).to receive(:submit)
-
-      transaction.finish
-    end
-  end
-
-  describe '#track_self' do
-    it 'adds a metric for the transaction itself' do
-      values = {
-        duration:         transaction.duration,
-        allocated_memory: a_kind_of(Numeric)
-      }
-
-      expect(transaction).to receive(:add_metric)
-        .with('transactions', values, {})
-
-      transaction.track_self
-    end
-  end
-
-  describe '#submit' do
-    it 'submits the metrics to Sidekiq' do
-      transaction.track_self
-
-      expect(Gitlab::Metrics).to receive(:submit_metrics)
-        .with([an_instance_of(Hash)])
-
-      transaction.submit
-    end
-
-    it 'adds the action as a tag for every metric' do
-      transaction.action = 'Foo#bar'
-      transaction.track_self
-
-      hash = {
-        series:    'rails_transactions',
-        tags:      { action: 'Foo#bar' },
-        values:    { duration: 0.0, allocated_memory: a_kind_of(Numeric) },
-        timestamp: a_kind_of(Integer)
-      }
-
-      expect(Gitlab::Metrics).to receive(:submit_metrics)
-        .with([hash])
-
-      transaction.submit
-    end
-
-    it 'does not add an action tag for events' do
-      transaction.action = 'Foo#bar'
-      transaction.add_event(:meow)
-
-      hash = {
-        series:    'events',
-        tags:      { event: :meow },
-        values:    { count: 1 },
-        timestamp: a_kind_of(Integer)
-      }
-
-      expect(Gitlab::Metrics).to receive(:submit_metrics)
-        .with([hash])
-
-      transaction.submit
-    end
-  end
-
-  describe '#add_event' do
     it 'adds a metric' do
-      transaction.add_event(:meow)
+      expect(prometheus_metric).to receive(:set)
+      expect(::Gitlab::Metrics).to receive(:gauge).with(:meow_set, 'Meow set gauge', hash_including(:controller, :action), :all).and_return(prometheus_metric)
 
-      expect(transaction.metrics[0]).to be_an_instance_of(Gitlab::Metrics::Metric)
+      transaction.set(:meow_set, 1)
     end
 
-    it "does not prefix the metric's series name" do
-      transaction.add_event(:meow)
+    context 'with block' do
+      it 'overrides docstring' do
+        expect(::Gitlab::Metrics).to receive(:gauge).with(:block_docstring_set, 'test', hash_including(:controller, :action), :all).and_return(prometheus_metric)
 
-      metric = transaction.metrics[0]
+        transaction.set(:block_docstring_set, 1) do
+          docstring 'test'
+        end
+      end
 
-      expect(metric.series).to eq(described_class::EVENT_SERIES)
+      it 'overrides labels' do
+        expect(::Gitlab::Metrics).to receive(:gauge).with(:block_labels_set, 'Block labels set gauge', hash_including(:controller, :action, :sane), :all).and_return(prometheus_metric)
+
+        labels = { sane: 'yes' }
+        transaction.set(:block_labels_set, 1, labels) do
+          label_keys %i(sane)
+        end
+      end
+
+      it 'filters sensitive tags' do
+        expect(::Gitlab::Metrics).to receive(:gauge).with(:metric_set_with_sensitive_block, 'Metric set with sensitive block gauge', hash_excluding(sensitive_tags), :all).and_return(prometheus_metric)
+
+        label_keys = sensitive_tags.keys
+        transaction.set(:metric_set_with_sensitive_block, 1, sensitive_tags) do
+          label_keys label_keys
+        end
+      end
+    end
+  end
+
+  describe '#observe' do
+    let(:prometheus_metric) { instance_double(Prometheus::Client::Histogram, observe: nil, base_labels: {}) }
+
+    it 'adds a metric' do
+      expect(prometheus_metric).to receive(:observe)
+      expect(::Gitlab::Metrics).to receive(:histogram).with(:meow_observe, 'Meow observe histogram', hash_including(:controller, :action), kind_of(Array)).and_return(prometheus_metric)
+
+      transaction.observe(:meow_observe, 1)
     end
 
-    it 'tracks a counter for every event' do
-      transaction.add_event(:meow)
+    context 'with block' do
+      it 'overrides docstring' do
+        expect(::Gitlab::Metrics).to receive(:histogram).with(:block_docstring_observe, 'test', hash_including(:controller, :action), kind_of(Array)).and_return(prometheus_metric)
 
-      metric = transaction.metrics[0]
+        transaction.observe(:block_docstring_observe, 1) do
+          docstring 'test'
+        end
+      end
 
-      expect(metric.values).to eq(count: 1)
-    end
+      it 'overrides labels' do
+        expect(::Gitlab::Metrics).to receive(:histogram).with(:block_labels_observe, 'Block labels observe histogram', hash_including(:controller, :action, :sane), kind_of(Array)).and_return(prometheus_metric)
 
-    it 'tracks the event name' do
-      transaction.add_event(:meow)
+        labels = { sane: 'yes' }
+        transaction.observe(:block_labels_observe, 1, labels) do
+          label_keys %i(sane)
+        end
+      end
 
-      metric = transaction.metrics[0]
+      it 'filters sensitive tags' do
+        expect(::Gitlab::Metrics).to receive(:histogram).with(:metric_observe_with_sensitive_block, 'Metric observe with sensitive block histogram', hash_excluding(sensitive_tags), kind_of(Array)).and_return(prometheus_metric)
 
-      expect(metric.tags).to eq(event: :meow)
-    end
-
-    it 'allows tracking of custom tags' do
-      transaction.add_event(:meow, animal: 'cat')
-
-      metric = transaction.metrics[0]
-
-      expect(metric.tags).to eq(event: :meow, animal: 'cat')
+        label_keys = sensitive_tags.keys
+        transaction.observe(:metric_observe_with_sensitive_block, 1, sensitive_tags) do
+          label_keys label_keys
+        end
+      end
     end
   end
 end

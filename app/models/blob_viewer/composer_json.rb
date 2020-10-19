@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module BlobViewer
   class ComposerJson < DependencyManager
     include ServerSide
@@ -9,7 +11,7 @@ module BlobViewer
     end
 
     def manager_url
-      'https://getcomposer.com/'
+      'https://getcomposer.org/'
     end
 
     def package_name

@@ -1,6 +1,22 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe ImportHelper do
+require 'spec_helper'
+
+RSpec.describe ImportHelper do
+  describe '#sanitize_project_name' do
+    it 'removes leading tildes' do
+      expect(helper.sanitize_project_name('~~root')).to eq('root')
+    end
+
+    it 'removes whitespace' do
+      expect(helper.sanitize_project_name('my test repo')).to eq('my-test-repo')
+    end
+
+    it 'removes disallowed characters' do
+      expect(helper.sanitize_project_name('Test&me$over*h_ere')).to eq('Test-me-over-h_ere')
+    end
+  end
+
   describe '#import_project_target' do
     let(:user) { create(:user) }
 
@@ -25,38 +41,12 @@ describe ImportHelper do
     end
   end
 
-  describe '#provider_project_link' do
-    context 'when provider is "github"' do
-      context 'when provider does not specify a custom URL' do
-        it 'uses default GitHub URL' do
-          allow(Gitlab.config.omniauth).to receive(:providers)
-          .and_return([Settingslogic.new('name' => 'github')])
+  describe '#provider_project_link_url' do
+    let(:full_path) { '/repo/path' }
+    let(:host_url) { 'http://provider.com/' }
 
-          expect(helper.provider_project_link('github', 'octocat/Hello-World'))
-          .to include('href="https://github.com/octocat/Hello-World"')
-        end
-      end
-
-      context 'when provider specify a custom URL' do
-        it 'uses custom URL' do
-          allow(Gitlab.config.omniauth).to receive(:providers)
-          .and_return([Settingslogic.new('name' => 'github', 'url' => 'https://github.company.com')])
-
-          expect(helper.provider_project_link('github', 'octocat/Hello-World'))
-          .to include('href="https://github.company.com/octocat/Hello-World"')
-        end
-      end
-    end
-
-    context 'when provider is "gitea"' do
-      before do
-        assign(:gitea_host_url, 'https://try.gitea.io/')
-      end
-
-      it 'uses given host' do
-        expect(helper.provider_project_link('gitea', 'octocat/Hello-World'))
-        .to include('href="https://try.gitea.io/octocat/Hello-World"')
-      end
+    it 'appends repo full path to provider host url' do
+      expect(helper.provider_project_link_url(host_url, full_path)).to match('http://provider.com/repo/path')
     end
   end
 end

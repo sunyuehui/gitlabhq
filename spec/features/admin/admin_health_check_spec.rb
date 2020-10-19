@@ -1,11 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature "Admin Health Check", feature: true, broken_storage: true do
+RSpec.describe "Admin Health Check", :feature do
   include StubENV
+  let_it_be(:admin) { create(:admin) }
 
   before do
     stub_env('IN_MEMORY_APPLICATION_SETTINGS', 'false')
-    sign_in(create(:admin))
+    sign_in(admin)
   end
 
   describe '#show' do
@@ -17,7 +20,7 @@ feature "Admin Health Check", feature: true, broken_storage: true do
       page.has_text? 'Health Check'
       page.has_text? 'Health information can be retrieved'
 
-      token = current_application_settings.health_check_access_token
+      token = Gitlab::CurrentSettings.health_check_access_token
 
       expect(page).to have_content("Access token is #{token}")
       expect(page).to have_selector('#health-check-token', text: token)
@@ -25,7 +28,7 @@ feature "Admin Health Check", feature: true, broken_storage: true do
 
     describe 'reload access token' do
       it 'changes the access token' do
-        orig_token = current_application_settings.health_check_access_token
+        orig_token = Gitlab::CurrentSettings.health_check_access_token
         click_button 'Reset health check access token'
 
         expect(page).to have_content('New health check access token has been generated!')
@@ -36,6 +39,7 @@ feature "Admin Health Check", feature: true, broken_storage: true do
 
   context 'when services are up' do
     before do
+      stub_storage_settings({}) # Hide the broken storage
       visit admin_health_check_path
     end
 
@@ -53,28 +57,6 @@ feature "Admin Health Check", feature: true, broken_storage: true do
     it 'shows unhealthy status' do
       expect(page).to have_content('Current Status: Unhealthy')
       expect(page).to have_content('The server is on fire')
-    end
-  end
-
-  context 'with repository storage failures' do
-    before do
-      # Track a failure
-      Gitlab::Git::Storage::CircuitBreaker.for_storage('broken').perform { nil } rescue nil
-      visit admin_health_check_path
-    end
-
-    it 'shows storage failure information' do
-      hostname = Gitlab::Environment.hostname
-
-      expect(page).to have_content('broken: failed storage access attempt on host:')
-      expect(page).to have_content("#{hostname}: 1 of 10 failures.")
-    end
-
-    it 'allows resetting storage failures' do
-      click_button 'Reset git storage health information'
-
-      expect(page).to have_content('Git storage health information has been reset')
-      expect(page).not_to have_content('failed storage access attempt')
     end
   end
 end

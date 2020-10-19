@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe SidekiqHelper do
+RSpec.describe SidekiqHelper do
   describe 'parse_sidekiq_ps' do
     it 'parses line with time' do
       line = '55137	10,0	2,1	S+	2:30pm	sidekiq 4.1.4 gitlab [0 of 25 busy]   '

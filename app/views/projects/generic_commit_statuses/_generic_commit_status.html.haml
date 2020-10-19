@@ -5,11 +5,11 @@
 - pipeline_link = local_assigns.fetch(:pipeline_link, false)
 - stage = local_assigns.fetch(:stage, false)
 
-%tr.generic_commit_status{ class: ('retried' if retried) }
+%tr.generic-commit-status{ class: ('retried' if retried) }
   %td.status
     = render 'ci/status/badge', status: generic_commit_status.detailed_status(current_user)
 
-  %td.generic_commit_status-link
+  %td.generic-commit-status-link
     - if can?(current_user, :read_commit_status, generic_commit_status) && generic_commit_status.target_url
       = link_to generic_commit_status.target_url do
         %span.build-link ##{generic_commit_status.id}
@@ -19,7 +19,7 @@
     - if ref
       - if generic_commit_status.ref
         .icon-container
-          = generic_commit_status.tags.any? ? icon('tag') : icon('code-fork')
+          = generic_commit_status.tags.any? ? icon('tag') : sprite_icon('fork', size: 10)
         = link_to generic_commit_status.ref, project_commits_path(generic_commit_status.project, generic_commit_status.ref)
       - else
         .light none
@@ -35,10 +35,10 @@
     .label-container
       - if generic_commit_status.tags.any?
         - generic_commit_status.tags.each do |tag|
-          %span.label.label-primary
+          %span.badge.badge-primary
             = tag
       - if retried
-        %span.label.label-warning retried
+        %span.badge.badge-warning retried
 
   - if pipeline_link
     %td
@@ -48,12 +48,12 @@
       - if generic_commit_status.pipeline.user
         = user_avatar(user: generic_commit_status.pipeline.user, size: 20)
       - else
-        %span.api API
+        %span.monospace API
 
   - if admin
     %td
       - if generic_commit_status.project
-        = link_to generic_commit_status.project.name_with_namespace, admin_project_path(generic_commit_status.project)
+        = link_to generic_commit_status.project.full_name, admin_project_path(generic_commit_status.project)
     %td
       - if generic_commit_status.try(:runner)
         = runner_link(generic_commit_status.runner)
@@ -75,7 +75,7 @@
 
     - if generic_commit_status.finished_at
       %p.finished-at
-        = icon("calendar")
+        = sprite_icon("calendar")
         %span= time_ago_with_tooltip(generic_commit_status.finished_at)
 
   %td.coverage

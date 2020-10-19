@@ -2,6 +2,7 @@
 
 require_relative '../spec/simplecov_env'
 SimpleCovEnv.configure_profile
+SimpleCovEnv.configure_formatter
 
 module SimpleCov
   module ResultMerger
@@ -12,11 +13,9 @@ module SimpleCov
 
       def resultset_hashes
         resultset_files.map do |path|
-          begin
-            JSON.parse(File.read(path))
-          rescue
-            {}
-          end
+          JSON.parse(File.read(path))
+        rescue
+          {}
         end
       end
 

@@ -1,81 +1,106 @@
 <script>
-import jobComponent from './job_component.vue';
-import dropdownJobComponent from './dropdown_job_component.vue';
+import { isEmpty, escape } from 'lodash';
+import stageColumnMixin from '../../mixins/stage_column_mixin';
+import JobItem from './job_item.vue';
+import JobGroupDropdown from './job_group_dropdown.vue';
+import ActionComponent from './action_component.vue';
 
 export default {
+  components: {
+    JobItem,
+    JobGroupDropdown,
+    ActionComponent,
+  },
+  mixins: [stageColumnMixin],
   props: {
     title: {
       type: String,
       required: true,
     },
-
-    jobs: {
+    groups: {
       type: Array,
       required: true,
     },
-
     isFirstColumn: {
       type: Boolean,
       required: false,
       default: false,
     },
-
     stageConnectorClass: {
       type: String,
       required: false,
       default: '',
     },
+    action: {
+      type: Object,
+      required: false,
+      default: () => ({}),
+    },
+    jobHovered: {
+      type: String,
+      required: false,
+      default: '',
+    },
+    pipelineExpanded: {
+      type: Object,
+      required: false,
+      default: () => ({}),
+    },
   },
-
-  components: {
-    jobComponent,
-    dropdownJobComponent,
+  computed: {
+    hasAction() {
+      return !isEmpty(this.action);
+    },
   },
-
   methods: {
-    firstJob(list) {
-      return list[0];
+    groupId(group) {
+      return `ci-badge-${escape(group.name)}`;
     },
-
-    jobId(job) {
-      return `ci-badge-${job.name}`;
-    },
-
-    buildConnnectorClass(index) {
-      return index === 0 && !this.isFirstColumn ? 'left-connector' : '';
+    pipelineActionRequestComplete() {
+      this.$emit('refreshPipelineGraph');
     },
   },
 };
 </script>
 <template>
-  <li
-    class="stage-column"
-    :class="stageConnectorClass">
-    <div class="stage-name">
-      {{title}}
+  <li :class="stageConnectorClass" class="stage-column">
+    <div class="stage-name position-relative">
+      {{ title }}
+      <action-component
+        v-if="hasAction"
+        :action-icon="action.icon"
+        :tooltip-text="action.title"
+        :link="action.path"
+        class="js-stage-action stage-action rounded"
+        @pipelineActionRequestComplete="pipelineActionRequestComplete"
+      />
     </div>
+
     <div class="builds-container">
       <ul>
         <li
-          v-for="(job, index) in jobs"
-          :key="job.id"
-          class="build"
+          v-for="(group, index) in groups"
+          :id="groupId(group)"
+          :key="group.id"
           :class="buildConnnectorClass(index)"
-          :id="jobId(job)">
-
+          class="build"
+        >
           <div class="curve"></div>
 
-          <job-component
-            v-if="job.size === 1"
-            :job="job"
+          <job-item
+            v-if="group.size === 1"
+            :job="group.jobs[0]"
+            :job-hovered="jobHovered"
+            :pipeline-expanded="pipelineExpanded"
             css-class-job-name="build-content"
-            />
+            @pipelineActionRequestComplete="pipelineActionRequestComplete"
+          />
 
-          <dropdown-job-component
-            v-if="job.size > 1"
-            :job="job"
-            />
-
+          <job-group-dropdown
+            v-if="group.size > 1"
+            :group="group"
+            @pipelineActionRequestComplete="pipelineActionRequestComplete"
+          />
         </li>
       </ul>
     </div>

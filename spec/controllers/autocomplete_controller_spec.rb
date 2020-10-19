@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe AutocompleteController do
+RSpec.describe AutocompleteController do
   let(:project) { create(:project) }
   let(:user) { project.owner }
 
@@ -15,7 +17,7 @@ describe AutocompleteController do
 
       describe 'GET #users with project ID' do
         before do
-          get(:users, project_id: project.id)
+          get(:users, params: { project_id: project.id })
         end
 
         it 'returns the project members' do
@@ -27,10 +29,10 @@ describe AutocompleteController do
 
       describe 'GET #users with unknown project' do
         before do
-          get(:users, project_id: 'unknown')
+          get(:users, params: { project_id: 'unknown' })
         end
 
-        it { expect(response).to have_http_status(404) }
+        it { expect(response).to have_gitlab_http_status(:not_found) }
       end
     end
 
@@ -44,7 +46,7 @@ describe AutocompleteController do
 
       describe 'GET #users with group ID' do
         before do
-          get(:users, group_id: group.id)
+          get(:users, params: { group_id: group.id })
         end
 
         it 'returns the group members' do
@@ -56,10 +58,10 @@ describe AutocompleteController do
 
       describe 'GET #users with unknown group ID' do
         before do
-          get(:users, group_id: 'unknown')
+          get(:users, params: { group_id: 'unknown' })
         end
 
-        it { expect(response).to have_http_status(404) }
+        it { expect(response).to have_gitlab_http_status(:not_found) }
       end
     end
 
@@ -72,7 +74,7 @@ describe AutocompleteController do
 
       describe 'GET #users with project ID' do
         before do
-          get(:users, project_id: project.id, current_user: true)
+          get(:users, params: { project_id: project.id, current_user: true })
         end
 
         it 'returns the project members and non-members' do
@@ -100,7 +102,7 @@ describe AutocompleteController do
         user1 = create(:user, username: 'user1', name: 'Ian')
 
         sign_in(user)
-        get(:users, search: 'user')
+        get(:users, params: { search: 'user' })
 
         response_usernames = json_response.map { |user| user['username']  }
 
@@ -109,15 +111,15 @@ describe AutocompleteController do
     end
 
     context 'limited users per page' do
-      let(:per_page) { 2 }
-
       before do
+        create_list(:user, 25)
+
         sign_in(user)
-        get(:users, per_page: per_page)
+        get(:users)
       end
 
       it { expect(json_response).to be_kind_of(Array) }
-      it { expect(json_response.size).to eq(per_page) }
+      it { expect(json_response.size).to eq(20) }
     end
 
     context 'unauthenticated user' do
@@ -126,7 +128,7 @@ describe AutocompleteController do
       describe 'GET #users with public project' do
         before do
           public_project.add_guest(user)
-          get(:users, project_id: public_project.id)
+          get(:users, params: { project_id: public_project.id })
         end
 
         it { expect(json_response).to be_kind_of(Array) }
@@ -135,27 +137,27 @@ describe AutocompleteController do
 
       describe 'GET #users with project' do
         before do
-          get(:users, project_id: project.id)
+          get(:users, params: { project_id: project.id })
         end
 
-        it { expect(response).to have_http_status(404) }
+        it { expect(response).to have_gitlab_http_status(:not_found) }
       end
 
       describe 'GET #users with unknown project' do
         before do
-          get(:users, project_id: 'unknown')
+          get(:users, params: { project_id: 'unknown' })
         end
 
-        it { expect(response).to have_http_status(404) }
+        it { expect(response).to have_gitlab_http_status(:not_found) }
       end
 
       describe 'GET #users with inaccessible group' do
         before do
           project.add_guest(user)
-          get(:users, group_id: user.namespace.id)
+          get(:users, params: { group_id: user.namespace.id })
         end
 
-        it { expect(response).to have_http_status(404) }
+        it { expect(response).to have_gitlab_http_status(:not_found) }
       end
 
       describe 'GET #users with no project' do
@@ -169,9 +171,9 @@ describe AutocompleteController do
 
       describe 'GET #users with todo filter' do
         it 'gives an array of users' do
-          get :users, todo_filter: true
+          get :users, params: { todo_filter: true }
 
-          expect(response.status).to eq 200
+          expect(response).to have_gitlab_http_status(:ok)
           expect(json_response).to be_kind_of(Array)
         end
       end
@@ -184,21 +186,21 @@ describe AutocompleteController do
         end
 
         it 'includes the author' do
-          get(:users, author_id: non_member.id)
+          get(:users, params: { author_id: non_member.id })
 
           expect(json_response.first["username"]).to eq non_member.username
         end
 
         it 'rejects non existent user ids' do
-          get(:users, author_id: 99999)
+          get(:users, params: { author_id: non_existing_record_id })
 
-          expect(json_response.collect { |u| u['id'] }).not_to include(99999)
+          expect(json_response.collect { |u| u['id'] }).not_to include(non_existing_record_id)
         end
       end
 
       context 'without authenticating' do
         it 'returns empty result' do
-          get(:users, author_id: non_member.id)
+          get(:users, params: { author_id: non_member.id })
 
           expect(json_response).to be_empty
         end
@@ -211,11 +213,25 @@ describe AutocompleteController do
       end
 
       it 'skips the user IDs passed' do
-        get(:users, skip_users: [user, user2].map(&:id))
+        get(:users, params: { skip_users: [user, user2].map(&:id) })
 
         response_user_ids = json_response.map { |user| user['id'] }
 
         expect(response_user_ids).to contain_exactly(non_member.id)
+      end
+    end
+
+    context 'merge_request_iid parameter included' do
+      before do
+        sign_in(user)
+      end
+
+      it 'includes can_merge option to users' do
+        merge_request = create(:merge_request, source_project: project)
+
+        get(:users, params: { merge_request_iid: merge_request.iid, project_id: project.id })
+
+        expect(json_response.first).to have_key('can_merge')
       end
     end
   end
@@ -226,95 +242,67 @@ describe AutocompleteController do
 
     before do
       sign_in(user)
-      project.add_master(user)
+      project.add_maintainer(user)
     end
 
     context 'authorized projects' do
       before do
-        authorized_project.add_master(user)
+        authorized_project.add_maintainer(user)
       end
 
       describe 'GET #projects with project ID' do
         before do
-          get(:projects, project_id: project.id)
+          get(:projects, params: { project_id: project.id })
         end
 
         it 'returns projects' do
           expect(json_response).to be_kind_of(Array)
-          expect(json_response.size).to eq(2)
+          expect(json_response.size).to eq(1)
 
-          expect(json_response.first['id']).to eq(0)
-          expect(json_response.first['name_with_namespace']).to eq 'No project'
-
-          expect(json_response.last['id']).to eq authorized_project.id
-          expect(json_response.last['name_with_namespace']).to eq authorized_project.name_with_namespace
+          expect(json_response.first['id']).to eq authorized_project.id
+          expect(json_response.first['name_with_namespace']).to eq authorized_project.full_name
         end
       end
     end
 
     context 'authorized projects and search' do
       before do
-        authorized_project.add_master(user)
-        authorized_search_project.add_master(user)
+        authorized_project.add_maintainer(user)
+        authorized_search_project.add_maintainer(user)
       end
 
       describe 'GET #projects with project ID and search' do
         before do
-          get(:projects, project_id: project.id, search: 'rugged')
+          get(:projects, params: { project_id: project.id, search: 'rugged' })
         end
 
         it 'returns projects' do
           expect(json_response).to be_kind_of(Array)
-          expect(json_response.size).to eq(2)
+          expect(json_response.size).to eq(1)
 
-          expect(json_response.last['id']).to eq authorized_search_project.id
-          expect(json_response.last['name_with_namespace']).to eq authorized_search_project.name_with_namespace
+          expect(json_response.first['id']).to eq authorized_search_project.id
+          expect(json_response.first['name_with_namespace']).to eq authorized_search_project.full_name
         end
       end
     end
 
     context 'authorized projects apply limit' do
       before do
-        authorized_project2 = create(:project)
-        authorized_project3 = create(:project)
+        allow(Kaminari.config).to receive(:default_per_page).and_return(2)
 
-        authorized_project.add_master(user)
-        authorized_project2.add_master(user)
-        authorized_project3.add_master(user)
-
-        stub_const 'MoveToProjectFinder::PAGE_SIZE', 2
+        create_list(:project, 2) do |project|
+          project.add_maintainer(user)
+        end
       end
 
       describe 'GET #projects with project ID' do
         before do
-          get(:projects, project_id: project.id)
+          get(:projects, params: { project_id: project.id })
         end
 
         it 'returns projects' do
           expect(json_response).to be_kind_of(Array)
-          expect(json_response.size).to eq 3 # Of a total of 4
-        end
-      end
-    end
-
-    context 'authorized projects with offset' do
-      before do
-        authorized_project2 = create(:project)
-        authorized_project3 = create(:project)
-
-        authorized_project.add_master(user)
-        authorized_project2.add_master(user)
-        authorized_project3.add_master(user)
-      end
-
-      describe 'GET #projects with project ID and offset_id' do
-        before do
-          get(:projects, project_id: project.id, offset_id: authorized_project.id)
-        end
-
-        it 'returns "No project"' do
-          expect(json_response.detect { |item| item['id'] == 0 }).to be_nil # 'No project' is not there
-          expect(json_response.detect { |item| item['id'] == authorized_project.id }).to be_nil # Offset project is not there either
+          expect(json_response.size).to eq(Kaminari.config.default_per_page)
         end
       end
     end
@@ -328,14 +316,175 @@ describe AutocompleteController do
 
       describe 'GET #projects with project ID' do
         before do
-          get(:projects, project_id: project.id)
+          get(:projects, params: { project_id: project.id })
         end
 
-        it 'returns a single "No project"' do
+        it 'returns no projects' do
           expect(json_response).to be_kind_of(Array)
-          expect(json_response.size).to eq(1) # 'No project'
-          expect(json_response.first['id']).to eq 0
+          expect(json_response.size).to eq(0)
         end
+      end
+    end
+  end
+
+  context 'GET award_emojis' do
+    let(:user2) { create(:user) }
+    let!(:award_emoji1) { create_list(:award_emoji, 2, user: user, name: 'thumbsup') }
+    let!(:award_emoji2) { create_list(:award_emoji, 1, user: user, name: 'thumbsdown') }
+    let!(:award_emoji3) { create_list(:award_emoji, 3, user: user, name: 'star') }
+    let!(:award_emoji4) { create_list(:award_emoji, 1, user: user, name: 'tea') }
+
+    context 'unauthorized user' do
+      it 'returns empty json' do
+        get :award_emojis
+
+        expect(json_response).to be_empty
+      end
+    end
+
+    context 'sign in as user without award emoji' do
+      it 'returns empty json' do
+        sign_in(user2)
+        get :award_emojis
+
+        expect(json_response).to be_empty
+      end
+    end
+
+    context 'sign in as user with award emoji' do
+      it 'returns json sorted by name count' do
+        sign_in(user)
+        get :award_emojis
+
+        expect(json_response.count).to eq 4
+        expect(json_response[0]).to match('name' => 'star')
+        expect(json_response[1]).to match('name' => 'thumbsup')
+        expect(json_response[2]).to match('name' => 'tea')
+        expect(json_response[3]).to match('name' => 'thumbsdown')
+      end
+    end
+  end
+
+  context 'GET deploy_keys_with_owners' do
+    let!(:deploy_key) { create(:deploy_key, user: user) }
+    let!(:deploy_keys_project) { create(:deploy_keys_project, :write_access, project: project, deploy_key: deploy_key) }
+
+    context 'unauthorized user' do
+      it 'returns a not found response' do
+        get(:deploy_keys_with_owners, params: { project_id: project.id })
+
+        expect(response).to have_gitlab_http_status(:redirect)
+      end
+    end
+
+    context 'when the user who can read the project is logged in' do
+      before do
+        sign_in(user)
+      end
+
+      it 'renders the deploy key in a json payload, with its owner' do
+        get(:deploy_keys_with_owners, params: { project_id: project.id })
+
+        expect(json_response.count).to eq(1)
+        expect(json_response.first['title']).to eq(deploy_key.title)
+        expect(json_response.first['owner']['id']).to eq(deploy_key.user.id)
+      end
+
+      context 'with an unknown project' do
+        it 'returns a not found response' do
+          get(:deploy_keys_with_owners, params: { project_id: 9999 })
+
+          expect(response).to have_gitlab_http_status(:not_found)
+        end
+      end
+
+      context 'and the user cannot read the owner of the key' do
+        before do
+          allow(Ability).to receive(:allowed?).and_call_original
+          allow(Ability).to receive(:allowed?).with(user, :read_user, deploy_key.user).and_return(false)
+        end
+
+        it 'returns a payload without owner' do
+          get(:deploy_keys_with_owners, params: { project_id: project.id })
+
+          expect(json_response.count).to eq(1)
+          expect(json_response.first['title']).to eq(deploy_key.title)
+          expect(json_response.first['owner']).to be_nil
+        end
+      end
+    end
+  end
+
+  context 'Get merge_request_target_branches' do
+    let!(:merge_request) { create(:merge_request, source_project: project, target_branch: 'feature') }
+
+    context 'anonymous user' do
+      it 'returns empty json' do
+        get :merge_request_target_branches, params: { project_id: project.id }
+
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(json_response).to be_empty
+      end
+    end
+
+    context 'user without any accessible merge requests' do
+      it 'returns empty json' do
+        sign_in(create(:user))
+
+        get :merge_request_target_branches, params: { project_id: project.id }
+
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(json_response).to be_empty
+      end
+    end
+
+    context 'user with an accessible merge request but no scope' do
+      where(
+        params: [
+          {},
+          { group_id: ' ' },
+          { project_id: ' ' },
+          { group_id: ' ', project_id: ' ' }
+        ]
+      )
+
+      with_them do
+        it 'returns an error' do
+          sign_in(user)
+
+          get :merge_request_target_branches, params: params
+
+          expect(response).to have_gitlab_http_status(:bad_request)
+          expect(json_response).to eq({ 'error' => 'At least one of group_id or project_id must be specified' })
+        end
+      end
+    end
+
+    context 'user with an accessible merge request by project' do
+      it 'returns json' do
+        sign_in(user)
+
+        get :merge_request_target_branches, params: { project_id: project.id }
+
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(json_response).to contain_exactly({ 'title' => 'feature' })
+      end
+    end
+
+    context 'user with an accessible merge request by group' do
+      let(:group) { create(:group) }
+      let(:project) { create(:project, namespace: group) }
+      let(:user) { create(:user) }
+
+      it 'returns json' do
+        group.add_owner(user)
+
+        sign_in(user)
+
+        get :merge_request_target_branches, params: { group_id: group.id }
+
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(json_response).to contain_exactly({ 'title' => 'feature' })
       end
     end
   end

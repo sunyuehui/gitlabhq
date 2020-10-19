@@ -1,5 +1,5 @@
-import Cookies from 'js-cookie';
-import bp from './breakpoints';
+import { GlBreakpointInstance as bp } from '@gitlab/ui/dist/utils';
+import { SIDEBAR_COLLAPSED_CLASS } from './contextual_sidebar';
 
 const HIDE_INTERVAL_TIMEOUT = 300;
 const IS_OVER_CLASS = 'is-over';
@@ -8,42 +8,54 @@ const IS_SHOWING_FLY_OUT_CLASS = 'is-showing-fly-out';
 let currentOpenMenu = null;
 let menuCornerLocs;
 let timeoutId;
+let sidebar;
 
 export const mousePos = [];
 
-export const setOpenMenu = (menu = null) => { currentOpenMenu = menu; };
+export const setSidebar = el => {
+  sidebar = el;
+};
+export const getOpenMenu = () => currentOpenMenu;
+export const setOpenMenu = (menu = null) => {
+  currentOpenMenu = menu;
+};
 
 export const slope = (a, b) => (b.y - a.y) / (b.x - a.x);
 
 let headerHeight = 50;
 
 export const getHeaderHeight = () => headerHeight;
+const setHeaderHeight = () => {
+  headerHeight = sidebar.offsetTop;
+};
 
-export const canShowActiveSubItems = (el) => {
-  const isHiddenByMedia = bp.getBreakpointSize() === 'sm' || bp.getBreakpointSize() === 'md';
+export const isSidebarCollapsed = () =>
+  sidebar && sidebar.classList.contains(SIDEBAR_COLLAPSED_CLASS);
 
-  if (el.classList.contains('active') && !isHiddenByMedia) {
-    return Cookies.get('sidebar_collapsed') === 'true';
+export const canShowActiveSubItems = el => {
+  if (el.classList.contains('active') && !isSidebarCollapsed()) {
+    return false;
   }
 
   return true;
 };
 
-export const canShowSubItems = () => bp.getBreakpointSize() === 'sm' || bp.getBreakpointSize() === 'md' || bp.getBreakpointSize() === 'lg';
+export const canShowSubItems = () => ['md', 'lg', 'xl'].includes(bp.getBreakpointSize());
 
 export const getHideSubItemsInterval = () => {
-  if (!currentOpenMenu) return 0;
+  if (!currentOpenMenu || !mousePos.length) return 0;
 
   const currentMousePos = mousePos[mousePos.length - 1];
   const prevMousePos = mousePos[0];
   const currentMousePosY = currentMousePos.y;
   const [menuTop, menuBottom] = menuCornerLocs;
 
-  if (currentMousePosY < menuTop.y ||
-      currentMousePosY > menuBottom.y) return 0;
+  if (currentMousePosY < menuTop.y || currentMousePosY > menuBottom.y) return 0;
 
-  if (slope(prevMousePos, menuBottom) < slope(currentMousePos, menuBottom) &&
-    slope(prevMousePos, menuTop) > slope(currentMousePos, menuTop)) {
+  if (
+    slope(prevMousePos, menuBottom) < slope(currentMousePos, menuBottom) &&
+    slope(prevMousePos, menuTop) > slope(currentMousePos, menuTop)
+  ) {
     return HIDE_INTERVAL_TIMEOUT;
   }
 
@@ -54,17 +66,18 @@ export const calculateTop = (boundingRect, outerHeight) => {
   const windowHeight = window.innerHeight;
   const bottomOverflow = windowHeight - (boundingRect.top + outerHeight);
 
-  return bottomOverflow < 0 ? (boundingRect.top - outerHeight) + boundingRect.height :
-    boundingRect.top;
+  return bottomOverflow < 0
+    ? boundingRect.top - outerHeight + boundingRect.height
+    : boundingRect.top;
 };
 
-export const hideMenu = (el) => {
+export const hideMenu = el => {
   if (!el) return;
 
   const parentEl = el.parentNode;
 
-  el.style.display = ''; // eslint-disable-line no-param-reassign
-  el.style.transform = ''; // eslint-disable-line no-param-reassign
+  el.style.display = '';
+  el.style.transform = '';
   el.classList.remove(IS_ABOVE_CLASS);
   parentEl.classList.remove(IS_OVER_CLASS);
   parentEl.classList.remove(IS_SHOWING_FLY_OUT_CLASS);
@@ -75,10 +88,11 @@ export const hideMenu = (el) => {
 export const moveSubItemsToPosition = (el, subItems) => {
   const boundingRect = el.getBoundingClientRect();
   const top = calculateTop(boundingRect, subItems.offsetHeight);
+  const left = sidebar ? sidebar.offsetWidth : 50;
   const isAbove = top < boundingRect.top;
 
   subItems.classList.add('fly-out-list');
-  subItems.style.transform = `translate3d(0, ${Math.floor(top) - headerHeight}px, 0)`; // eslint-disable-line no-param-reassign
+  subItems.style.transform = `translate3d(${left}px, ${Math.floor(top) - headerHeight}px, 0)`; // eslint-disable-line no-param-reassign
 
   const subItemsRect = subItems.getBoundingClientRect();
 
@@ -98,14 +112,15 @@ export const moveSubItemsToPosition = (el, subItems) => {
   }
 };
 
-export const showSubLevelItems = (el) => {
+export const showSubLevelItems = el => {
   const subItems = el.querySelector('.sidebar-sub-level-items');
+  const isIconOnly = subItems && subItems.classList.contains('is-fly-out-only');
 
   if (!canShowSubItems() || !canShowActiveSubItems(el)) return;
 
   el.classList.add(IS_OVER_CLASS);
 
-  if (!subItems) return;
+  if (!subItems || (!isSidebarCollapsed() && isIconOnly)) return;
 
   subItems.style.display = 'block';
   el.classList.add(IS_SHOWING_FLY_OUT_CLASS);
@@ -114,26 +129,30 @@ export const showSubLevelItems = (el) => {
   moveSubItemsToPosition(el, subItems);
 };
 
-export const mouseEnterTopItems = (el) => {
+export const mouseEnterTopItems = (el, timeout = getHideSubItemsInterval()) => {
   clearTimeout(timeoutId);
 
   timeoutId = setTimeout(() => {
     if (currentOpenMenu) hideMenu(currentOpenMenu);
 
     showSubLevelItems(el);
-  }, getHideSubItemsInterval());
+  }, timeout);
 };
 
-export const mouseLeaveTopItem = (el) => {
+export const mouseLeaveTopItem = el => {
   const subItems = el.querySelector('.sidebar-sub-level-items');
 
-  if (!canShowSubItems() || !canShowActiveSubItems(el) ||
-      (subItems && subItems === currentOpenMenu)) return;
+  if (
+    !canShowSubItems() ||
+    !canShowActiveSubItems(el) ||
+    (subItems && subItems === currentOpenMenu)
+  )
+    return;
 
   el.classList.remove(IS_OVER_CLASS);
 };
 
-export const documentMouseMove = (e) => {
+export const documentMouseMove = e => {
   mousePos.push({
     x: e.clientX,
     y: e.clientY,
@@ -142,31 +161,39 @@ export const documentMouseMove = (e) => {
   if (mousePos.length > 6) mousePos.shift();
 };
 
+export const subItemsMouseLeave = relatedTarget => {
+  clearTimeout(timeoutId);
+
+  if (relatedTarget && !relatedTarget.closest(`.${IS_OVER_CLASS}`)) {
+    hideMenu(currentOpenMenu);
+  }
+};
+
 export default () => {
-  const sidebar = document.querySelector('.sidebar-top-level-items');
+  sidebar = document.querySelector('.nav-sidebar');
 
   if (!sidebar) return;
 
   const items = [...sidebar.querySelectorAll('.sidebar-top-level-items > li')];
 
-  sidebar.addEventListener('mouseleave', () => {
-    clearTimeout(timeoutId);
+  const topItems = sidebar.querySelector('.sidebar-top-level-items');
+  if (topItems) {
+    sidebar.querySelector('.sidebar-top-level-items').addEventListener('mouseleave', () => {
+      clearTimeout(timeoutId);
 
-    timeoutId = setTimeout(() => {
-      if (currentOpenMenu) hideMenu(currentOpenMenu);
-    }, getHideSubItemsInterval());
-  });
+      timeoutId = setTimeout(() => {
+        if (currentOpenMenu) hideMenu(currentOpenMenu);
+      }, getHideSubItemsInterval());
+    });
+  }
 
-  headerHeight = document.querySelector('.nav-sidebar').offsetTop;
+  requestIdleCallback(setHeaderHeight);
 
-  items.forEach((el) => {
+  items.forEach(el => {
     const subItems = el.querySelector('.sidebar-sub-level-items');
 
     if (subItems) {
-      subItems.addEventListener('mouseleave', () => {
-        clearTimeout(timeoutId);
-        hideMenu(currentOpenMenu);
-      });
+      subItems.addEventListener('mouseleave', e => subItemsMouseLeave(e.relatedTarget));
     }
 
     el.addEventListener('mouseenter', e => mouseEnterTopItems(e.currentTarget));

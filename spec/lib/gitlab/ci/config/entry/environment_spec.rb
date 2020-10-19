@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Config::Entry::Environment do
+RSpec.describe Gitlab::Ci::Config::Entry::Environment do
   let(:entry) { described_class.new(config) }
 
   before do
@@ -100,6 +102,37 @@ describe Gitlab::Ci::Config::Entry::Environment do
     end
   end
 
+  context 'when prepare action is used' do
+    let(:config) do
+      { name: 'production',
+        action: 'prepare' }
+    end
+
+    it 'is valid' do
+      expect(entry).to be_valid
+    end
+  end
+
+  context 'when wrong action type is used' do
+    let(:config) do
+      { name: 'production',
+        action: ['stop'] }
+    end
+
+    describe '#valid?' do
+      it 'is not valid' do
+        expect(entry).not_to be_valid
+      end
+    end
+
+    describe '#errors' do
+      it 'contains error about wrong action type' do
+        expect(entry.errors)
+          .to include 'environment action should be a string'
+      end
+    end
+  end
+
   context 'when invalid action is used' do
     let(:config) do
       { name: 'production',
@@ -115,7 +148,7 @@ describe Gitlab::Ci::Config::Entry::Environment do
     describe '#errors' do
       it 'contains error about invalid action' do
         expect(entry.errors)
-          .to include 'environment action should be start or stop'
+          .to include 'environment action should be start, stop or prepare'
       end
     end
   end
@@ -151,6 +184,26 @@ describe Gitlab::Ci::Config::Entry::Environment do
     end
   end
 
+  context 'when wrong url type is used' do
+    let(:config) do
+      { name: 'production',
+        url: ['https://meow.meow'] }
+    end
+
+    describe '#valid?' do
+      it 'is not valid' do
+        expect(entry).not_to be_valid
+      end
+    end
+
+    describe '#errors' do
+      it 'contains error about wrong url type' do
+        expect(entry.errors)
+          .to include 'environment url should be a string'
+      end
+    end
+  end
+
   context 'when variables are used for environment' do
     let(:config) do
       { name: 'review/$CI_COMMIT_REF_NAME',
@@ -160,6 +213,35 @@ describe Gitlab::Ci::Config::Entry::Environment do
     describe '#valid?' do
       it 'is valid' do
         expect(entry).to be_valid
+      end
+    end
+  end
+
+  context 'when auto_stop_in is specified' do
+    let(:config) do
+      {
+        name: 'review/$CI_COMMIT_REF_NAME',
+        url: 'https://$CI_COMMIT_REF_NAME.review.gitlab.com',
+        on_stop: 'stop_review',
+        auto_stop_in: auto_stop_in
+      }
+    end
+
+    context 'when auto_stop_in is correct format' do
+      let(:auto_stop_in) { '2 days' }
+
+      it 'becomes valid' do
+        expect(entry).to be_valid
+        expect(entry.auto_stop_in).to eq(auto_stop_in)
+      end
+    end
+
+    context 'when auto_stop_in is invalid format' do
+      let(:auto_stop_in) { 'invalid' }
+
+      it 'becomes invalid' do
+        expect(entry).not_to be_valid
+        expect(entry.errors).to include 'environment auto stop in should be a duration'
       end
     end
   end
@@ -197,6 +279,30 @@ describe Gitlab::Ci::Config::Entry::Environment do
             .to include "environment name can't be blank"
         end
       end
+    end
+  end
+
+  describe 'kubernetes' do
+    let(:config) do
+      { name: 'production', kubernetes: kubernetes_config }
+    end
+
+    context 'is a string' do
+      let(:kubernetes_config) { 'production' }
+
+      it { expect(entry).not_to be_valid }
+    end
+
+    context 'is a hash' do
+      let(:kubernetes_config) { Hash(namespace: 'production') }
+
+      it { expect(entry).to be_valid }
+    end
+
+    context 'is nil' do
+      let(:kubernetes_config) { nil }
+
+      it { expect(entry).to be_valid }
     end
   end
 end

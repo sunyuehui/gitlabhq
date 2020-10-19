@@ -1,13 +1,13 @@
-require 'backup/files'
+# frozen_string_literal: true
 
 module Backup
-  class Pages < Files
-    def initialize
-      super('pages', Gitlab.config.pages.path)
-    end
+  class Pages < Backup::Files
+    attr_reader :progress
 
-    def create_files_dir
-      Dir.mkdir(app_files_dir, 0700)
+    def initialize(progress)
+      @progress = progress
+
+      super('pages', Gitlab.config.pages.path, excludes: [::Projects::UpdatePagesService::TMP_EXTRACT_PATH])
     end
   end
 end

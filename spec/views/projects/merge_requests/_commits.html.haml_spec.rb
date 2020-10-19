@@ -1,11 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'projects/merge_requests/_commits.html.haml' do
+RSpec.describe 'projects/merge_requests/_commits.html.haml', :sidekiq_might_not_need_inline do
   include Devise::Test::ControllerHelpers
+  include ProjectForksHelper
 
   let(:user) { create(:user) }
-  let(:target_project) { create(:project, :repository) }
-  let(:source_project) { create(:project, :repository, forked_from_project: target_project) }
+  let(:target_project) { create(:project, :public, :repository) }
+  let(:source_project) { fork_project(target_project, user, repository: true) }
 
   let(:merge_request) do
     create(:merge_request, :simple,
@@ -19,14 +22,27 @@ describe 'projects/merge_requests/_commits.html.haml' do
 
     assign(:merge_request, merge_request)
     assign(:commits, merge_request.commits)
+    assign(:hidden_commit_count, 0)
   end
 
   it 'shows commits from source project' do
     render
 
-    commit = source_project.commit(merge_request.source_branch)
-    href = project_commit_path(source_project, commit)
+    commit = merge_request.commits.first # HEAD
+    href = diffs_project_merge_request_path(target_project, merge_request, commit_id: commit)
 
-    expect(rendered).to have_link(Commit.truncate_sha(commit.sha), href: href)
+    expect(rendered).to have_link(href: href)
+  end
+
+  context 'when there are hidden commits' do
+    before do
+      assign(:hidden_commit_count, 1)
+    end
+
+    it 'shows notice about omitted commits' do
+      render
+
+      expect(rendered).to match(/1 additional commit has been omitted to prevent performance issues/)
+    end
   end
 end

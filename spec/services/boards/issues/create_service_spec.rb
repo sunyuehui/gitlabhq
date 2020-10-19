@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Boards::Issues::CreateService do
+RSpec.describe Boards::Issues::CreateService do
   describe '#execute' do
     let(:project) { create(:project) }
     let(:board)   { create(:board, project: project) }
@@ -8,14 +10,16 @@ describe Boards::Issues::CreateService do
     let(:label)   { create(:label, project: project, name: 'in-progress') }
     let!(:list)   { create(:list, board: board, label: label, position: 0) }
 
-    subject(:service) { described_class.new(project, user, board_id: board.id, list_id: list.id, title: 'New issue') }
+    subject(:service) { described_class.new(board.resource_parent, project, user, board_id: board.id, list_id: list.id, title: 'New issue') }
 
     before do
-      project.team << [user, :developer]
+      project.add_developer(user)
     end
 
     it 'delegates the create proceedings to Issues::CreateService' do
-      expect_any_instance_of(Issues::CreateService).to receive(:execute).once
+      expect_next_instance_of(Issues::CreateService) do |instance|
+        expect(instance).to receive(:execute).once
+      end
 
       service.execute
     end

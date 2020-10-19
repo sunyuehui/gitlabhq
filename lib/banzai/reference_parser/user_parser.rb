@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Banzai
   module ReferenceParser
     class UserParser < BaseParser
@@ -31,6 +33,7 @@ module Banzai
         nodes.each do |node|
           if node.has_attribute?(group_attr)
             next unless can_read_group_reference?(node, user, groups)
+
             visible << node
           elsif can_read_project_reference?(node)
             visible << node
@@ -57,7 +60,7 @@ module Banzai
       def can_read_project_reference?(node)
         node_id = node.attr('data-project').to_i
 
-        project && project.id == node_id
+        project_for_node(node)&.id == node_id
       end
 
       def nodes_user_can_reference(current_user, nodes)
@@ -70,6 +73,7 @@ module Banzai
         nodes.select do |node|
           project_id = node.attr(project_attr)
           user_id = node.attr(author_attr)
+          project = project_for_node(node)
 
           if project && project_id && project.id == project_id.to_i
             true
@@ -93,7 +97,9 @@ module Banzai
       def find_users_for_groups(ids)
         return [] if ids.empty?
 
-        User.joins(:group_members).where(members: { source_id: ids }).to_a
+        User.joins(:group_members).where(members: {
+          source_id: Namespace.where(id: ids).where('mentions_disabled IS NOT TRUE').select(:id)
+        }).to_a
       end
 
       def find_users_for_projects(ids)

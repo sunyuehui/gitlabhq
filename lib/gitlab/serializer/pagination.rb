@@ -1,8 +1,9 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Serializer
     class Pagination
       InvalidResourceError = Class.new(StandardError)
-      include ::API::Helpers::Pagination
 
       def initialize(request, response)
         @request = request
@@ -11,15 +12,13 @@ module Gitlab
 
       def paginate(resource)
         if resource.respond_to?(:page)
-          super(resource)
+          ::Gitlab::Pagination::OffsetPagination.new(self).paginate(resource)
         else
           raise InvalidResourceError
         end
       end
 
-      private
-
-      # Methods needed by `API::Helpers::Pagination`
+      # Methods needed by `Gitlab::Pagination::OffsetPagination`
       #
 
       attr_reader :request

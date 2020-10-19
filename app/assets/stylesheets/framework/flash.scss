@@ -1,42 +1,47 @@
+$notification-box-shadow-color: rgba(0, 0, 0, 0.25);
+
 .flash-container {
-  cursor: pointer;
   margin: 0;
   margin-bottom: $gl-padding;
   font-size: 14px;
   position: relative;
   z-index: 1;
 
-  .flash-notice {
-    @extend .alert;
-    @extend .alert-info;
+  &.sticky {
+    position: sticky;
+    position: -webkit-sticky;
+    top: $flash-container-top;
+    z-index: 251;
+  }
+
+  &.flash-container-page {
+    margin-bottom: 0;
+  }
+
+  &:empty {
     margin: 0;
   }
 
-  .flash-alert {
-    @extend .alert;
-    @extend .alert-danger;
-    margin: 0;
+  .close-icon-wrapper {
+    padding: ($gl-padding + $gl-padding-4) $gl-padding $gl-padding;
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    cursor: pointer;
 
-    .flash-text,
-    .flash-action {
-      display: inline-block;
-    }
-
-    a.flash-action {
-      margin-left: 5px;
-      text-decoration: none;
-      font-weight: normal;
-      border-bottom: 1px solid;
-
-      &:hover {
-        border-color: transparent;
-      }
+    .close-icon {
+      width: 16px;
+      height: 16px;
     }
   }
 
+  .flash-alert,
   .flash-notice,
-  .flash-alert {
-    border-radius: $border-radius-default;
+  .flash-success,
+  .flash-warning {
+    padding: $gl-padding $gl-padding-32 $gl-padding ($gl-padding + $gl-padding-4);
+    margin-top: 10px;
 
     .container-fluid,
     .container-fluid.container-limited {
@@ -44,24 +49,62 @@
     }
   }
 
-  &.flash-container-page {
-    margin-bottom: 0;
-
-    .flash-notice,
-    .flash-alert {
-      border-radius: 0;
-    }
+  .flash-alert {
+    background-color: $red-100;
+    color: $red-700;
   }
 
-  &:empty {
-    margin: 0;
+  .flash-notice {
+    background-color: $blue-100;
+    color: $blue-700;
+  }
+
+  .flash-success {
+    background-color: $theme-green-100;
+    color: $green-700;
+  }
+
+  .flash-warning {
+    background-color: $orange-50;
+    color: $gray-900;
+    cursor: default;
+  }
+
+  .flash-text,
+  .flash-action {
+    display: inline-block;
   }
 }
 
-@media (max-width: $screen-sm-max) {
+@include media-breakpoint-down(sm) {
   ul.notes {
     .flash-container.timeline-content {
       margin-left: 0;
     }
+  }
+}
+
+.gl-browser-ie .flash-container {
+  position: fixed;
+  max-width: $limited-layout-width;
+  left: 50%;
+
+  .flash-alert {
+    position: relative;
+    left: -50%;
+  }
+}
+
+.with-system-header .flash-container.sticky {
+  top: $flash-container-top + $system-header-height;
+}
+
+.with-performance-bar {
+  .flash-container.sticky {
+    top: $flash-container-top + $performance-bar-height;
+  }
+
+  &.with-system-header .flash-container.sticky {
+    top: $flash-container-top + $performance-bar-height + $system-header-height;
   }
 }

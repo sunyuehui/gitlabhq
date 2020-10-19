@@ -1,32 +1,35 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::FakeApplicationSettings do
-  let(:defaults) { { password_authentication_enabled: false, foobar: 'asdf', signup_enabled: true, 'test?' => 123 } }
+RSpec.describe Gitlab::FakeApplicationSettings do
+  let(:defaults) do
+    described_class.defaults.merge(
+      foobar: 'asdf',
+      'test?' => 123
+    )
+  end
 
-  subject { described_class.new(defaults) }
+  let(:setting) { described_class.new(defaults) }
 
   it 'wraps OpenStruct variables properly' do
-    expect(subject.password_authentication_enabled).to be_falsey
-    expect(subject.signup_enabled).to be_truthy
-    expect(subject.foobar).to eq('asdf')
+    expect(setting.password_authentication_enabled_for_web).to be_truthy
+    expect(setting.signup_enabled).to be_truthy
+    expect(setting.foobar).to eq('asdf')
   end
 
   it 'defines predicate methods' do
-    expect(subject.password_authentication_enabled?).to be_falsey
-    expect(subject.signup_enabled?).to be_truthy
-  end
-
-  it 'predicate method changes when value is updated' do
-    subject.password_authentication_enabled = true
-
-    expect(subject.password_authentication_enabled?).to be_truthy
+    expect(setting.password_authentication_enabled_for_web?).to be_truthy
+    expect(setting.signup_enabled?).to be_truthy
   end
 
   it 'does not define a predicate method' do
-    expect(subject.foobar?).to be_nil
+    expect(setting.foobar?).to be_nil
   end
 
   it 'does not override an existing predicate method' do
-    expect(subject.test?).to eq(123)
+    expect(setting.test?).to eq(123)
   end
+
+  it_behaves_like 'application settings examples'
 end

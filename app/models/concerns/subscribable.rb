@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # == Subscribable concern
 #
 # Users can subscribe to these models.
@@ -13,6 +15,8 @@ module Subscribable
   end
 
   def subscribed?(user, project = nil)
+    return false unless user
+
     if subscription = subscriptions.find_by(user: user, project: project)
       subscription.subscribed
     else
@@ -27,9 +31,11 @@ module Subscribable
   end
 
   def subscribers(project)
-    subscriptions_available(project)
-      .where(subscribed: true)
-      .map(&:user)
+    relation = subscriptions_available(project)
+                 .where(subscribed: true)
+                 .select(:user_id)
+
+    User.where(id: relation)
   end
 
   def toggle_subscription(user, project = nil)
@@ -51,6 +57,14 @@ module Subscribable
 
     find_or_initialize_subscription(user, project)
       .update(subscribed: false)
+  end
+
+  def set_subscription(user, desired_state, project = nil)
+    if desired_state
+      subscribe(user, project)
+    else
+      unsubscribe(user, project)
+    end
   end
 
   private

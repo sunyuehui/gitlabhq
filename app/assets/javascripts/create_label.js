@@ -1,8 +1,11 @@
-/* eslint-disable func-names, space-before-function-paren, prefer-arrow-callback, comma-dangle, prefer-template, quotes, no-param-reassign, wrap-iife, max-len */
-import Api from './api';
+/* eslint-disable func-names */
 
-class CreateLabelDropdown {
-  constructor ($el, namespacePath, projectPath) {
+import $ from 'jquery';
+import Api from './api';
+import { humanize } from './lib/utils/text_utility';
+
+export default class CreateLabelDropdown {
+  constructor($el, namespacePath, projectPath) {
     this.$el = $el;
     this.namespacePath = namespacePath;
     this.projectPath = projectPath;
@@ -11,6 +14,7 @@ class CreateLabelDropdown {
     this.$newLabelField = $('#new_label_name', this.$el);
     this.$newColorField = $('#new_label_color', this.$el);
     this.$colorPreview = $('.js-dropdown-label-color-preview', this.$el);
+    this.$addList = $('.js-add-list', this.$el);
     this.$newLabelError = $('.js-label-error', this.$el);
     this.$newLabelCreateButton = $('.js-new-label-btn', this.$el);
     this.$colorSuggestions = $('.suggest-colors-dropdown a', this.$el);
@@ -18,11 +22,13 @@ class CreateLabelDropdown {
     this.$newLabelError.hide();
     this.$newLabelCreateButton.disable();
 
+    this.addListDefault = this.$addList.is(':checked');
+
     this.cleanBinding();
     this.addBinding();
   }
 
-  cleanBinding () {
+  cleanBinding() {
     this.$colorSuggestions.off('click');
     this.$newLabelField.off('keyup change');
     this.$newColorField.off('keyup change');
@@ -31,10 +37,10 @@ class CreateLabelDropdown {
     this.$newLabelCreateButton.off('click');
   }
 
-  addBinding () {
+  addBinding() {
     const self = this;
 
-    this.$colorSuggestions.on('click', function (e) {
+    this.$colorSuggestions.on('click', function(e) {
       const $this = $(this);
       self.addColorValue(e, $this);
     });
@@ -44,7 +50,7 @@ class CreateLabelDropdown {
 
     this.$dropdownBack.on('click', this.resetForm.bind(this));
 
-    this.$cancelButton.on('click', function(e) {
+    this.$cancelButton.on('click', e => {
       e.preventDefault();
       e.stopPropagation();
 
@@ -55,7 +61,7 @@ class CreateLabelDropdown {
     this.$newLabelCreateButton.on('click', this.saveLabel.bind(this));
   }
 
-  addColorValue (e, $this) {
+  addColorValue(e, $this) {
     e.preventDefault();
     e.stopPropagation();
 
@@ -66,7 +72,7 @@ class CreateLabelDropdown {
       .addClass('is-active');
   }
 
-  enableLabelCreateButton () {
+  enableLabelCreateButton() {
     if (this.$newLabelField.val() !== '' && this.$newColorField.val() !== '') {
       this.$newLabelError.hide();
       this.$newLabelCreateButton.enable();
@@ -75,14 +81,12 @@ class CreateLabelDropdown {
     }
   }
 
-  resetForm () {
-    this.$newLabelField
-      .val('')
-      .trigger('change');
+  resetForm() {
+    this.$newLabelField.val('').trigger('change');
 
-    this.$newColorField
-      .val('')
-      .trigger('change');
+    this.$newColorField.val('').trigger('change');
+
+    this.$addList.prop('checked', this.addListDefault);
 
     this.$colorPreview
       .css('background-color', '')
@@ -90,38 +94,38 @@ class CreateLabelDropdown {
       .removeClass('is-active');
   }
 
-  saveLabel (e) {
+  saveLabel(e) {
     e.preventDefault();
     e.stopPropagation();
 
-    Api.newLabel(this.namespacePath, this.projectPath, {
-      title: this.$newLabelField.val(),
-      color: this.$newColorField.val()
-    }, (label) => {
-      this.$newLabelCreateButton.enable();
+    Api.newLabel(
+      this.namespacePath,
+      this.projectPath,
+      {
+        title: this.$newLabelField.val(),
+        color: this.$newColorField.val(),
+      },
+      label => {
+        this.$newLabelCreateButton.enable();
 
-      if (label.message) {
-        let errors;
+        if (label.message) {
+          let errors;
 
-        if (typeof label.message === 'string') {
-          errors = label.message;
+          if (typeof label.message === 'string') {
+            errors = label.message;
+          } else {
+            errors = Object.keys(label.message)
+              .map(key => `${humanize(key)} ${label.message[key].join(', ')}`)
+              .join('<br/>');
+          }
+
+          this.$newLabelError.html(errors).show();
         } else {
-          errors = Object.keys(label.message).map(key =>
-            `${gl.text.humanize(key)} ${label.message[key].join(', ')}`
-          ).join("<br/>");
+          const addNewList = this.$addList.is(':checked');
+          this.$dropdownBack.trigger('click');
+          $(document).trigger('created.label', [label, addNewList]);
         }
-
-        this.$newLabelError
-          .html(errors)
-          .show();
-      } else {
-        this.$dropdownBack.trigger('click');
-
-        $(document).trigger('created.label', label);
-      }
-    });
+      },
+    );
   }
 }
-
-window.gl = window.gl || {};
-gl.CreateLabelDropdown = CreateLabelDropdown;

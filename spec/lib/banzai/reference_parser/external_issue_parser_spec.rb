@@ -1,11 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::ReferenceParser::ExternalIssueParser do
+RSpec.describe Banzai::ReferenceParser::ExternalIssueParser do
   include ReferenceParserHelpers
 
   let(:project) { create(:project, :public) }
   let(:user) { create(:user) }
-  subject { described_class.new(project, user) }
+  subject { described_class.new(Banzai::RenderContext.new(project, user)) }
+
   let(:link) { empty_html_link }
 
   describe '#nodes_visible_to_user' do

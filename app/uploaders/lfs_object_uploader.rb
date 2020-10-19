@@ -1,19 +1,24 @@
+# frozen_string_literal: true
+
 class LfsObjectUploader < GitlabUploader
-  storage :file
+  extend Workhorse::UploadPath
+  include ObjectStorage::Concern
 
-  def store_dir
-    "#{Gitlab.config.lfs.storage_path}/#{model.oid[0, 2]}/#{model.oid[2, 2]}"
-  end
+  storage_options Gitlab.config.lfs
 
-  def cache_dir
-    "#{Gitlab.config.lfs.storage_path}/tmp/cache"
-  end
+  alias_method :upload, :model
 
   def filename
     model.oid[4..-1]
   end
 
-  def work_dir
-    File.join(Gitlab.config.lfs.storage_path, 'tmp', 'work')
+  def store_dir
+    dynamic_segment
+  end
+
+  private
+
+  def dynamic_segment
+    File.join(model.oid[0, 2], model.oid[2, 2])
   end
 end

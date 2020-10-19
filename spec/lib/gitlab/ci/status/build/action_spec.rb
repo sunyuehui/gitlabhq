@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Status::Build::Action do
+RSpec.describe Gitlab::Ci::Status::Build::Action do
   let(:status) { double('core status') }
   let(:user) { double('user') }
 
@@ -37,20 +39,30 @@ describe Gitlab::Ci::Status::Build::Action do
   describe '.matches?' do
     subject { described_class.matches?(build, user) }
 
-    context 'when build is an action' do
-      let(:build) { create(:ci_build, :manual) }
+    context 'when build is playable action' do
+      let(:build) { create(:ci_build, :playable) }
 
       it 'is a correct match' do
         expect(subject).to be true
       end
     end
 
-    context 'when build is not manual' do
-      let(:build) { create(:ci_build) }
+    context 'when build is not playable action' do
+      let(:build) { create(:ci_build, :non_playable) }
 
       it 'does not match' do
         expect(subject).to be false
       end
+    end
+  end
+
+  describe '#badge_tooltip' do
+    let(:user) { create(:user) }
+    let(:build) { create(:ci_build, :non_playable) }
+    let(:status) { Gitlab::Ci::Status::Core.new(build, user) }
+
+    it 'returns the status' do
+      expect(subject.badge_tooltip).to eq('created')
     end
   end
 end

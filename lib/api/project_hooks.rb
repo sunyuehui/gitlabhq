@@ -1,5 +1,7 @@
+# frozen_string_literal: true
+
 module API
-  class ProjectHooks < Grape::API
+  class ProjectHooks < ::API::Base
     include PaginationParams
 
     before { authenticate! }
@@ -10,21 +12,25 @@ module API
         requires :url, type: String, desc: "The URL to send the request to"
         optional :push_events, type: Boolean, desc: "Trigger hook on push events"
         optional :issues_events, type: Boolean, desc: "Trigger hook on issues events"
+        optional :confidential_issues_events, type: Boolean, desc: "Trigger hook on confidential issues events"
         optional :merge_requests_events, type: Boolean, desc: "Trigger hook on merge request events"
         optional :tag_push_events, type: Boolean, desc: "Trigger hook on tag push events"
         optional :note_events, type: Boolean, desc: "Trigger hook on note(comment) events"
+        optional :confidential_note_events, type: Boolean, desc: "Trigger hook on confidential note(comment) events"
         optional :job_events, type: Boolean, desc: "Trigger hook on job events"
         optional :pipeline_events, type: Boolean, desc: "Trigger hook on pipeline events"
         optional :wiki_page_events, type: Boolean, desc: "Trigger hook on wiki events"
+        optional :deployment_events, type: Boolean, desc: "Trigger hook on deployment events"
         optional :enable_ssl_verification, type: Boolean, desc: "Do SSL verification when triggering the hook"
         optional :token, type: String, desc: "Secret token to validate received payloads; this will not be returned in the response"
+        optional :push_events_branch_filter, type: String, desc: "Trigger hook on specified branch only"
       end
     end
 
     params do
       requires :id, type: String, desc: 'The ID of a project'
     end
-    resource :projects, requirements: { id: %r{[^/]+} } do
+    resource :projects, requirements: API::NAMESPACE_OR_PROJECT_REQUIREMENTS do
       desc 'Get project hooks' do
         success Entities::ProjectHook
       end
@@ -61,6 +67,7 @@ module API
           present hook, with: Entities::ProjectHook
         else
           error!("Invalid url given", 422) if hook.errors[:url].present?
+          error!("Invalid branch filter given", 422) if hook.errors[:push_events_branch_filter].present?
 
           not_found!("Project hook #{hook.errors.messages}")
         end
@@ -78,10 +85,11 @@ module API
 
         update_params = declared_params(include_missing: false)
 
-        if hook.update_attributes(update_params)
+        if hook.update(update_params)
           present hook, with: Entities::ProjectHook
         else
           error!("Invalid url given", 422) if hook.errors[:url].present?
+          error!("Invalid branch filter given", 422) if hook.errors[:push_events_branch_filter].present?
 
           not_found!("Project hook #{hook.errors.messages}")
         end
@@ -96,8 +104,9 @@ module API
       delete ":id/hooks/:hook_id" do
         hook = user_project.hooks.find(params.delete(:hook_id))
 
-        status 204
-        hook.destroy
+        destroy_conditionally!(hook) do
+          WebHooks::DestroyService.new(current_user).execute(hook)
+        end
       end
     end
   end

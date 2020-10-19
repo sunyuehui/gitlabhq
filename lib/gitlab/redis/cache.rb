@@ -1,12 +1,14 @@
+# frozen_string_literal: true
+
 # please require all dependencies below:
-require_relative 'wrapper' unless defined?(::Gitlab::Redis::Wrapper)
+require_relative 'wrapper' unless defined?(::Rails) && ::Rails.root.present?
 
 module Gitlab
   module Redis
     class Cache < ::Gitlab::Redis::Wrapper
-      CACHE_NAMESPACE = 'cache:gitlab'.freeze
-      DEFAULT_REDIS_CACHE_URL = 'redis://localhost:6380'.freeze
-      REDIS_CACHE_CONFIG_ENV_VAR_NAME = 'GITLAB_REDIS_CACHE_CONFIG_FILE'.freeze
+      CACHE_NAMESPACE = 'cache:gitlab'
+      DEFAULT_REDIS_CACHE_URL = 'redis://localhost:6380'
+      REDIS_CACHE_CONFIG_ENV_VAR_NAME = 'GITLAB_REDIS_CACHE_CONFIG_FILE'
 
       class << self
         def default_url
@@ -24,6 +26,10 @@ module Gitlab
 
           # this will force use of DEFAULT_REDIS_QUEUES_URL when config file is absent
           super
+        end
+
+        def instrumentation_class
+          ::Gitlab::Instrumentation::Redis::Cache
         end
       end
     end

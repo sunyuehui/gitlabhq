@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ContainerRegistry
   class Registry
     attr_reader :uri, :client, :path
@@ -11,7 +13,7 @@ module ContainerRegistry
     private
 
     def default_path
-      @uri.sub(/^https?:\/\//, '')
+      @uri.sub(%r{^https?://}, '')
     end
   end
 end

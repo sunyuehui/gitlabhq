@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe LegacyDiffDiscussion do
+RSpec.describe LegacyDiffDiscussion do
   subject { create(:legacy_diff_note_on_merge_request).to_discussion }
 
   describe '#reply_attributes' do

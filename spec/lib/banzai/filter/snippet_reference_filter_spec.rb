@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::SnippetReferenceFilter do
+RSpec.describe Banzai::Filter::SnippetReferenceFilter do
   include FilterSpecHelper
 
   let(:project)   { create(:project, :public) }
@@ -28,7 +30,7 @@ describe Banzai::Filter::SnippetReferenceFilter do
 
     it 'links with adjacent text' do
       doc = reference_filter("Snippet (#{reference}.)")
-      expect(doc.to_html).to match(/\(<a.+>#{Regexp.escape(reference)}<\/a>\.\)/)
+      expect(doc.to_html).to match(%r{\(<a.+>#{Regexp.escape(reference)}</a>\.\)})
     end
 
     it 'ignores invalid snippet IDs' do
@@ -192,13 +194,29 @@ describe Banzai::Filter::SnippetReferenceFilter do
 
     it 'links with adjacent text' do
       doc = reference_filter("See (#{reference}.)")
-      expect(doc.to_html).to match(/\(<a.+>#{Regexp.escape(snippet.to_reference(project))}<\/a>\.\)/)
+      expect(doc.to_html).to match(%r{\(<a.+>#{Regexp.escape(snippet.to_reference(project))}</a>\.\)})
     end
 
     it 'ignores invalid snippet IDs on the referenced project' do
       act = "See #{invalidate_reference(reference)}"
 
-      expect(reference_filter(act).to_html).to match(/<a.+>#{Regexp.escape(invalidate_reference(reference))}<\/a>/)
+      expect(reference_filter(act).to_html).to match(%r{<a.+>#{Regexp.escape(invalidate_reference(reference))}</a>})
+    end
+  end
+
+  context 'group context' do
+    it 'links to a valid reference' do
+      reference = "#{project.full_path}$#{snippet.id}"
+
+      result = reference_filter("See #{reference}", { project: nil, group: create(:group) } )
+
+      expect(result.css('a').first.attr('href')).to eq(urls.project_snippet_url(project, snippet))
+    end
+
+    it 'ignores internal references' do
+      exp = act = "See $#{snippet.id}"
+
+      expect(reference_filter(act, project: nil, group: create(:group)).to_html).to eq exp
     end
   end
 end

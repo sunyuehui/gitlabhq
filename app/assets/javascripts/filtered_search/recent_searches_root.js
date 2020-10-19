@@ -1,13 +1,9 @@
 import Vue from 'vue';
-import RecentSearchesDropdownContent from './components/recent_searches_dropdown_content';
+import RecentSearchesDropdownContent from './components/recent_searches_dropdown_content.vue';
 import eventHub from './event_hub';
 
 class RecentSearchesRoot {
-  constructor(
-    recentSearchesStore,
-    recentSearchesService,
-    wrapperElement,
-  ) {
+  constructor(recentSearchesStore, recentSearchesService, wrapperElement) {
     this.store = recentSearchesStore;
     this.service = recentSearchesService;
     this.wrapperElement = wrapperElement;
@@ -29,10 +25,15 @@ class RecentSearchesRoot {
   }
 
   render() {
-    const state = this.store.state;
+    const { state } = this.store;
     this.vm = new Vue({
       el: this.wrapperElement,
-      data() { return state; },
+      components: {
+        RecentSearchesDropdownContent,
+      },
+      data() {
+        return state;
+      },
       template: `
         <recent-searches-dropdown-content
           :items="recentSearches"
@@ -40,9 +41,6 @@ class RecentSearchesRoot {
           :allowed-keys="allowedKeys"
           />
       `,
-      components: {
-        'recent-searches-dropdown-content': RecentSearchesDropdownContent,
-      },
     });
   }
 
@@ -57,7 +55,6 @@ class RecentSearchesRoot {
       this.vm.$destroy();
     }
   }
-
 }
 
 export default RecentSearchesRoot;

@@ -1,29 +1,39 @@
+# frozen_string_literal: true
+
 class WebHookService
   class InternalErrorResponse
+    ERROR_MESSAGE = 'internal error'
+
     attr_reader :body, :headers, :code
 
     def initialize
-      @headers = HTTParty::Response::Headers.new({})
+      @headers = Gitlab::HTTP::Response::Headers.new({})
       @body = ''
-      @code = 'internal error'
+      @code = ERROR_MESSAGE
     end
   end
 
-  include HTTParty
+  REQUEST_BODY_SIZE_LIMIT = 25.megabytes
+  GITLAB_EVENT_HEADER = 'X-Gitlab-Event'
 
-  # HTTParty timeout
-  default_timeout Gitlab.config.gitlab.webhook_timeout
+  attr_accessor :hook, :data, :hook_name, :request_options
 
-  attr_accessor :hook, :data, :hook_name
+  def self.hook_to_event(hook_name)
+    hook_name.to_s.singularize.titleize
+  end
 
   def initialize(hook, data, hook_name)
     @hook = hook
     @data = data
-    @hook_name = hook_name
+    @hook_name = hook_name.to_s
+    @request_options = {
+      timeout: Gitlab.config.gitlab.webhook_timeout,
+      allow_local_requests: hook.allow_local_requests?
+    }
   end
 
   def execute
-    start_time = Time.now
+    start_time = Gitlab::Metrics::System.monotonic_time
 
     response = if parsed_url.userinfo.blank?
                  make_request(hook.url)
@@ -36,7 +46,7 @@ class WebHookService
       url: hook.url,
       request_data: data,
       response: response,
-      execution_duration: Time.now - start_time
+      execution_duration: Gitlab::Metrics::System.monotonic_time - start_time
     )
 
     {
@@ -44,17 +54,18 @@ class WebHookService
       http_status: response.code,
       message: response.to_s
     }
-  rescue SocketError, OpenSSL::SSL::SSLError, Errno::ECONNRESET, Errno::ECONNREFUSED, Errno::EHOSTUNREACH, Net::OpenTimeout, Net::ReadTimeout => e
+  rescue SocketError, OpenSSL::SSL::SSLError, Errno::ECONNRESET, Errno::ECONNREFUSED, Errno::EHOSTUNREACH, Net::OpenTimeout, Net::ReadTimeout, Gitlab::HTTP::BlockedUrlError, Gitlab::HTTP::RedirectionTooDeep, Gitlab::Json::LimitedEncoder::LimitExceeded => e
+    execution_duration = Gitlab::Metrics::System.monotonic_time - start_time
     log_execution(
       trigger: hook_name,
       url: hook.url,
       request_data: data,
       response: InternalErrorResponse.new,
-      execution_duration: Time.now - start_time,
+      execution_duration: execution_duration,
       error_message: e.to_s
     )
 
-    Rails.logger.error("WebHook Error => #{e}")
+    Gitlab::AppLogger.error("WebHook Error after #{execution_duration.to_i.seconds}s => #{e}")
 
     {
       status: :error,
@@ -63,7 +74,7 @@ class WebHookService
   end
 
   def async_execute
-    Sidekiq::Client.enqueue(WebHookWorker, hook.id, data, hook_name)
+    WebHookWorker.perform_async(hook.id, data, hook_name)
   end
 
   private
@@ -73,26 +84,24 @@ class WebHookService
   end
 
   def make_request(url, basic_auth = false)
-    self.class.post(url,
-      body: data.to_json,
+    Gitlab::HTTP.post(url,
+      body: Gitlab::Json::LimitedEncoder.encode(data, limit: REQUEST_BODY_SIZE_LIMIT),
       headers: build_headers(hook_name),
       verify: hook.enable_ssl_verification,
-      basic_auth: basic_auth)
+      basic_auth: basic_auth,
+      **request_options)
   end
 
   def make_request_with_auth
     post_url = hook.url.gsub("#{parsed_url.userinfo}@", '')
     basic_auth = {
       username: CGI.unescape(parsed_url.user),
-      password: CGI.unescape(parsed_url.password)
+      password: CGI.unescape(parsed_url.password.presence || '')
     }
     make_request(post_url, basic_auth)
   end
 
   def log_execution(trigger:, url:, request_data:, response:, execution_duration:, error_message: nil)
-    # logging for ServiceHook's is not available
-    return if hook.is_a?(ServiceHook)
-
     WebHookLog.create(
       web_hook: hook,
       trigger: trigger,
@@ -111,9 +120,9 @@ class WebHookService
     @headers ||= begin
       {
         'Content-Type' => 'application/json',
-        'X-Gitlab-Event' => hook_name.singularize.titleize
+        GITLAB_EVENT_HEADER => self.class.hook_to_event(hook_name)
       }.tap do |hash|
-        hash['X-Gitlab-Token'] = hook.token if hook.token.present?
+        hash['X-Gitlab-Token'] = Gitlab::Utils.remove_line_breaks(hook.token) if hook.token.present?
       end
     end
   end

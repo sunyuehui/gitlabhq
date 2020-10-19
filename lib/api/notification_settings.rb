@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 module API
   # notification_settings API
-  class NotificationSettings < Grape::API
+  class NotificationSettings < ::API::Base
     before { authenticate! }
 
     helpers ::API::Helpers::MembersHelpers
@@ -23,7 +25,7 @@ module API
       params do
         optional :level, type: String, desc: 'The global notification level'
         optional :notification_email, type: String, desc: 'The email address to send notifications'
-        NotificationSetting::EMAIL_EVENTS.each do |event|
+        NotificationSetting.email_events.each do |event|
           optional event, type: Boolean, desc: 'Enable/disable this notification'
         end
       end
@@ -35,7 +37,7 @@ module API
             new_notification_email = params.delete(:notification_email)
 
             if new_notification_email
-              ::Users::UpdateService.new(current_user, notification_email: new_notification_email).execute
+              ::Users::UpdateService.new(current_user, user: current_user, notification_email: new_notification_email).execute
             end
 
             notification_setting.update(declared_params(include_missing: false))
@@ -50,11 +52,13 @@ module API
       end
     end
 
-    %w[group project].each do |source_type|
+    [Group, Project].each do |source_class|
+      source_type = source_class.name.underscore
+
       params do
         requires :id, type: String, desc: "The #{source_type} ID"
       end
-      resource source_type.pluralize, requirements: { id: %r{[^/]+} } do
+      resource source_type.pluralize, requirements: API::NAMESPACE_OR_PROJECT_REQUIREMENTS do
         desc "Get #{source_type} level notification level settings, defaults to Global" do
           detail 'This feature was introduced in GitLab 8.12'
           success Entities::NotificationSetting
@@ -73,7 +77,7 @@ module API
         end
         params do
           optional :level, type: String, desc: "The #{source_type} notification level"
-          NotificationSetting::EMAIL_EVENTS.each do |event|
+          NotificationSetting.email_events(source_class).each do |event|
             optional event, type: Boolean, desc: 'Enable/disable this notification'
           end
         end

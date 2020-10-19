@@ -1,23 +1,29 @@
+# frozen_string_literal: true
+
 module Gitlab
   class UserAccess
     extend Gitlab::Cache::RequestCache
 
     request_cache_key do
-      [user&.id, project&.id]
+      [user&.id, container&.to_global_id]
     end
 
-    attr_reader :user, :project
+    attr_reader :user, :push_ability
+    attr_accessor :container
 
-    def initialize(user, project: nil)
+    def initialize(user, container: nil, push_ability: :push_code)
       @user = user
-      @project = project
+      @container = container
+      @push_ability = push_ability
     end
 
     def can_do_action?(action)
       return false unless can_access_git?
 
-      @permission_cache ||= {}
-      @permission_cache[action] ||= user.can?(action, project)
+      permission_cache[action] =
+        permission_cache.fetch(action) do
+          user.can?(action, container)
+        end
     end
 
     def cannot_do_action?(action)
@@ -28,7 +34,7 @@ module Gitlab
       return false unless can_access_git?
 
       if user.requires_ldap_check? && user.try_obtain_ldap_lease
-        return false unless Gitlab::LDAP::Access.allowed?(user)
+        return false unless Gitlab::Auth::Ldap::Access.allowed?(user)
       end
 
       true
@@ -37,20 +43,20 @@ module Gitlab
     request_cache def can_create_tag?(ref)
       return false unless can_access_git?
 
-      if protected?(ProtectedTag, project, ref)
+      if protected?(ProtectedTag, ref)
         protected_tag_accessible_to?(ref, action: :create)
       else
-        user.can?(:push_code, project)
+        user.can?(:admin_tag, container)
       end
     end
 
     request_cache def can_delete_branch?(ref)
       return false unless can_access_git?
 
-      if protected?(ProtectedBranch, project, ref)
-        user.can?(:delete_protected_branch, project)
+      if protected?(ProtectedBranch, ref)
+        user.can?(:push_to_delete_protected_branch, container)
       else
-        user.can?(:push_code, project)
+        can_push?
       end
     end
 
@@ -59,55 +65,80 @@ module Gitlab
     end
 
     request_cache def can_push_to_branch?(ref)
-      return false unless can_access_git?
+      return false unless can_access_git? && container && can_collaborate?(ref)
+      return true unless protected?(ProtectedBranch, ref)
 
-      if protected?(ProtectedBranch, project, ref)
-        return true if project.empty_repo? && project.user_can_push_to_empty_repo?(user)
-
-        protected_branch_accessible_to?(ref, action: :push)
-      else
-        user.can?(:push_code, project)
-      end
+      protected_branch_accessible_to?(ref, action: :push)
     end
 
     request_cache def can_merge_to_branch?(ref)
       return false unless can_access_git?
 
-      if protected?(ProtectedBranch, project, ref)
+      if protected?(ProtectedBranch, ref)
         protected_branch_accessible_to?(ref, action: :merge)
       else
-        user.can?(:push_code, project)
+        can_push?
       end
-    end
-
-    def can_read_project?
-      return false unless can_access_git?
-
-      user.can?(:read_project, project)
     end
 
     private
 
-    def can_access_git?
+    def can_push?
+      user.can?(push_ability, container)
+    end
+
+    def can_collaborate?(ref)
+      assert_project!
+
+      # Checking for an internal project or group to prevent an infinite loop:
+      # https://gitlab.com/gitlab-org/gitlab/issues/36805
+      can_push? || (!project.internal? && project.branch_allows_collaboration?(user, ref))
+    end
+
+    def permission_cache
+      @permission_cache ||= {}
+    end
+
+    request_cache def can_access_git?
       user && user.can?(:access_git)
     end
 
     def protected_branch_accessible_to?(ref, action:)
+      assert_project!
+
       ProtectedBranch.protected_ref_accessible_to?(
         ref, user,
+        project: project,
         action: action,
         protected_refs: project.protected_branches)
     end
 
     def protected_tag_accessible_to?(ref, action:)
+      assert_project!
+
       ProtectedTag.protected_ref_accessible_to?(
         ref, user,
+        project: project,
         action: action,
         protected_refs: project.protected_tags)
     end
 
-    request_cache def protected?(kind, project, ref)
-      kind.protected?(project, ref)
+    request_cache def protected?(kind, refs)
+      assert_project!
+
+      kind.protected?(project, refs)
+    end
+
+    def project
+      container
+    end
+
+    # Any method that assumes that it is operating on a project should make this
+    # explicit by calling `#assert_project!`.
+    # TODO: remove when we make this class polymorphic enough not to care about projects
+    # See: https://gitlab.com/gitlab-org/gitlab/-/issues/227635
+    def assert_project!
+      raise "No project! #{project.inspect} is not a Project" unless project.is_a?(::Project)
     end
   end
 end

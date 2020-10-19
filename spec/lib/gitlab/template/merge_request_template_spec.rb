@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Template::MergeRequestTemplate do
+RSpec.describe Gitlab::Template::MergeRequestTemplate do
   let(:project) { create(:project, :repository, create_templates: :merge_request) }
 
   describe '.all' do

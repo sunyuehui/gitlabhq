@@ -1,6 +1,6 @@
-class Cache {
+export default class Cache {
   constructor() {
-    this.internalStorage = { };
+    this.internalStorage = {};
   }
 
   get(key) {
@@ -15,5 +15,3 @@ class Cache {
     delete this.internalStorage[key];
   }
 }
-
-export default Cache;

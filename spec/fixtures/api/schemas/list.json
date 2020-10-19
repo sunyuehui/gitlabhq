@@ -17,6 +17,7 @@
       "required": [
         "id",
         "color",
+        "text_color",
         "description",
         "title",
         "priority"
@@ -29,11 +30,15 @@
         },
         "description": { "type": ["string", "null"] },
         "title": { "type": "string" },
+        "title": { "text_color": "string" },
         "priority": { "type": ["integer", "null"] }
       }
     },
     "title": { "type": "string" },
-    "position": { "type": ["integer", "null"] }
+    "position": { "type": ["integer", "null"] },
+    "max_issue_count": { "type": "integer" },
+    "max_issue_weight": { "type": "integer" },
+    "limit_metric": { "type": ["string", "null"] }
   },
-  "additionalProperties": false
+  "additionalProperties": true
 }

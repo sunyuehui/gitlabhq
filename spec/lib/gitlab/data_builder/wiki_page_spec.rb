@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::DataBuilder::WikiPage do
-  let(:project) { create(:project, :repository) }
+RSpec.describe Gitlab::DataBuilder::WikiPage do
+  let_it_be(:project) { create(:project, :repository, :wiki_repo) }
   let(:wiki_page) { create(:wiki_page, wiki: project.wiki) }
   let(:user) { create(:user) }
 

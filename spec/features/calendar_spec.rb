@@ -1,8 +1,12 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Contributions Calendar', :js do
+RSpec.describe 'Contributions Calendar', :js do
+  include MobileHelpers
+
   let(:user) { create(:user) }
-  let(:contributed_project) { create(:project, :public) }
+  let(:contributed_project) { create(:project, :public, :repository) }
   let(:issue_note) { create(:note, project: contributed_project) }
 
   # Ex/ Sunday Jan 1, 2016
@@ -12,7 +16,7 @@ feature 'Contributions Calendar', :js do
   issue_params = { title: issue_title }
 
   def get_cell_color_selector(contributions)
-    activity_colors = %w[#ededed #acd5f2 #7fa8c9 #527ba0 #254e77]
+    activity_colors = ["#ededed", "rgb(172, 213, 242)", "rgb(127, 168, 201)", "rgb(82, 123, 160)", "rgb(37, 78, 119)"]
     # We currently don't actually test the cases with contributions >= 20
     activity_colors_index =
       if contributions > 0 && contributions < 10
@@ -32,7 +36,7 @@ feature 'Contributions Calendar', :js do
 
   def get_cell_date_selector(contributions, date)
     contribution_text =
-      if contributions.zero?
+      if contributions == 0
         'No contributions'
       else
         "#{contributions} #{'contribution'.pluralize(contributions)}"
@@ -55,7 +59,7 @@ feature 'Contributions Calendar', :js do
   def note_comment_contribution
     note_comment_params = {
       project: contributed_project,
-      action: Event::COMMENTED,
+      action: :commented,
       target: issue_note,
       author_id: user.id
     }
@@ -63,8 +67,8 @@ feature 'Contributions Calendar', :js do
     Event.create(note_comment_params)
   end
 
-  def selected_day_activities
-    find('.user-calendar-activities').text
+  def selected_day_activities(visible: true)
+    find('#js-overview .user-calendar-activities', visible: visible).text
   end
 
   before do
@@ -74,15 +78,16 @@ feature 'Contributions Calendar', :js do
   describe 'calendar day selection' do
     before do
       visit user.username
+      page.find('.js-overview-tab a').click
       wait_for_requests
     end
 
     it 'displays calendar' do
-      expect(page).to have_css('.js-contrib-calendar')
+      expect(find('#js-overview')).to have_css('.js-contrib-calendar')
     end
 
     describe 'select calendar day' do
-      let(:cells) { page.all('.user-contrib-cell') }
+      let(:cells) { page.all('#js-overview .user-contrib-cell') }
 
       before do
         cells[0].click
@@ -108,34 +113,34 @@ feature 'Contributions Calendar', :js do
       describe 'deselect calendar day' do
         before do
           cells[0].click
+          page.find('.js-overview-tab a').click
           wait_for_requests
         end
 
         it 'hides calendar day activities' do
-          expect(selected_day_activities).to be_empty
+          expect(selected_day_activities(visible: false)).to be_empty
         end
       end
     end
   end
 
-  describe 'calendar daily activities' do
-    shared_context 'visit user page' do
-      before do
-        visit user.username
-        wait_for_requests
-      end
+  shared_context 'visit user page' do
+    before do
+      visit user.username
+      page.find('.js-overview-tab a').click
+      wait_for_requests
     end
+  end
 
+  describe 'calendar daily activities' do
     shared_examples 'a day with activity' do |contribution_count:|
       include_context 'visit user page'
 
-      it 'displays calendar activity square color for 1 contribution' do
-        expect(page).to have_selector(get_cell_color_selector(contribution_count), count: 1)
-      end
+      it 'displays calendar activity square for 1 contribution', :sidekiq_might_not_need_inline do
+        expect(find('#js-overview')).to have_selector(get_cell_color_selector(contribution_count), count: 1)
 
-      it 'displays calendar activity square on the correct date' do
         today = Date.today.strftime(date_format)
-        expect(page).to have_selector(get_cell_date_selector(contribution_count, today), count: 1)
+        expect(find('#js-overview')).to have_selector(get_cell_date_selector(contribution_count, today), count: 1)
       end
     end
 
@@ -149,8 +154,8 @@ feature 'Contributions Calendar', :js do
       describe 'issue title is shown on activity page' do
         include_context 'visit user page'
 
-        it 'displays calendar activity log' do
-          expect(find('.content_list .event-note')).to have_content issue_title
+        it 'displays calendar activity log', :sidekiq_might_not_need_inline do
+          expect(find('#js-overview .overview-content-list .event-target-title')).to have_content issue_title
         end
       end
     end
@@ -175,25 +180,43 @@ feature 'Contributions Calendar', :js do
       before do
         push_code_contribution
 
-        Timecop.freeze(Date.yesterday) do
+        travel_to(Date.yesterday) do
           Issues::CreateService.new(contributed_project, user, issue_params).execute
         end
       end
       include_context 'visit user page'
 
-      it 'displays calendar activity squares for both days' do
-        expect(page).to have_selector(get_cell_color_selector(1), count: 2)
+      it 'displays calendar activity squares for both days', :sidekiq_might_not_need_inline do
+        expect(find('#js-overview')).to have_selector(get_cell_color_selector(1), count: 2)
       end
 
-      it 'displays calendar activity square for yesterday' do
+      it 'displays calendar activity square for yesterday', :sidekiq_might_not_need_inline do
         yesterday = Date.yesterday.strftime(date_format)
-        expect(page).to have_selector(get_cell_date_selector(1, yesterday), count: 1)
+        expect(find('#js-overview')).to have_selector(get_cell_date_selector(1, yesterday), count: 1)
       end
 
       it 'displays calendar activity square for today' do
         today = Date.today.strftime(date_format)
-        expect(page).to have_selector(get_cell_date_selector(1, today), count: 1)
+        expect(find('#js-overview')).to have_selector(get_cell_date_selector(1, today), count: 1)
       end
+    end
+  end
+
+  describe 'on smaller screens' do
+    shared_examples 'hidden activity calendar' do
+      include_context 'visit user page'
+
+      it 'hides the activity calender' do
+        expect(find('#js-overview')).not_to have_css('.js-contrib-calendar')
+      end
+    end
+
+    context 'size xs' do
+      before do
+        resize_screen_xs
+      end
+
+      it_behaves_like 'hidden activity calendar'
     end
   end
 end

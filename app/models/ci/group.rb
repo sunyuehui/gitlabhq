@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Ci
   ##
   # This domain model is a representation of a group of jobs that are related
@@ -7,19 +9,25 @@ module Ci
   #
   class Group
     include StaticModel
+    include Gitlab::Utils::StrongMemoize
 
-    attr_reader :stage, :name, :jobs
+    attr_reader :project, :stage, :name, :jobs
 
     delegate :size, to: :jobs
 
-    def initialize(stage, name:, jobs:)
+    def initialize(project, stage, name:, jobs:)
+      @project = project
       @stage = stage
       @name = name
       @jobs = jobs
     end
 
     def status
-      @status ||= commit_statuses.status
+      strong_memoize(:status) do
+        Gitlab::Ci::Status::Composite
+          .new(@jobs)
+          .status
+      end
     end
 
     def detailed_status(current_user)
@@ -31,10 +39,12 @@ module Ci
       end
     end
 
-    private
-
-    def commit_statuses
-      @commit_statuses ||= CommitStatus.where(id: jobs.map(&:id))
+    def self.fabricate(project, stage)
+      stage.latest_statuses
+        .sort_by(&:sortable_name).group_by(&:group_name)
+        .map do |group_name, grouped_statuses|
+          self.new(project, stage, name: group_name, jobs: grouped_statuses)
+        end
     end
   end
 end

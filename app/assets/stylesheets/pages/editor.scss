@@ -3,19 +3,24 @@
     border-top: 1px solid $border-color;
     border-right: 1px solid $border-color;
     border-left: 1px solid $border-color;
-    border-bottom: none;
-    border-radius: 2px;
+    border-bottom: 0;
+    border-radius: $border-radius-small $border-radius-small 0 0;
     background: $gray-normal;
   }
 
   #editor {
-    border: none;
+    border: 0;
     border-radius: 0;
     height: 500px;
     margin: 0;
     padding: 0;
     position: relative;
     width: 100%;
+
+    .editor-loading-content {
+      height: 100%;
+      border: 0;
+    }
   }
 
   .ace_gutter-cell {
@@ -23,23 +28,19 @@
   }
 
   .cancel-btn {
-    color: $editor-cancel-color;
+    color: $red-600;
 
     &:hover {
-      color: $editor-cancel-color;
+      color: $red-600;
     }
   }
 
   .file-title {
     @extend .monospace;
-
     line-height: 35px;
     padding-top: 7px;
     padding-bottom: 7px;
-
-    .pull-right {
-      height: 20px;
-    }
+    display: flex;
   }
 
   .editor-ref {
@@ -49,31 +50,28 @@
     display: block;
     float: left;
     margin-right: 10px;
+    max-width: 250px;
   }
 
-  .editor-file-name {
-    @extend .monospace;
-
-    float: left;
-    margin-right: 10px;
-  }
-
-  .new-file-name {
+  .new-file-name,
+  .new-file-path {
     display: inline-block;
-    max-width: 450px;
+    max-width: 250px;
     float: left;
 
-    @media(max-width: $screen-md-max) {
-      width: 280px;
+    @media(max-width: map-get($grid-breakpoints, lg)-1) {
+      width: 180px;
     }
 
-    @media(max-width: $screen-sm-max) {
-      width: 180px;
+    @media (max-width: 1360px) {
+      width: auto;
     }
   }
 
   .file-buttons {
-    font-size: 0;
+    display: flex;
+    flex: 1;
+    justify-content: flex-end;
   }
 
   .select2 {
@@ -84,7 +82,7 @@
   .soft-wrap-toggle {
     display: inline-block;
     vertical-align: top;
-    font-family: $regular_font;
+    font-family: $regular-font;
   }
 
   .soft-wrap-toggle {
@@ -111,15 +109,14 @@
 }
 
 
-@media(max-width: $screen-xs-max){
+@include media-breakpoint-down(md) {
   .file-editor {
     .file-title {
-      .pull-right {
-        height: auto;
-      }
+      display: block;
     }
 
-    .new-file-name {
+    .new-file-name,
+    .new-file-path {
       max-width: none;
       width: 100%;
       margin-bottom: 3px;
@@ -143,6 +140,10 @@
           width: 100%;
         }
       }
+
+      @media(max-width: map-get($grid-breakpoints, md)-1) {
+        clear: both;
+      }
     }
   }
 }
@@ -153,47 +154,29 @@
   vertical-align: top;
   display: inline-block;
 
-  @media(max-width: $screen-sm-max) {
+  @media(max-width: map-get($grid-breakpoints, lg)-1) {
     display: block;
     margin: 19px 0 12px;
   }
 }
 
 .template-selectors-menu {
-  display: inline-block;
+  display: flex;
   vertical-align: top;
-  margin: 14px 0 0 16px;
-  padding: 0 0 0 14px;
-  border-left: 1px solid $border-color;
 
-  @media(max-width: $screen-sm-max) {
-    display: block;
+  @media(max-width: map-get($grid-breakpoints, lg)-1) {
+    display: inline-block;
     width: 100%;
-    margin: 5px 0;
     padding: 0;
-    border-left: none;
-  }
-}
-
-.templates-selectors-label {
-  display: inline-block;
-  vertical-align: top;
-  margin-top: 6px;
-  line-height: 21px;
-
-  @media(max-width: $screen-sm-max) {
-    display: block;
-    margin: 5px 0;
+    border-left: 0;
   }
 }
 
 .template-selector-dropdowns-wrap {
-  display: inline-block;
-  margin-left: 8px;
+  display: flex;
   vertical-align: top;
-  margin: 5px 0 0 8px;
 
-  @media(max-width: $screen-sm-max) {
+  @media(max-width: map-get($grid-breakpoints, lg)-1) {
     display: block;
     width: 100%;
     margin: 0 0 16px;
@@ -203,13 +186,14 @@
   .gitignore-selector,
   .gitlab-ci-yml-selector,
   .dockerfile-selector,
-  .template-type-selector {
+  .template-type-selector,
+  .metrics-dashboard-selector {
     display: inline-block;
     vertical-align: top;
     font-family: $regular_font;
-    margin-top: -5px;
+    margin: 0 8px 0 0;
 
-    @media(max-width: $screen-sm-max) {
+    @media(max-width: map-get($grid-breakpoints, lg)-1) {
       display: block;
       width: 100%;
       margin: 5px 0;
@@ -220,30 +204,26 @@
     }
 
     .dropdown-menu-toggle {
-      width: 250px;
+      width: 200px;
       vertical-align: top;
 
-      @media(max-width: $screen-sm-max) {
+      @media (max-width: map-get($grid-breakpoints, xl)-1) {
+        width: auto;
+      }
+
+      @media(max-width: map-get($grid-breakpoints, lg)-1) {
         display: block;
         width: 100%;
         margin: 5px 0;
       }
     }
-
   }
 }
 
-.template-selectors-undo-menu {
-  display: inline-block;
-  margin: 7px 0 0 10px;
+.editor-title-row {
+  margin-bottom: 20px;
+}
 
-  @media(max-width: $screen-sm-max) {
-    display: block;
-    width: 100%;
-    margin: 20px 0;
-  }
-
-  button {
-    margin: -4px 0 0 15px;
-  }
+.popover.suggest-gitlab-ci-yml {
+  z-index: $header-zindex - 1;
 }

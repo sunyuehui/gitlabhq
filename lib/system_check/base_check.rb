@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module SystemCheck
   # Base class for Checks. You must inherit from here
   # and implement the methods below when necessary
@@ -62,6 +64,21 @@ module SystemCheck
       call_or_return(@skip_reason) || 'skipped'
     end
 
+    # Define a reason why we skipped the SystemCheck (during runtime)
+    #
+    # This is used when you need dynamic evaluation like when you have
+    # multiple reasons why a check can fail
+    #
+    # @param [String] reason to be displayed
+    attr_writer :skip_reason
+
+    # Skip reason defined during runtime
+    #
+    # This value have precedence over the one defined in the subclass
+    #
+    # @return [String] the reason
+    attr_reader :skip_reason
+
     # Does the check support automatically repair routine?
     #
     # @return [Boolean] whether check implemented `#repair!` method or not
@@ -73,7 +90,7 @@ module SystemCheck
       self.class.instance_methods(false).include?(:skip?)
     end
 
-    def is_multi_check?
+    def multi_check?
       self.class.instance_methods(false).include?(:multi_check)
     end
 
@@ -104,7 +121,7 @@ module SystemCheck
     #
     # @see #try_fixing_it
     # @see #fix_and_rerun
-    # @see #for_more_infromation
+    # @see #for_more_information
     def show_error
       raise NotImplementedError
     end

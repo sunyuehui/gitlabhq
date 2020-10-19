@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ChatMessage
   class WikiPageMessage < BaseMessage
     attr_reader :title
@@ -12,7 +14,7 @@ module ChatMessage
       obj_attr = HashWithIndifferentAccess.new(obj_attr)
       @title = obj_attr[:title]
       @wiki_page_url = obj_attr[:url]
-      @description = obj_attr[:content]
+      @description = obj_attr[:message]
 
       @action =
         case obj_attr[:action]
@@ -31,7 +33,7 @@ module ChatMessage
 
     def activity
       {
-        title: "#{user_name} #{action} #{wiki_page_link}",
+        title: "#{user_combined_name} #{action} #{wiki_page_link}",
         subtitle: "in #{project_link}",
         text: title,
         image: user_avatar
@@ -41,7 +43,7 @@ module ChatMessage
     private
 
     def message
-      "#{user_name} #{action} #{wiki_page_link} in #{project_link}: *#{title}*"
+      "#{user_combined_name} #{action} #{wiki_page_link} in #{project_link}: *#{title}*"
     end
 
     def description_message

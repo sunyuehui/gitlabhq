@@ -1,3 +1,5 @@
+import $ from 'jquery';
+
 const defaults = {
   // Buttons that will show the `suggestionSections`
   // has `data-fork-path`, and `data-action`
@@ -15,7 +17,7 @@ const defaults = {
 
 class BlobForkSuggestion {
   constructor(options) {
-    this.elementMap = Object.assign({}, defaults, options);
+    this.elementMap = { ...defaults, ...options };
     this.onOpenButtonClick = this.onOpenButtonClick.bind(this);
     this.onCancelButtonClick = this.onCancelButtonClick.bind(this);
   }

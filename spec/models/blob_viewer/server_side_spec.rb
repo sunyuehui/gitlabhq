@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe BlobViewer::ServerSide do
+RSpec.describe BlobViewer::ServerSide do
   include FakeBlobHelpers
 
   let(:project) { build(:project) }

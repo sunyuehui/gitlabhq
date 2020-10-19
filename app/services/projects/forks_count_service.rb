@@ -1,30 +1,18 @@
+# frozen_string_literal: true
+
 module Projects
   # Service class for getting and caching the number of forks of a project.
-  class ForksCountService
-    def initialize(project)
-      @project = project
+  class ForksCountService < Projects::CountService
+    attr_reader :project
+
+    def cache_key_name
+      'forks_count'
     end
 
-    def count
-      Rails.cache.fetch(cache_key) { uncached_count }
+    # rubocop: disable CodeReuse/ActiveRecord
+    def self.query(project_ids)
+      ForkNetworkMember.where(forked_from_project: project_ids)
     end
-
-    def refresh_cache
-      Rails.cache.write(cache_key, uncached_count)
-    end
-
-    def delete_cache
-      Rails.cache.delete(cache_key)
-    end
-
-    private
-
-    def uncached_count
-      @project.forks.count
-    end
-
-    def cache_key
-      ['projects', @project.id, 'forks_count']
-    end
+    # rubocop: enable CodeReuse/ActiveRecord
   end
 end

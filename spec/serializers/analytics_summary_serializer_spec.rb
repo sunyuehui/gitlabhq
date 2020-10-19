@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe AnalyticsSummarySerializer do
+RSpec.describe AnalyticsSummarySerializer do
   subject do
     described_class.new.represent(resource)
   end
@@ -14,15 +16,33 @@ describe AnalyticsSummarySerializer do
   end
 
   before do
-    allow_any_instance_of(Gitlab::CycleAnalytics::Summary::Issue)
-      .to receive(:value).and_return(1.12)
+    allow_next_instance_of(Gitlab::CycleAnalytics::Summary::Issue) do |instance|
+      allow(instance).to receive(:value).and_return(1.12)
+    end
   end
 
-  it 'it generates payload for single object' do
+  it 'generates payload for single object' do
     expect(subject).to be_kind_of Hash
   end
 
   it 'contains important elements of AnalyticsStage' do
     expect(subject).to include(:title, :value)
+  end
+
+  it 'does not include unit' do
+    expect(subject).not_to include(:unit)
+  end
+
+  context 'when representing with unit' do
+    let(:resource) do
+      Gitlab::CycleAnalytics::Summary::DeploymentFrequency
+        .new(deployments: 10, from: 1.day.ago)
+    end
+
+    subject { described_class.new.represent(resource, with_unit: true) }
+
+    it 'contains unit' do
+      expect(subject).to include(:unit)
+    end
   end
 end

@@ -1,8 +1,27 @@
+# frozen_string_literal: true
+
 class UsersController < ApplicationController
   include RoutableActions
+  include RendersMemberAccess
+  include RendersProjectsList
+  include ControllerWithCrossProjectAccessCheck
+  include Gitlab::NoteableMetadata
+
+  requires_cross_project_access show: false,
+                                groups: false,
+                                projects: false,
+                                contributed: false,
+                                snippets: true,
+                                calendar: false,
+                                calendar_activities: true
 
   skip_before_action :authenticate_user!
-  before_action :user, except: [:exists]
+  prepend_before_action(only: [:show]) { authenticate_sessionless_user!(:rss) }
+  before_action :user, except: [:exists, :suggests]
+  before_action :authorize_read_user_profile!,
+                only: [:calendar, :calendar_activities, :groups, :projects, :contributed_projects, :starred_projects, :snippets]
+
+  feature_category :users
 
   def show
     respond_to do |format|
@@ -15,8 +34,14 @@ class UsersController < ApplicationController
 
       format.json do
         load_events
-        pager_json("events/_events", @events.count)
+        pager_json("events/_events", @events.count, events: @events)
       end
+    end
+  end
+
+  def activity
+    respond_to do |format|
+      format.html { render 'show' }
     end
   end
 
@@ -36,25 +61,30 @@ class UsersController < ApplicationController
   def projects
     load_projects
 
-    respond_to do |format|
-      format.html { render 'show' }
-      format.json do
-        render json: {
-          html: view_to_html_string("shared/projects/_list", projects: @projects)
-        }
-      end
-    end
+    present_projects(@projects)
   end
 
   def contributed
     load_contributed_projects
 
+    present_projects(@contributed_projects)
+  end
+
+  def starred
+    load_starred_projects
+
+    present_projects(@starred_projects)
+  end
+
+  def present_projects(projects)
+    skip_pagination = Gitlab::Utils.to_boolean(params[:skip_pagination])
+    skip_namespace = Gitlab::Utils.to_boolean(params[:skip_namespace])
+    compact_mode = Gitlab::Utils.to_boolean(params[:compact_mode])
+
     respond_to do |format|
       format.html { render 'show' }
       format.json do
-        render json: {
-          html: view_to_html_string("shared/projects/_list", projects: @contributed_projects)
-        }
+        pager_json("shared/projects/_list", projects.count, projects: projects, skip_pagination: skip_pagination, skip_namespace: skip_namespace, compact_mode: compact_mode)
       end
     end
   end
@@ -78,7 +108,7 @@ class UsersController < ApplicationController
 
   def calendar_activities
     @calendar_date = Date.parse(params[:date]) rescue Date.today
-    @events = contributions_calendar.events_by_date(@calendar_date)
+    @events = contributions_calendar.events_by_date(@calendar_date).map(&:present)
 
     render 'calendar_activities', layout: false
   end
@@ -87,14 +117,30 @@ class UsersController < ApplicationController
     render json: { exists: !!Namespace.find_by_path_or_name(params[:username]) }
   end
 
+  def suggests
+    namespace_path = params[:username]
+    exists = !!Namespace.find_by_path_or_name(namespace_path)
+    suggestions = exists ? [Namespace.clean_path(namespace_path)] : []
+
+    render json: { exists: exists, suggests: suggestions }
+  end
+
   private
 
   def user
     @user ||= find_routable!(User, params[:username])
   end
 
+  def personal_projects
+    PersonalProjectsFinder.new(user).execute(current_user)
+  end
+
   def contributed_projects
     ContributedProjectsFinder.new(user).execute(current_user)
+  end
+
+  def starred_projects
+    StarredProjectsFinder.new(user, current_user: current_user).execute
   end
 
   def contributions_calendar
@@ -102,41 +148,53 @@ class UsersController < ApplicationController
   end
 
   def load_events
-    # Get user activity feed for projects common for both users
-    @events = user.recent_events
-      .merge(projects_for_current_user)
-      .references(:project)
-      .with_associations
-      .limit_recent(20, params[:offset])
+    @events = UserRecentEventsFinder.new(current_user, user, params).execute
+
+    Events::RenderService.new(current_user).execute(@events, atom_request: request.format.atom?)
   end
 
   def load_projects
-    @projects =
-      PersonalProjectsFinder.new(user).execute(current_user)
+    @projects = personal_projects
       .page(params[:page])
+      .per(params[:limit])
+
+    prepare_projects_for_rendering(@projects)
   end
 
   def load_contributed_projects
     @contributed_projects = contributed_projects.joined(user)
+
+    prepare_projects_for_rendering(@contributed_projects)
+  end
+
+  def load_starred_projects
+    @starred_projects = starred_projects
+
+    prepare_projects_for_rendering(@starred_projects)
   end
 
   def load_groups
     @groups = JoinedGroupsFinder.new(user).execute(current_user)
+
+    prepare_groups_for_rendering(@groups)
   end
 
   def load_snippets
-    @snippets = SnippetsFinder.new(
-      current_user,
-      author: user,
-      scope: params[:scope]
-    ).execute.page(params[:page])
-  end
+    @snippets = SnippetsFinder.new(current_user, author: user, scope: params[:scope])
+      .execute
+      .page(params[:page])
+      .inc_author
 
-  def projects_for_current_user
-    ProjectsFinder.new(current_user: current_user).execute
+    @noteable_meta_data = noteable_meta_data(@snippets, 'Snippet')
   end
 
   def build_canonical_path(user)
-    url_for(params.merge(username: user.to_param))
+    url_for(safe_params.merge(username: user.to_param))
+  end
+
+  def authorize_read_user_profile!
+    access_denied! unless can?(current_user, :read_user_profile, user)
   end
 end
+
+UsersController.prepend_if_ee('EE::UsersController')

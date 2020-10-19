@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::GitlabImport::Importer do
+RSpec.describe Gitlab::GitlabImport::Importer do
   include ImportSpecHelper
 
   describe '#execute' do
@@ -20,7 +22,7 @@ describe Gitlab::GitlabImport::Importer do
           }
         }
       ])
-      stub_request('issues/2579857/notes', [])
+      stub_request('issues/3/notes', [])
     end
 
     it 'persists issues' do
@@ -43,7 +45,7 @@ describe Gitlab::GitlabImport::Importer do
     end
 
     def stub_request(path, body)
-      url = "https://gitlab.com/api/v3/projects/asd%2Fvim/#{path}?page=1&per_page=100"
+      url = "https://gitlab.com/api/v4/projects/asd%2Fvim/#{path}?page=1&per_page=100"
 
       WebMock.stub_request(:get, url)
         .to_return(

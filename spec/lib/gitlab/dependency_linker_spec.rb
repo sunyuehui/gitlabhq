@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker do
   describe '.link' do
     it 'links using GemfileLinker' do
       blob_name = 'Gemfile'
@@ -78,6 +80,30 @@ describe Gitlab::DependencyLinker do
       blob_name = 'requirements.txt'
 
       expect(described_class::RequirementsTxtLinker).to receive(:link)
+
+      described_class.link(blob_name, nil, nil)
+    end
+
+    it 'links using CargoTomlLinker' do
+      blob_name = 'Cargo.toml'
+
+      expect(described_class::CargoTomlLinker).to receive(:link)
+
+      described_class.link(blob_name, nil, nil)
+    end
+
+    it 'links using GoModLinker' do
+      blob_name = 'go.mod'
+
+      expect(described_class::GoModLinker).to receive(:link)
+
+      described_class.link(blob_name, nil, nil)
+    end
+
+    it 'links using GoSumLinker' do
+      blob_name = 'go.sum'
+
+      expect(described_class::GoSumLinker).to receive(:link)
 
       described_class.link(blob_name, nil, nil)
     end

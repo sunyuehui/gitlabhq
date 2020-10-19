@@ -1,23 +1,31 @@
 <script>
-/* global Flash */
-import editForm from './edit_form.vue';
+import { mapState } from 'vuex';
+import { GlIcon, GlTooltipDirective } from '@gitlab/ui';
+import { __, sprintf } from '~/locale';
+import eventHub from '~/sidebar/event_hub';
+import EditForm from './edit_form.vue';
 
 export default {
   components: {
-    editForm,
+    EditForm,
+    GlIcon,
+  },
+  directives: {
+    GlTooltip: GlTooltipDirective,
   },
   props: {
-    isConfidential: {
+    fullPath: {
       required: true,
-      type: Boolean,
+      type: String,
     },
     isEditable: {
       required: true,
       type: Boolean,
     },
-    service: {
-      required: true,
-      type: Object,
+    issuableType: {
+      required: false,
+      type: String,
+      default: 'issue',
     },
   },
   data() {
@@ -26,56 +34,84 @@ export default {
     };
   },
   computed: {
-    faEye() {
-      const eye = this.isConfidential ? 'fa-eye-slash' : 'fa-eye';
-      return {
-        [eye]: true,
-      };
+    ...mapState({
+      confidential: ({ noteableData, confidential }) => {
+        if (noteableData) {
+          return noteableData.confidential;
+        }
+        return Boolean(confidential);
+      },
+    }),
+    confidentialityIcon() {
+      return this.confidential ? 'eye-slash' : 'eye';
     },
+    tooltipLabel() {
+      return this.confidential ? __('Confidential') : __('Not confidential');
+    },
+    confidentialText() {
+      return sprintf(__('This %{issuableType} is confidential'), {
+        issuableType: this.issuableType,
+      });
+    },
+  },
+  created() {
+    eventHub.$on('closeConfidentialityForm', this.toggleForm);
+  },
+  beforeDestroy() {
+    eventHub.$off('closeConfidentialityForm', this.toggleForm);
   },
   methods: {
     toggleForm() {
       this.edit = !this.edit;
-    },
-    updateConfidentialAttribute(confidential) {
-      this.service.update('issue', { confidential })
-        .then(() => location.reload())
-        .catch(() => new Flash('Something went wrong trying to change the confidentiality of this issue'));
     },
   },
 };
 </script>
 
 <template>
-  <div class="block confidentiality">
-    <div class="sidebar-collapsed-icon">
-      <i class="fa" :class="faEye" aria-hidden="true" data-hidden="true"></i>
+  <div class="block issuable-sidebar-item confidentiality">
+    <div
+      ref="collapseIcon"
+      v-gl-tooltip.viewport.left
+      :title="tooltipLabel"
+      class="sidebar-collapsed-icon"
+      @click="toggleForm"
+    >
+      <gl-icon :name="confidentialityIcon" aria-hidden="true" />
     </div>
     <div class="title hide-collapsed">
-      Confidentiality
+      {{ __('Confidentiality') }}
       <a
         v-if="isEditable"
-        class="pull-right confidential-edit"
+        ref="editLink"
+        class="float-right confidential-edit"
         href="#"
+        data-track-event="click_edit_button"
+        data-track-label="right_sidebar"
+        data-track-property="confidentiality"
         @click.prevent="toggleForm"
+        >{{ __('Edit') }}</a
       >
-        Edit
-      </a>
     </div>
-    <div class="value confidential-value hide-collapsed">
-      <editForm
+    <div class="value sidebar-item-value hide-collapsed">
+      <edit-form
         v-if="edit"
-        :toggle-form="toggleForm"
-        :is-confidential="isConfidential"
-        :update-confidential-attribute="updateConfidentialAttribute"
+        :confidential="confidential"
+        :full-path="fullPath"
+        :issuable-type="issuableType"
       />
-      <div v-if="!isConfidential" class="no-value confidential-value">
-        <i class="fa fa-eye is-not-confidential"></i>
-        Not confidential
+      <div v-if="!confidential" class="no-value sidebar-item-value" data-testid="not-confidential">
+        <gl-icon :size="16" name="eye" aria-hidden="true" class="sidebar-item-icon inline" />
+        {{ __('Not confidential') }}
       </div>
-      <div v-else class="value confidential-value hide-collapsed">
-        <i aria-hidden="true" data-hidden="true" class="fa fa-eye-slash is-confidential"></i>
-        This issue is confidential
+      <div v-else class="value sidebar-item-value hide-collapsed">
+        <gl-icon
+          :size="16"
+          name="eye-slash"
+          aria-hidden="true"
+          class="sidebar-item-icon inline is-active"
+        />
+        {{ confidentialText }}
       </div>
     </div>
   </div>

@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe 'New/edit issue', :js do
+require 'spec_helper'
+
+RSpec.describe 'New/edit issue', :js do
   include ActionView::Helpers::JavaScriptHelper
   include FormHelper
 
@@ -13,8 +15,10 @@ describe 'New/edit issue', :js do
   let!(:issue)     { create(:issue, project: project, assignees: [user], milestone: milestone) }
 
   before do
-    project.team << [user, :master]
-    project.team << [user2, :master]
+    stub_licensed_features(multiple_issue_assignees: false, issue_weights: false)
+
+    project.add_maintainer(user)
+    project.add_maintainer(user2)
     sign_in(user)
   end
 
@@ -27,11 +31,11 @@ describe 'New/edit issue', :js do
       before do
         # Using `allow_any_instance_of`/`and_wrap_original`, `original` would
         # somehow refer to the very block we defined to _wrap_ that method, instead of
-        # the original method, resulting in infinite recurison when called.
+        # the original method, resulting in infinite recursion when called.
         # This is likely a bug with helper modules included into dynamically generated view classes.
         # To work around this, we have to hold on to and call to the original implementation manually.
-        original_issue_dropdown_options = FormHelper.instance_method(:issue_assignees_dropdown_options)
-        allow_any_instance_of(FormHelper).to receive(:issue_assignees_dropdown_options).and_wrap_original do |original, *args|
+        original_issue_dropdown_options = FormHelper.instance_method(:assignees_dropdown_options)
+        allow_any_instance_of(FormHelper).to receive(:assignees_dropdown_options).and_wrap_original do |original, *args|
           options = original_issue_dropdown_options.bind(original.receiver).call(*args)
           options[:data][:per_page] = 2
 
@@ -45,7 +49,7 @@ describe 'New/edit issue', :js do
         wait_for_requests
       end
 
-      it 'should display selected users even if they are not part of the original API call' do
+      it 'displays selected users even if they are not part of the original API call' do
         find('.dropdown-input-field').native.send_keys user2.name
 
         page.within '.dropdown-menu-user' do
@@ -143,6 +147,9 @@ describe 'New/edit issue', :js do
         click_link label.title
         click_link label2.title
       end
+
+      find('.js-issuable-form-dropdown.js-label-select').click
+
       page.within '.js-label-select' do
         expect(page).to have_content label.title
       end
@@ -166,12 +173,10 @@ describe 'New/edit issue', :js do
         end
       end
 
-      page.within '.issuable-meta' do
+      page.within '.breadcrumbs' do
         issue = Issue.find_by(title: 'title')
 
-        expect(page).to have_text("Issue #{issue.to_reference}")
-        # compare paths because the host differ in test
-        expect(find_link(issue.to_reference)[:href]).to end_with(issue_path(issue))
+        expect(page).to have_text("Issues #{issue.to_reference}")
       end
     end
 
@@ -189,6 +194,18 @@ describe 'New/edit issue', :js do
       end
 
       expect(find('.js-label-select')).to have_content('Labels')
+    end
+
+    it 'clears label search input field when a label is selected' do
+      click_button 'Labels'
+
+      page.within '.dropdown-menu-labels' do
+        search_field = find('input[type="search"]')
+
+        search_field.set(label2.title)
+        click_link label2.title
+        expect(search_field.value).to eq ''
+      end
     end
 
     it 'correctly updates the selected user when changing assignee' do
@@ -215,6 +232,23 @@ describe 'New/edit issue', :js do
       fill_in 'issue_description', with: '@'
 
       expect(page).to have_selector('.atwho-view')
+    end
+
+    describe 'milestone' do
+      let!(:milestone) { create(:milestone, title: '">&lt;img src=x onerror=alert(document.domain)&gt;', project: project) }
+
+      it 'escapes milestone' do
+        click_button 'Milestone'
+
+        page.within '.issue-milestone' do
+          click_link milestone.title
+        end
+
+        page.within '.js-milestone-select' do
+          expect(page).to have_content milestone.title
+          expect(page).not_to have_selector 'img'
+        end
+      end
     end
   end
 
@@ -273,21 +307,33 @@ describe 'New/edit issue', :js do
     end
   end
 
+  context 'inline edit' do
+    before do
+      visit project_issue_path(project, issue)
+    end
+
+    it 'opens inline edit form with shortcut' do
+      find('body').send_keys('e')
+
+      expect(page).to have_selector('.detail-page-description form')
+    end
+  end
+
   describe 'sub-group project' do
     let(:group) { create(:group) }
     let(:nested_group_1) { create(:group, parent: group) }
     let(:sub_group_project) { create(:project, group: nested_group_1) }
 
     before do
-      sub_group_project.add_master(user)
+      sub_group_project.add_maintainer(user)
 
       visit new_project_issue_path(sub_group_project)
     end
 
-    it 'creates new label from dropdown' do
+    it 'creates project label from dropdown' do
       click_button 'Labels'
 
-      click_link 'Create new label'
+      click_link 'Create project label'
 
       page.within '.dropdown-new-label' do
         fill_in 'new_label_name', with: 'test label'

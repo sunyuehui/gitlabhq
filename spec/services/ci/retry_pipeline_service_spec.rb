@@ -1,6 +1,10 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Ci::RetryPipelineService, '#execute' do
+RSpec.describe Ci::RetryPipelineService, '#execute' do
+  include ProjectForksHelper
+
   let(:user) { create(:user) }
   let(:project) { create(:project) }
   let(:pipeline) { create(:ci_pipeline, project: project) }
@@ -83,7 +87,41 @@ describe Ci::RetryPipelineService, '#execute' do
       it 'creates a new job for report job in this case' do
         service.execute(pipeline)
 
-        expect(statuses.where(name: 'report 1').first).to be_retried
+        expect(statuses.find_by(name: 'report 1', status: 'failed')).to be_retried
+      end
+    end
+
+    context 'when there is a failed test in a DAG' do
+      before do
+        create_build('build', :success, 0)
+        create_build('build2', :success, 0)
+        test_build = create_build('test', :failed, 1, scheduling_type: :dag)
+        create(:ci_build_need, build: test_build, name: 'build')
+        create(:ci_build_need, build: test_build, name: 'build2')
+      end
+
+      it 'retries the test' do
+        service.execute(pipeline)
+
+        expect(build('build')).to be_success
+        expect(build('build2')).to be_success
+        expect(build('test')).to be_pending
+        expect(build('test').needs.map(&:name)).to match_array(%w(build build2))
+      end
+
+      context 'when there is a failed DAG test without needs' do
+        before do
+          create_build('deploy', :failed, 2, scheduling_type: :dag)
+        end
+
+        it 'retries the test' do
+          service.execute(pipeline)
+
+          expect(build('build')).to be_success
+          expect(build('build2')).to be_success
+          expect(build('test')).to be_pending
+          expect(build('deploy')).to be_pending
+        end
       end
     end
 
@@ -219,9 +257,42 @@ describe Ci::RetryPipelineService, '#execute' do
     end
 
     it 'reprocesses the pipeline' do
-      expect(pipeline).to receive(:process!)
+      expect_any_instance_of(Ci::ProcessPipelineService).to receive(:execute)
 
       service.execute(pipeline)
+    end
+
+    context 'when pipeline has processables with nil scheduling_type' do
+      let!(:build1) { create_build('build1', :success, 0) }
+      let!(:build2) { create_build('build2', :failed, 0) }
+      let!(:build3) { create_build('build3', :failed, 1) }
+      let!(:build3_needs_build1) { create(:ci_build_need, build: build3, name: build1.name) }
+
+      before do
+        statuses.update_all(scheduling_type: nil)
+      end
+
+      it 'populates scheduling_type of processables' do
+        service.execute(pipeline)
+
+        expect(build1.reload.scheduling_type).to eq('stage')
+        expect(build2.reload.scheduling_type).to eq('stage')
+        expect(build3.reload.scheduling_type).to eq('dag')
+      end
+    end
+
+    context 'when the pipeline is a downstream pipeline and the bridge is depended' do
+      let!(:bridge) { create(:ci_bridge, :strategy_depend, status: 'success') }
+
+      before do
+        create(:ci_sources_pipeline, pipeline: pipeline, source_job: bridge)
+      end
+
+      it 'marks source bridge as pending' do
+        service.execute(pipeline)
+
+        expect(bridge.reload).to be_pending
+      end
     end
   end
 
@@ -235,6 +306,8 @@ describe Ci::RetryPipelineService, '#execute' do
   context 'when user is not allowed to trigger manual action' do
     before do
       project.add_developer(user)
+      create(:protected_branch, :maintainers_can_push,
+             name: pipeline.ref, project: project)
     end
 
     context 'when there is a failed manual action present' do
@@ -264,6 +337,33 @@ describe Ci::RetryPipelineService, '#execute' do
     end
   end
 
+  context 'when maintainer is allowed to push to forked project' do
+    let(:user) { create(:user) }
+    let(:project) { create(:project, :public) }
+    let(:forked_project) { fork_project(project) }
+    let(:pipeline) { create(:ci_pipeline, project: forked_project, ref: 'fixes') }
+
+    before do
+      project.add_maintainer(user)
+      create(:merge_request,
+        source_project: forked_project,
+        target_project: project,
+        source_branch: 'fixes',
+        allow_collaboration: true)
+      create_build('rspec 1', :failed, 1)
+    end
+
+    it 'allows to retry failed pipeline' do
+      allow_any_instance_of(Project).to receive(:branch_allows_collaboration?).and_return(true)
+      allow_any_instance_of(Project).to receive(:empty_repo?).and_return(false)
+
+      service.execute(pipeline)
+
+      expect(build('rspec 1')).to be_pending
+      expect(pipeline.reload).to be_running
+    end
+  end
+
   def statuses
     pipeline.reload.statuses
   end
@@ -278,7 +378,7 @@ describe Ci::RetryPipelineService, '#execute' do
                       stage: "stage_#{stage_num}",
                       stage_idx: stage_num,
                       pipeline: pipeline, **opts) do |build|
-      pipeline.update_status
+      ::Ci::ProcessPipelineService.new(pipeline).execute
     end
   end
 end

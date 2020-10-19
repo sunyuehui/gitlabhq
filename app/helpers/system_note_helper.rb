@@ -1,29 +1,60 @@
+# frozen_string_literal: true
+
 module SystemNoteHelper
   ICON_NAMES_BY_ACTION = {
-    'commit' => 'icon_commit',
-    'description' => 'icon_edit',
-    'merge' => 'icon_merge',
-    'merged' => 'icon_merged',
-    'opened' => 'icon_status_open',
-    'closed' => 'icon_status_closed',
-    'time_tracking' => 'icon_stopwatch',
-    'assignee' => 'icon_user',
-    'title' => 'icon_edit',
-    'task' => 'icon_check_square_o',
-    'label' => 'icon_tags',
-    'cross_reference' => 'icon_random',
-    'branch' => 'icon_code_fork',
-    'confidential' => 'icon_eye_slash',
-    'visible' => 'icon_eye',
-    'milestone' => 'icon_clock_o',
-    'discussion' => 'icon_comment_o',
-    'moved' => 'icon_arrow_circle_o_right',
-    'outdated' => 'icon_edit',
-    'duplicate' => 'icon_clone'
+    'approved' => 'approval',
+    'unapproved' => 'unapproval',
+    'cherry_pick' => 'cherry-pick-commit',
+    'commit' => 'commit',
+    'description' => 'pencil-square',
+    'merge' => 'git-merge',
+    'merged' => 'git-merge',
+    'opened' => 'issues',
+    'closed' => 'issue-close',
+    'time_tracking' => 'timer',
+    'assignee' => 'user',
+    'reviewer' => 'user',
+    'title' => 'pencil-square',
+    'task' => 'task-done',
+    'label' => 'label',
+    'cross_reference' => 'comment-dots',
+    'branch' => 'fork',
+    'confidential' => 'eye-slash',
+    'visible' => 'eye',
+    'milestone' => 'clock',
+    'discussion' => 'comment',
+    'moved' => 'arrow-right',
+    'outdated' => 'pencil-square',
+    'pinned_embed' => 'thumbtack',
+    'duplicate' => 'duplicate',
+    'locked' => 'lock',
+    'unlocked' => 'lock-open',
+    'due_date' => 'calendar',
+    'health_status' => 'status-health',
+    'designs_added' => 'doc-image',
+    'designs_modified' => 'doc-image',
+    'designs_removed' => 'doc-image',
+    'designs_discussion_added' => 'doc-image',
+    'status' => 'status',
+    'alert_issue_added' => 'issues',
+    'new_alert_added' => 'warning',
+    'severity' => 'information-o'
   }.freeze
 
-  def icon_for_system_note(note)
-    icon_name = ICON_NAMES_BY_ACTION[note.system_note_metadata&.action]
-    custom_icon(icon_name) if icon_name
+  def system_note_icon_name(note)
+    ICON_NAMES_BY_ACTION[note.system_note_metadata&.action]
   end
+
+  def icon_for_system_note(note)
+    icon_name = system_note_icon_name(note)
+    sprite_icon(icon_name) if icon_name
+  end
+
+  extend self
 end
+
+SystemNoteHelper.prepend_if_ee('EE::SystemNoteHelper')
+
+# The methods in `EE::SystemNoteHelper` should be available as both instance and
+# class methods.
+SystemNoteHelper.extend_if_ee('EE::SystemNoteHelper')

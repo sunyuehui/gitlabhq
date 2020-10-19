@@ -1,54 +1,18 @@
-- page_title "Fork project"
+- page_title _("Fork project")
 
-.row.prepend-top-default
+.row.gl-mt-3
   .col-lg-3
-    %h4.prepend-top-0
-      Fork project
+    %h4.gl-mt-0
+      = _("Fork project")
     %p
-      A fork is a copy of a project.
+      = _("A fork is a copy of a project.")
       %br
-      Forking a repository allows you to make changes without affecting the original project.
+      = _('Forking a repository allows you to make changes without affecting the original project.')
   .col-lg-9
-    .fork-namespaces
-      - if @namespaces.present?
-        %label.label-light
-          %span
-            Click to fork the project to a user or group
-          - @namespaces.in_groups_of(6, false) do |group|
-            .row
-              - group.each do |namespace|
-                - avatar = namespace_icon(namespace, 100)
-                - if fork = namespace.find_fork_of(@project)
-                  .fork-thumbnail.forked
-                    = link_to project_path(fork) do
-                      - if /no_((\w*)_)*avatar/.match(avatar)
-                        .no-avatar
-                          = icon 'question'
-                      - else
-                        = image_tag avatar
-                      .caption
-                        = namespace.human_name
-                - else
-                  .fork-thumbnail
-                    = link_to project_forks_path(@project, namespace_key: namespace.id), method: "POST" do
-                      - if /no_((\w*)_)*avatar/.match(avatar)
-                        .no-avatar
-                          = icon 'question'
-                      - else
-                        = image_tag avatar
-                      .caption
-                        = namespace.human_name
-      - else
-        %label.label-light
-          %span
-            No available namespaces to fork the project.
-            %br
-            %small
-              You must have permission to create a project in a namespace before forking.
+    - if @own_namespace.present?
+      .fork-thumbnail-container.js-fork-content
+        %h5.gl-mt-0.gl-mb-0.gl-ml-3.gl-mr-3
+          = _("Select a namespace to fork the project")
+        = render 'fork_button', namespace: @own_namespace
+    #fork-groups-mount-element{ data: { endpoint: new_project_fork_path(@project, format: :json), can_create_project: current_user.can_create_project?.to_s } }
 
-    .save-project-loader.hide
-      .center
-        %h2
-          %i.fa.fa-spinner.fa-spin
-          Forking repository
-        %p Please wait a moment, this page will automatically refresh when ready.

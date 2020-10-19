@@ -6,13 +6,12 @@
 
 Add the `InputSetter` object to the plugins array of a `DropLab.prototype.init` or `DropLab.prototype.addHook` call.
 
-* `InputSetter` requires a config value for `input` and `valueAttribute`.
-* `input` should be the DOM element that you want to manipulate.
-* `valueAttribute` should be a string that is the name of an attribute on your list items that is used to get the value
-to update the `input` element with.
+- `InputSetter` requires a configuration value for `input` and `valueAttribute`.
+- `input` should be the DOM element that you want to manipulate.
+- `valueAttribute` should be a string that is the name of an attribute on your list items that is used to get the value
+  to update the `input` element with.
 
-You can also set the `InputSetter` config to an array of objects, which will allow you to update multiple elements.
-
+You can also set the `InputSetter` configuration to an array of objects, which will allow you to update multiple elements.
 
 ```html
 <input id="input" value="">
@@ -23,33 +22,34 @@ You can also set the `InputSetter` config to an array of objects, which will all
   <li><a href="#" data-id="{{id}}">{{text}}</a></li>
 <ul>
 ```
-```js
-  const droplab = new DropLab();
 
-  const trigger = document.getElementById('trigger');
-  const list = document.getElementById('list');
+```javascript
+const droplab = new DropLab();
 
-  const input = document.getElementById('input');
-  const div = document.getElementById('div');
+const trigger = document.getElementById('trigger');
+const list = document.getElementById('list');
 
-  droplab.init(trigger, list, [InputSetter], {
-    InputSetter: [{
-      input: input,
-      valueAttribute: 'data-id',
-    } {
-      input: div,
-      valueAttribute: 'data-id',
-      inputAttribute: 'data-selected-id',
-    }],
-  });
+const input = document.getElementById('input');
+const div = document.getElementById('div');
 
-  droplab.addData('trigger', [{
-    id: 0,
-    text: 'Jacob',
-  }, {
-    id: 1,
-    text: 'Jeff',
-  }]);
+droplab.init(trigger, list, [InputSetter], {
+  InputSetter: [{
+    input: input,
+    valueAttribute: 'data-id',
+  } {
+    input: div,
+    valueAttribute: 'data-id',
+    inputAttribute: 'data-selected-id',
+  }],
+});
+
+droplab.addData('trigger', [{
+  id: 0,
+  text: 'Jacob',
+}, {
+  id: 1,
+  text: 'Jeff',
+}]);
 ```
 
 Above, if the second list item was clicked, it would update the `#input` element

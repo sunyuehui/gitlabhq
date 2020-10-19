@@ -1,9 +1,12 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::SlashCommands::Deploy do
+RSpec.describe Gitlab::SlashCommands::Deploy do
   describe '#execute' do
-    let(:project) { create(:project) }
+    let(:project) { create(:project, :repository) }
     let(:user) { create(:user) }
+    let(:chat_name) { double(:chat_name, user: user) }
     let(:regex_match) { described_class.match('deploy staging to production') }
 
     before do
@@ -16,7 +19,7 @@ describe Gitlab::SlashCommands::Deploy do
     end
 
     subject do
-      described_class.new(project, user).execute(regex_match)
+      described_class.new(project, chat_name).execute(regex_match)
     end
 
     context 'if no environment is defined' do
@@ -30,7 +33,7 @@ describe Gitlab::SlashCommands::Deploy do
       let!(:staging) { create(:environment, name: 'staging', project: project) }
       let!(:pipeline) { create(:ci_pipeline, project: project) }
       let!(:build) { create(:ci_build, pipeline: pipeline) }
-      let!(:deployment) { create(:deployment, environment: staging, deployable: build) }
+      let!(:deployment) { create(:deployment, :success, environment: staging, deployable: build) }
 
       context 'without actions' do
         it 'does not execute an action' do

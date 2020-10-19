@@ -1,6 +1,5 @@
-# Gitaly note: JV: needs RPC for Gitlab::Git::Diff.between.
+# frozen_string_literal: true
 
-# Gitlab::Git::Diff is a wrapper around native Rugged::Diff object
 module Gitlab
   module Git
     class Diff
@@ -22,43 +21,19 @@ module Gitlab
 
       alias_method :expanded?, :expanded
 
+      # The default maximum content size to display a diff patch.
+      #
+      # If this value ever changes, make sure to create a migration to update
+      # current records, and default of `ApplicationSettings#diff_max_patch_bytes`.
+      DEFAULT_MAX_PATCH_BYTES = 100.kilobytes
+
+      # This is a limitation applied on the source (Gitaly), therefore we don't allow
+      # persisting limits over that.
+      MAX_PATCH_BYTES_UPPER_BOUND = 500.kilobytes
+
       SERIALIZE_KEYS = %i(diff new_path old_path a_mode b_mode new_file renamed_file deleted_file too_large).freeze
 
       class << self
-        # The maximum size of a diff to display.
-        def size_limit
-          if RequestStore.active?
-            RequestStore['gitlab_git_diff_size_limit'] ||= find_size_limit
-          else
-            find_size_limit
-          end
-        end
-
-        # The maximum size before a diff is collapsed.
-        def collapse_limit
-          if RequestStore.active?
-            RequestStore['gitlab_git_diff_collapse_limit'] ||= find_collapse_limit
-          else
-            find_collapse_limit
-          end
-        end
-
-        def find_size_limit
-          if Feature.enabled?('gitlab_git_diff_size_limit_increase')
-            200.kilobytes
-          else
-            100.kilobytes
-          end
-        end
-
-        def find_collapse_limit
-          if Feature.enabled?('gitlab_git_diff_size_limit_increase')
-            100.kilobytes
-          else
-            10.kilobytes
-          end
-        end
-
         def between(repo, head, base, options = {}, *paths)
           straight = options.delete(:straight) || false
 
@@ -72,7 +47,7 @@ module Gitlab
                             # branch1...branch2) From the git documentation:
                             # "git diff A...B" is equivalent to "git diff
                             # $(git-merge-base A B) B"
-                            repo.merge_base_commit(head, base)
+                            repo.merge_base(head, base)
                           end
 
           options ||= {}
@@ -80,20 +55,31 @@ module Gitlab
           repo.diff(common_commit, head, actual_options, *paths)
         end
 
-        # Return a copy of the +options+ hash containing only keys that can be
-        # passed to Rugged.  Allowed options are:
+        # Return a copy of the +options+ hash containing only recognized keys.
+        # Allowed options are:
         #
         #  :ignore_whitespace_change ::
         #    If true, changes in amount of whitespace will be ignored.
         #
-        #  :disable_pathspec_match ::
-        #    If true, the given +*paths+ will be applied as exact matches,
-        #    instead of as fnmatch patterns.
+        #  :max_files ::
+        #    Limit how many files will patches be allowed for before collapsing
         #
+        #  :max_lines ::
+        #    Limit how many patch lines (across all files) will be allowed for
+        #    before collapsing
+        #
+        #  :limits ::
+        #    A hash with additional limits to check before collapsing patches.
+        #    Allowed keys are: `max_bytes`, `safe_max_files`, `safe_max_lines`
+        #    and `safe_max_bytes`
+        #
+        #  :expanded ::
+        #    If false, patch raw data will not be included in the diff after
+        #    `max_files`, `max_lines` or any of the limits in `limits` are
+        #    exceeded
         def filter_diff_options(options, default_options = {})
-          allowed_options = [:ignore_whitespace_change,
-                             :disable_pathspec_match, :paths,
-                             :max_files, :max_lines, :limits, :expanded]
+          allowed_options = [:ignore_whitespace_change, :max_files, :max_lines,
+                             :limits, :expanded]
 
           if default_options
             actual_defaults = default_options.dup
@@ -116,6 +102,35 @@ module Gitlab
 
           filtered_opts
         end
+
+        # Return a binary diff message like:
+        #
+        # "Binary files a/file/path and b/file/path differ\n"
+        # This is used when we detect that a diff is binary
+        # using CharlockHolmes.
+        def binary_message(old_path, new_path)
+          "Binary files #{old_path} and #{new_path} differ\n"
+        end
+
+        # Returns the limit of bytes a single diff file can reach before it
+        # appears as 'collapsed' for end-users.
+        # By convention, it's 10% of the persisted `diff_max_patch_bytes`.
+        #
+        # Example: If we have 100k for the `diff_max_patch_bytes`, it will be 10k by
+        # default.
+        #
+        # Patches surpassing this limit should still be persisted in the database.
+        def patch_safe_limit_bytes(limit = patch_hard_limit_bytes)
+          limit / 10
+        end
+
+        # Returns the limit for a single diff file (patch).
+        #
+        # Patches surpassing this limit shouldn't be persisted in the database
+        # and will be presented as 'too large' for end-users.
+        def patch_hard_limit_bytes
+          Gitlab::CurrentSettings.diff_max_patch_bytes
+        end
       end
 
       def initialize(raw_diff, expanded: true)
@@ -125,8 +140,6 @@ module Gitlab
         when Hash
           init_from_hash(raw_diff)
           prune_diff_if_eligible
-        when Rugged::Patch, Rugged::Diff::Delta
-          init_from_rugged(raw_diff)
         when Gitlab::GitalyClient::Diff
           init_from_gitaly(raw_diff)
           prune_diff_if_eligible
@@ -161,9 +174,13 @@ module Gitlab
         @line_count ||= Util.count_lines(@diff)
       end
 
+      def diff_bytesize
+        @diff_bytesize ||= @diff.bytesize
+      end
+
       def too_large?
         if @too_large.nil?
-          @too_large = @diff.bytesize >= self.class.size_limit
+          @too_large = diff_bytesize >= self.class.patch_hard_limit_bytes
         else
           @too_large
         end
@@ -181,7 +198,7 @@ module Gitlab
       def collapsed?
         return @collapsed if defined?(@collapsed)
 
-        @collapsed = !expanded && @diff.bytesize >= self.class.collapse_limit
+        @collapsed = !expanded && diff_bytesize >= self.class.patch_safe_limit_bytes
       end
 
       def collapse!
@@ -190,32 +207,18 @@ module Gitlab
         @collapsed = true
       end
 
+      def json_safe_diff
+        return @diff unless detect_binary?(@diff)
+
+        # the diff is binary, let's make a message for it
+        Diff.binary_message(@old_path, @new_path)
+      end
+
+      def has_binary_notice?
+        @diff.start_with?('Binary')
+      end
+
       private
-
-      def init_from_rugged(rugged)
-        if rugged.is_a?(Rugged::Patch)
-          init_from_rugged_patch(rugged)
-          d = rugged.delta
-        else
-          d = rugged
-        end
-
-        @new_path = encode!(d.new_file[:path])
-        @old_path = encode!(d.old_file[:path])
-        @a_mode = d.old_file[:mode].to_s(8)
-        @b_mode = d.new_file[:mode].to_s(8)
-        @new_file = d.added?
-        @renamed_file = d.renamed?
-        @deleted_file = d.deleted?
-      end
-
-      def init_from_rugged_patch(patch)
-        # Don't bother initializing diffs that are too large. If a diff is
-        # binary we're not going to display anything so we skip the size check.
-        return if !patch.delta.binary? && prune_large_patch(patch)
-
-        @diff = encode!(strip_diff_headers(patch.to_s))
-      end
 
       def init_from_hash(hash)
         raw_diff = hash.symbolize_keys
@@ -225,17 +228,18 @@ module Gitlab
         end
       end
 
-      def init_from_gitaly(diff)
-        @diff = encode!(diff.patch) if diff.respond_to?(:patch)
-        @new_path = encode!(diff.to_path.dup)
-        @old_path = encode!(diff.from_path.dup)
-        @a_mode = diff.old_mode.to_s(8)
-        @b_mode = diff.new_mode.to_s(8)
-        @new_file = diff.from_id == BLANK_SHA
-        @renamed_file = diff.from_path != diff.to_path
-        @deleted_file = diff.to_id == BLANK_SHA
+      def init_from_gitaly(gitaly_diff)
+        @diff = gitaly_diff.respond_to?(:patch) ? encode!(gitaly_diff.patch) : ''
+        @new_path = encode!(gitaly_diff.to_path.dup)
+        @old_path = encode!(gitaly_diff.from_path.dup)
+        @a_mode = gitaly_diff.old_mode.to_s(8)
+        @b_mode = gitaly_diff.new_mode.to_s(8)
+        @new_file = gitaly_diff.from_id == BLANK_SHA
+        @renamed_file = gitaly_diff.from_path != gitaly_diff.to_path
+        @deleted_file = gitaly_diff.to_id == BLANK_SHA
+        @too_large = gitaly_diff.too_large if gitaly_diff.respond_to?(:too_large)
 
-        collapse! if diff.respond_to?(:collapsed) && diff.collapsed
+        collapse! if gitaly_diff.respond_to?(:collapsed) && gitaly_diff.collapsed
       end
 
       def prune_diff_if_eligible
@@ -243,47 +247,6 @@ module Gitlab
           too_large!
         elsif collapsed?
           collapse!
-        end
-      end
-
-      # If the patch surpasses any of the diff limits it calls the appropiate
-      # prune method and returns true. Otherwise returns false.
-      def prune_large_patch(patch)
-        size = 0
-
-        patch.each_hunk do |hunk|
-          hunk.each_line do |line|
-            size += line.content.bytesize
-
-            if size >= self.class.size_limit
-              too_large!
-              return true
-            end
-          end
-        end
-
-        if !expanded && size >= self.class.collapse_limit
-          collapse!
-          return true
-        end
-
-        false
-      end
-
-      # Strip out the information at the beginning of the patch's text to match
-      # Grit's output
-      def strip_diff_headers(diff_text)
-        # Delete everything up to the first line that starts with '---' or
-        # 'Binary'
-        diff_text.sub!(/\A.*?^(---|Binary)/m, '\1')
-
-        if diff_text.start_with?('---', 'Binary')
-          diff_text
-        else
-          # If the diff_text did not contain a line starting with '---' or
-          # 'Binary', return the empty string. No idea why; we are just
-          # preserving behavior from before the refactor.
-          ''
         end
       end
     end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Sherlock::Query do
+RSpec.describe Gitlab::Sherlock::Query do
   let(:started_at)  { Time.utc(2015, 1, 1) }
   let(:finished_at) { started_at + 5 }
 

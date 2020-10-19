@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class Projects::MattermostsController < Projects::ApplicationController
   include TriggersHelper
   include ActionView::Helpers::AssetUrlHelper
@@ -7,6 +9,8 @@ class Projects::MattermostsController < Projects::ApplicationController
   before_action :authorize_admin_project!
   before_action :service
   before_action :teams, only: [:new]
+
+  feature_category :integrations
 
   def new
   end
@@ -28,7 +32,7 @@ class Projects::MattermostsController < Projects::ApplicationController
   def configure_params
     params.require(:mattermost).permit(:trigger, :team_id).merge(
       url: service_trigger_url(@service),
-      icon_url: asset_url('slash-command-logo.png'))
+      icon_url: asset_url('slash-command-logo.png', skip_pipeline: true))
   end
 
   def teams

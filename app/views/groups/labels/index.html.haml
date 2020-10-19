@@ -1,25 +1,31 @@
-- page_title 'Labels'
-- if show_new_nav? && can?(current_user, :admin_label, @group)
-  - content_for :breadcrumbs_extra do
-    = link_to "New label", new_group_label_path(@group), class: "btn btn-new"
+- page_title _('Labels')
+- can_admin_label = can?(current_user, :admin_label, @group)
+- search = params[:search]
+- subscribed = params[:subscribed]
+- labels_or_filters = @labels.exists? || search.present? || subscribed.present?
 
-= render "groups/head_issues"
+- if labels_or_filters
+  #promote-label-modal
+  = render 'shared/labels/nav', labels_or_filters: labels_or_filters, can_admin_label: can_admin_label
 
-
-.top-area.adjust
-  .nav-text
-    Labels can be applied to issues and merge requests. Group labels are available for any project within the group.
-
-  .nav-controls{ class: ("visible-xs" if show_new_nav?) }
-    - if can?(current_user, :admin_label, @group)
-      = link_to "New label", new_group_label_path(@group), class: "btn btn-new"
-
-.labels
-  .other-labels
-    - if @labels.present?
-      %ul.content-list.manage-labels-list.js-other-labels
-        = render partial: 'shared/label', subject: @group, collection: @labels, as: :label
-        = paginate @labels, theme: 'gitlab'
-    - else
+  .labels-container.gl-mt-2
+    - if @labels.any?
+      .text-muted
+        = _('Labels can be applied to %{features}. Group labels are available for any project within the group.') % { features: issuable_types.to_sentence }
+      .other-labels
+        %h5= _('Labels')
+        %ul.content-list.manage-labels-list.js-other-labels
+          = render partial: 'shared/label', collection: @labels, as: :label, locals: { use_label_priority: false, subject: @group }
+          = paginate @labels, theme: 'gitlab'
+    - elsif search.present?
       .nothing-here-block
-        No labels created yet.
+        = _('No labels with such name or description')
+    - elsif subscribed.present?
+      .nothing-here-block
+        = _('You do not have any subscriptions yet')
+- else
+  = render 'shared/empty_states/labels'
+
+%template#js-badge-item-template
+  %li.js-priority-badge.inline.gl-ml-3
+    .label-badge.gl-bg-blue-50= _('Prioritized label')

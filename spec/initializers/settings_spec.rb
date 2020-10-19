@@ -1,15 +1,22 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
-require_relative '../../config/initializers/1_settings'
+require_relative '../../config/initializers/1_settings' unless defined?(Settings)
 
-describe Settings do
-  describe '#repositories' do
-    it 'assigns the default failure attributes' do
-      repository_settings = Gitlab.config.repositories.storages['broken']
+RSpec.describe Settings do
+  describe '#ldap' do
+    it 'can be accessed with dot syntax all the way down' do
+      expect(Gitlab.config.ldap.servers.main.label).to eq('ldap')
+    end
 
-      expect(repository_settings['failure_count_threshold']).to eq(10)
-      expect(repository_settings['failure_wait_time']).to eq(30)
-      expect(repository_settings['failure_reset_time']).to eq(1800)
-      expect(repository_settings['storage_timeout']).to eq(5)
+    # Specifically trying to cause this error discovered in EE when removing the
+    # reassignment of each server element with Settingslogic.
+    #
+    #   `undefined method `label' for #<Hash:0x007fbd18b59c08>`
+    #
+    it 'can be accessed in a very specific way that breaks without reassigning each element with Settingslogic' do
+      server_settings = Gitlab.config.ldap.servers['main']
+      expect(server_settings.label).to eq('ldap')
     end
   end
 
@@ -19,7 +26,7 @@ describe Settings do
         expect(described_class.host_without_www('http://foo.com')).to eq 'foo.com'
         expect(described_class.host_without_www('http://www.foo.com')).to eq 'foo.com'
         expect(described_class.host_without_www('http://secure.foo.com')).to eq 'secure.foo.com'
-        expect(described_class.host_without_www('http://www.gravatar.com/avatar/%{hash}?s=%{size}&d=identicon')).to eq 'gravatar.com'
+        expect(described_class.host_without_www('https://www.gravatar.com/avatar/%{hash}?s=%{size}&d=identicon')).to eq 'gravatar.com'
 
         expect(described_class.host_without_www('https://foo.com')).to eq 'foo.com'
         expect(described_class.host_without_www('https://www.foo.com')).to eq 'foo.com'

@@ -1,13 +1,10 @@
-/* eslint-disable no-unused-vars, space-before-function-paren */
+import { convertObjectPropsToCamelCase } from '~/lib/utils/common_utils';
 
-class ListLabel {
-  constructor (obj) {
-    this.id = obj.id;
-    this.title = obj.title;
-    this.color = obj.color;
-    this.textColor = obj.text_color;
-    this.description = obj.description;
-    this.priority = (obj.priority !== null) ? obj.priority : Infinity;
+export default class ListLabel {
+  constructor(obj) {
+    Object.assign(this, convertObjectPropsToCamelCase(obj, { dropKeys: ['priority'] }), {
+      priority: obj.priority !== null ? obj.priority : Infinity,
+    });
   }
 }
 

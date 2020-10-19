@@ -1,6 +1,11 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe 'Issue Boards', js: true do
+require 'spec_helper'
+
+RSpec.describe 'Issue Boards', :js do
+  include BoardHelpers
+  include FilteredSearchHelpers
+
   let(:user)         { create(:user) }
   let(:user2)        { create(:user) }
   let(:project)      { create(:project, :public) }
@@ -13,16 +18,20 @@ describe 'Issue Boards', js: true do
   let!(:issue2)      { create(:labeled_issue, project: project, labels: [development, stretch], relative_position: 1) }
   let(:board)        { create(:board, project: project) }
   let!(:list)        { create(:list, board: board, label: development, position: 0) }
-  let(:card) { find('.board:nth-child(2)').first('.card') }
+  let(:card)         { find('.board:nth-child(2)').first('.board-card') }
+
+  let(:application_settings) { {} }
 
   around do |example|
-    Timecop.freeze { example.run }
+    freeze_time { example.run }
   end
 
   before do
-    project.add_master(user)
+    project.add_maintainer(user)
 
     sign_in(user)
+
+    stub_application_setting(application_settings)
 
     visit project_board_path(project, board)
     wait_for_requests
@@ -49,7 +58,7 @@ describe 'Issue Boards', js: true do
 
     expect(page).to have_selector('.issue-boards-sidebar')
 
-    find('.gutter-toggle').trigger('click')
+    find('.gutter-toggle').click
 
     expect(page).not_to have_selector('.issue-boards-sidebar')
   end
@@ -73,7 +82,7 @@ describe 'Issue Boards', js: true do
     wait_for_requests
 
     page.within(find('.board:nth-child(2)')) do
-      expect(page).to have_selector('.card', count: 1)
+      expect(page).to have_selector('.board-card', count: 1)
     end
   end
 
@@ -84,11 +93,11 @@ describe 'Issue Boards', js: true do
     visit project_board_path(project, board)
     wait_for_requests
 
-    click_card(find('.board:nth-child(1)').first('.card'))
+    click_card(find('.board:nth-child(1)').first('.board-card'))
 
     expect(find('.issue-boards-sidebar')).not_to have_button 'Remove from board'
 
-    click_card(find('.board:nth-child(3)').first('.card'))
+    click_card(find('.board:nth-child(3)').first('.board-card'))
 
     expect(find('.issue-boards-sidebar')).not_to have_button 'Remove from board'
   end
@@ -115,7 +124,7 @@ describe 'Issue Boards', js: true do
     end
 
     it 'removes the assignee' do
-      card_two = find('.board:nth-child(2)').find('.card:nth-child(2)')
+      card_two = find('.board:nth-child(2)').find('.board-card:nth-child(2)')
       click_card(card_two)
 
       page.within('.assignee') do
@@ -127,9 +136,10 @@ describe 'Issue Boards', js: true do
           click_link 'Unassigned'
         end
 
+        close_dropdown_menu_if_visible
         wait_for_requests
 
-        expect(page).to have_content('No assignee')
+        expect(page).to have_content('None')
       end
 
       expect(card_two).not_to have_selector('.avatar')
@@ -139,7 +149,7 @@ describe 'Issue Boards', js: true do
       click_card(card)
 
       page.within(find('.assignee')) do
-        expect(page).to have_content('No assignee')
+        expect(page).to have_content('None')
 
         click_button 'assign yourself'
 
@@ -169,7 +179,7 @@ describe 'Issue Boards', js: true do
       end
 
       page.within(find('.board:nth-child(2)')) do
-        find('.card:nth-child(2)').trigger('click')
+        find('.board-card:nth-child(2)').click
       end
 
       page.within('.assignee') do
@@ -207,13 +217,36 @@ describe 'Issue Boards', js: true do
 
         wait_for_requests
 
-        click_link "No Milestone"
+        click_link "No milestone"
 
         wait_for_requests
 
         page.within('.value') do
           expect(page).not_to have_content(milestone.title)
         end
+      end
+    end
+  end
+
+  context 'time tracking' do
+    let(:compare_meter_tooltip) { find('.time-tracking .time-tracking-content .compare-meter')['title'] }
+
+    before do
+      issue2.timelogs.create(time_spent: 14400, user: user)
+      issue2.update!(time_estimate: 128800)
+
+      click_card(card)
+    end
+
+    it 'shows time tracking progress bar' do
+      expect(compare_meter_tooltip).to eq('Time remaining: 3d 7h 46m')
+    end
+
+    context 'when time_tracking_limit_to_hours is true' do
+      let(:application_settings) { { time_tracking_limit_to_hours: true } }
+
+      it 'shows time tracking progress bar' do
+        expect(compare_meter_tooltip).to eq('Time remaining: 31h 46m')
       end
     end
   end
@@ -235,6 +268,22 @@ describe 'Issue Boards', js: true do
   end
 
   context 'labels' do
+    it 'shows current labels when editing' do
+      click_card(card)
+
+      page.within('.labels') do
+        click_link 'Edit'
+
+        wait_for_requests
+
+        page.within('.value') do
+          expect(page).to have_selector('.gl-label-text', count: 2)
+          expect(page).to have_content(development.title)
+          expect(page).to have_content(stretch.title)
+        end
+      end
+    end
+
     it 'adds a single label' do
       click_card(card)
 
@@ -250,12 +299,13 @@ describe 'Issue Boards', js: true do
         find('.dropdown-menu-close-icon').click
 
         page.within('.value') do
-          expect(page).to have_selector('.label', count: 3)
+          expect(page).to have_selector('.gl-label-text', count: 3)
           expect(page).to have_content(bug.title)
         end
       end
 
-      expect(card).to have_selector('.label', count: 3)
+      # 'Development' label does not show since the card is in a 'Development' list label
+      expect(card).to have_selector('.gl-label', count: 2)
       expect(card).to have_content(bug.title)
     end
 
@@ -268,6 +318,9 @@ describe 'Issue Boards', js: true do
         wait_for_requests
 
         click_link bug.title
+
+        wait_for_requests
+
         click_link regression.title
 
         wait_for_requests
@@ -275,13 +328,14 @@ describe 'Issue Boards', js: true do
         find('.dropdown-menu-close-icon').click
 
         page.within('.value') do
-          expect(page).to have_selector('.label', count: 4)
+          expect(page).to have_selector('.gl-label-text', count: 4)
           expect(page).to have_content(bug.title)
           expect(page).to have_content(regression.title)
         end
       end
 
-      expect(card).to have_selector('.label', count: 4)
+      # 'Development' label does not show since the card is in a 'Development' list label
+      expect(card).to have_selector('.gl-label', count: 3)
       expect(card).to have_content(bug.title)
       expect(card).to have_content(regression.title)
     end
@@ -294,47 +348,90 @@ describe 'Issue Boards', js: true do
 
         wait_for_requests
 
-        click_link stretch.title
+        within('.dropdown-menu-labels') do
+          click_link stretch.title
+        end
 
         wait_for_requests
 
         find('.dropdown-menu-close-icon').click
 
         page.within('.value') do
-          expect(page).to have_selector('.label', count: 1)
+          expect(page).to have_selector('.gl-label-text', count: 1)
           expect(page).not_to have_content(stretch.title)
         end
       end
 
-      expect(card).to have_selector('.label', count: 1)
+      # 'Development' label does not show since the card is in a 'Development' list label
+      expect(card).to have_selector('.gl-label-text', count: 0)
       expect(card).not_to have_content(stretch.title)
+    end
+
+    it 'creates project label' do
+      click_card(card)
+
+      page.within('.labels') do
+        click_link 'Edit'
+        wait_for_requests
+
+        click_link 'Create project label'
+        fill_in 'new_label_name', with: 'test label'
+        first('.suggest-colors-dropdown a').click
+        click_button 'Create'
+        wait_for_requests
+
+        expect(page).to have_link 'test label'
+      end
+      expect(page).to have_selector('.board', count: 3)
+    end
+
+    it 'creates project label and list' do
+      click_card(card)
+
+      page.within('.labels') do
+        click_link 'Edit'
+        wait_for_requests
+
+        click_link 'Create project label'
+        fill_in 'new_label_name', with: 'test label'
+        first('.suggest-colors-dropdown a').click
+        first('.js-add-list').click
+        click_button 'Create'
+        wait_for_requests
+
+        expect(page).to have_link 'test label'
+      end
+      expect(page).to have_selector('.board', count: 4)
     end
   end
 
   context 'subscription' do
     it 'changes issue subscription' do
       click_card(card)
+      wait_for_requests
 
-      page.within('.subscription') do
-        click_button 'Subscribe'
+      page.within('.subscriptions') do
+        find('.js-issuable-subscribe-button button:not(.is-checked)').click
         wait_for_requests
-        expect(page).to have_content("Unsubscribe")
+
+        expect(page).to have_css('.js-issuable-subscribe-button button.is-checked')
       end
     end
-  end
 
-  def click_card(card)
-    page.within(card) do
-      first('.card-number').click
-    end
+    it 'has checked subscription toggle when already subscribed' do
+      create(:subscription, user: user, project: project, subscribable: issue2, subscribed: true)
+      visit project_board_path(project, board)
+      wait_for_requests
 
-    wait_for_sidebar
-  end
+      click_card(card)
+      wait_for_requests
 
-  def wait_for_sidebar
-    # loop until the CSS transition is complete
-    Timeout.timeout(0.5) do
-      loop until evaluate_script('$(".right-sidebar").outerWidth()') == 290
+      page.within('.subscriptions') do
+        find('.js-issuable-subscribe-button button.is-checked').click
+        wait_for_requests
+
+        expect(page).to have_css('.js-issuable-subscribe-button button:not(.is-checked)')
+      end
     end
   end
 end

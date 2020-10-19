@@ -1,16 +1,7 @@
-- @no_container = true
-= render "admin/dashboard/head"
+- breadcrumb_title _("Cohorts")
+- page_title _("Cohorts")
 
-%div{ class: container_class }
-  - if @cohorts
-    = render 'cohorts_table'
-    = render 'usage_ping'
-  - else
-    .bs-callout.bs-callout-warning.clearfix
-      %p
-        User cohorts are only shown when the
-        = link_to 'usage ping', help_page_path('user/admin_area/settings/usage_statistics', anchor: 'usage-ping'), target: '_blank'
-        is enabled. To enable it and see user cohorts,
-        visit
-        = succeed '.' do
-          = link_to 'application settings', admin_application_settings_path(anchor: 'usage-statistics')
+- if @cohorts
+  = render 'cohorts_table'
+- else
+  #js-cohorts-empty-state{ data: { empty_state_svg_path: image_path('illustrations/convdev/convdev_no_index.svg'), enable_usage_ping_link: metrics_and_profiling_admin_application_settings_path(anchor: 'js-usage-settings'), docs_link: help_page_path('user/admin_area/analytics/user_cohorts') } }

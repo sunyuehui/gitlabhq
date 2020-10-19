@@ -1,5 +1,12 @@
+# frozen_string_literal: true
+
 class Dashboard::ApplicationController < ApplicationController
+  include ControllerWithCrossProjectAccessCheck
+  include RecordUserLastActivity
+
   layout 'dashboard'
+
+  requires_cross_project_access
 
   private
 

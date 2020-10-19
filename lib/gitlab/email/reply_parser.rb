@@ -1,11 +1,14 @@
+# frozen_string_literal: true
+
 # Inspired in great part by Discourse's Email::Receiver
 module Gitlab
   module Email
     class ReplyParser
       attr_accessor :message
 
-      def initialize(message)
+      def initialize(message, trim_reply: true)
         @message = message
+        @trim_reply = trim_reply
       end
 
       def execute
@@ -13,7 +16,9 @@ module Gitlab
 
         encoding = body.encoding
 
-        body = EmailReplyTrimmer.trim(body)
+        if @trim_reply
+          body = EmailReplyTrimmer.trim(body)
+        end
 
         return '' unless body
 
@@ -43,7 +48,7 @@ module Gitlab
         return "" unless decoded
 
         # Certain trigger phrases that means we didn't parse correctly
-        if decoded =~ /(Content\-Type\:|multipart\/alternative|text\/plain)/
+        if decoded =~ %r{(Content\-Type\:|multipart/alternative|text/plain)}
           return ""
         end
 
@@ -56,7 +61,7 @@ module Gitlab
 
       # Force encoding to UTF-8 on a Mail::Message or Mail::Part
       def fix_charset(object)
-        return nil if object.nil?
+        return if object.nil?
 
         if object.charset
           object.body.decoded.force_encoding(object.charset.gsub(/utf8/i, "UTF-8")).encode("UTF-8").to_s

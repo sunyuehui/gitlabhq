@@ -1,15 +1,10 @@
-module MembersHelper
-  # Returns a `<action>_<source>_member` association, e.g.:
-  # - admin_project_member, update_project_member, destroy_project_member
-  # - admin_group_member, update_group_member, destroy_group_member
-  def action_member_permission(action, member)
-    "#{action}_#{member.type.underscore}".to_sym
-  end
+# frozen_string_literal: true
 
+module MembersHelper
   def remove_member_message(member, user: nil)
     user = current_user if defined?(current_user)
+    text = 'Are you sure you want to'
 
-    text = 'Are you sure you want to '
     action =
       if member.request?
         if member.user == user
@@ -20,16 +15,27 @@ module MembersHelper
       elsif member.invite?
         "revoke the invitation for #{member.invite_email} to join"
       else
-        "remove #{member.user.name} from"
+        if member.user
+          "remove #{member.user.name} from"
+        else
+          e = RuntimeError.new("Data integrity error: no associated user for member ID #{member.id}")
+          Gitlab::ErrorTracking.track_exception(e,
+            member_id: member.id,
+            invite_email: member.invite_email,
+            invite_accepted_at: member.invite_accepted_at,
+            source_id: member.source_id,
+            source_type: member.source_type)
+          "remove this orphaned member from"
+        end
       end
 
-    text << action << " the #{member.source.human_name} #{member.real_source_type.humanize(capitalize: false)}?"
+    "#{text} #{action} the #{member.source.human_name} #{source_text(member)}?"
   end
 
   def remove_member_title(member)
-    text = " from #{member.real_source_type.humanize(capitalize: false)}"
+    action = member.request? ? 'Deny access request' : 'Remove user'
 
-    text.prepend(member.request? ? 'Deny access request' : 'Remove user')
+    "#{action} from #{source_text(member)}"
   end
 
   def leave_confirmation_message(member_source)
@@ -38,10 +44,25 @@ module MembersHelper
   end
 
   def filter_group_project_member_path(options = {})
-    options = params.slice(:search, :sort).merge(options)
+    options = params.slice(:search, :sort).merge(options).permit!
+    "#{request.path}?#{options.to_param}"
+  end
 
-    path = request.path
-    path << "?#{options.to_param}"
-    path
+  def member_path(member)
+    if member.is_a?(GroupMember)
+      group_group_member_path(member.source, member)
+    else
+      project_project_member_path(member.source, member)
+    end
+  end
+
+  private
+
+  def source_text(member)
+    type = member.real_source_type.humanize(capitalize: false)
+
+    return type if member.request? || member.invite? || type != 'group'
+
+    'group and any subresources'
   end
 end

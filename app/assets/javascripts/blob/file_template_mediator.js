@@ -1,22 +1,31 @@
-/* eslint-disable class-methods-use-this */
-/* global Flash */
+import $ from 'jquery';
+
+import Api from '~/api';
+import toast from '~/vue_shared/plugins/global_toast';
+import { __ } from '~/locale';
+import initPopover from '~/blob/suggest_gitlab_ci_yml';
+
+import { deprecatedCreateFlash as Flash } from '../flash';
 
 import FileTemplateTypeSelector from './template_selectors/type_selector';
 import BlobCiYamlSelector from './template_selectors/ci_yaml_selector';
 import DockerfileSelector from './template_selectors/dockerfile_selector';
 import GitignoreSelector from './template_selectors/gitignore_selector';
 import LicenseSelector from './template_selectors/license_selector';
+import MetricsDashboardSelector from './template_selectors/metrics_dashboard_selector';
 
 export default class FileTemplateMediator {
-  constructor({ editor, currentAction }) {
+  constructor({ editor, currentAction, projectId }) {
     this.editor = editor;
     this.currentAction = currentAction;
+    this.projectId = projectId;
 
     this.initTemplateSelectors();
     this.initTemplateTypeSelector();
     this.initDomElements();
     this.initDropdowns();
     this.initPageEvents();
+    this.cacheFileContents();
   }
 
   initTemplateSelectors() {
@@ -24,6 +33,7 @@ export default class FileTemplateMediator {
     this.templateSelectors = [
       GitignoreSelector,
       BlobCiYamlSelector,
+      MetricsDashboardSelector,
       DockerfileSelector,
       LicenseSelector,
     ].map(TemplateSelectorClass => new TemplateSelectorClass({ mediator: this }));
@@ -32,15 +42,15 @@ export default class FileTemplateMediator {
   initTemplateTypeSelector() {
     this.typeSelector = new FileTemplateTypeSelector({
       mediator: this,
-      dropdownData: this.templateSelectors
-        .map((templateSelector) => {
-          const cfg = templateSelector.config;
+      dropdownData: this.templateSelectors.map(templateSelector => {
+        const cfg = templateSelector.config;
 
-          return {
-            name: cfg.name,
-            key: cfg.key,
-          };
-        }),
+        return {
+          name: cfg.name,
+          key: cfg.key,
+          id: cfg.key,
+        };
+      }),
     });
   }
 
@@ -57,6 +67,7 @@ export default class FileTemplateMediator {
     this.$fileContent = $fileEditor.find('#file-content');
     this.$commitForm = $fileEditor.find('form');
     this.$navLinks = $fileEditor.find('.nav-links');
+    this.$templateTypes = this.$templateSelectors.find('.template-type-selector');
   }
 
   initDropdowns() {
@@ -88,12 +99,12 @@ export default class FileTemplateMediator {
   }
 
   listenForPreviewMode() {
-    this.$navLinks.on('click', 'a', (e) => {
+    this.$navLinks.on('click', 'a', e => {
       const urlPieces = e.target.href.split('#');
       const hash = urlPieces[1];
       if (hash === 'preview') {
         this.hideTemplateSelectorMenu();
-      } else if (hash === 'editor') {
+      } else if (hash === 'editor' && !this.typeSelector.isHidden()) {
         this.showTemplateSelectorMenu();
       }
     });
@@ -104,16 +115,14 @@ export default class FileTemplateMediator {
       e.preventDefault();
     }
 
-    this.templateSelectors.forEach((selector) => {
+    this.templateSelectors.forEach(selector => {
       if (selector.config.key === item.key) {
         selector.show();
       } else {
         selector.hide();
       }
     });
-
-    this.typeSelector.setToggleText(item.name);
-
+    this.setTypeSelectorToggleText(item.name);
     this.cacheToggleText();
   }
 
@@ -122,22 +131,38 @@ export default class FileTemplateMediator {
   }
 
   selectTemplateFile(selector, query, data) {
+    const self = this;
+    const { name } = selector.config;
+    const suggestCommitChanges = document.querySelector('.js-suggest-gitlab-ci-yml-commit-changes');
+
     selector.renderLoading();
-    // in case undo menu is already already there
-    this.destroyUndoMenu();
-    this.fetchFileTemplate(selector.config.endpoint, query, data)
-      .then((file) => {
-        this.showUndoMenu();
+
+    this.fetchFileTemplate(selector.config.type, query, data)
+      .then(file => {
         this.setEditorContent(file);
-        this.setFilename(selector.config.name);
+        this.setFilename(name);
         selector.renderLoaded();
+        this.typeSelector.setToggleText(name);
+        toast(__(`${query} template applied`), {
+          action: {
+            text: __('Undo'),
+            onClick: (e, toastObj) => {
+              self.restoreFromCache();
+              toastObj.goAway(0);
+            },
+          },
+        });
+
+        if (suggestCommitChanges) {
+          initPopover(suggestCommitChanges);
+        }
       })
       .catch(err => new Flash(`An error occurred while fetching the template: ${err}`));
   }
 
   displayMatchedTemplateSelector() {
     const currentInput = this.getFilename();
-    this.templateSelectors.forEach((selector) => {
+    this.templateSelectors.forEach(selector => {
       const match = selector.config.pattern.test(currentInput);
 
       if (match) {
@@ -148,15 +173,11 @@ export default class FileTemplateMediator {
     });
   }
 
-  fetchFileTemplate(apiCall, query, data) {
-    return new Promise((resolve) => {
+  fetchFileTemplate(type, query, data = {}) {
+    return new Promise(resolve => {
       const resolveFile = file => resolve(file);
 
-      if (!data) {
-        apiCall(query, resolveFile);
-      } else {
-        apiCall(query, data, resolveFile);
-      }
+      Api.projectTemplate(this.projectId, type, query, data, resolveFile);
     });
   }
 
@@ -174,22 +195,6 @@ export default class FileTemplateMediator {
 
   findTemplateSelectorByKey(key) {
     return this.templateSelectors.find(selector => selector.config.key === key);
-  }
-
-  showUndoMenu() {
-    this.$undoMenu.removeClass('hidden');
-
-    this.$undoBtn.on('click', () => {
-      this.restoreFromCache();
-      this.destroyUndoMenu();
-    });
-  }
-
-  destroyUndoMenu() {
-    this.cacheFileContents();
-    this.cacheToggleText();
-    this.$undoMenu.addClass('hidden');
-    this.$undoBtn.off('click');
   }
 
   hideTemplateSelectorMenu() {
@@ -213,6 +218,7 @@ export default class FileTemplateMediator {
     this.setEditorContent(this.cachedContent);
     this.setFilename(this.cachedFilename);
     this.setTemplateSelectorToggleText();
+    this.setTypeSelectorToggleText(__('Select a template type'));
   }
 
   getTemplateSelectorToggleText() {
@@ -231,12 +237,16 @@ export default class FileTemplateMediator {
     return this.typeSelector.getToggleText();
   }
 
+  setTypeSelectorToggleText(text) {
+    this.typeSelector.setToggleText(text);
+  }
+
   getFilename() {
     return this.$filenameInput.val();
   }
 
   setFilename(name) {
-    this.$filenameInput.val(name);
+    this.$filenameInput.val(name).trigger('change');
   }
 
   getSelected() {

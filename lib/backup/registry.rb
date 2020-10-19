@@ -1,13 +1,13 @@
-require 'backup/files'
+# frozen_string_literal: true
 
 module Backup
-  class Registry < Files
-    def initialize
-      super('registry', Settings.registry.path)
-    end
+  class Registry < Backup::Files
+    attr_reader :progress
 
-    def create_files_dir
-      Dir.mkdir(app_files_dir, 0700)
+    def initialize(progress)
+      @progress = progress
+
+      super('registry', Settings.registry.path)
     end
   end
 end

@@ -1,8 +1,10 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Git::GitmodulesParser do
-  it 'should parse a .gitmodules file correctly' do
-    parser = described_class.new(<<-'GITMODULES'.strip_heredoc)
+RSpec.describe Gitlab::Git::GitmodulesParser do
+  it 'parses a .gitmodules file correctly' do
+    data = <<~GITMODULES
       [submodule "vendor/libgit2"]
          path = vendor/libgit2
       [submodule "vendor/libgit2"]
@@ -16,6 +18,7 @@ describe Gitlab::Git::GitmodulesParser do
           url = https://example.com/another/project
     GITMODULES
 
+    parser = described_class.new(data.gsub("\n", "\r\n"))
     modules = parser.parse
 
     expect(modules).to eq({

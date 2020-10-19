@@ -1,4 +1,4 @@
-# Newlines styleguide
+# Newlines style guide
 
 This style guide recommends best practices for newlines in Ruby code.
 
@@ -10,8 +10,8 @@ def method
   issue = Issue.new
 
   issue.save
-  
-  render json: issue 
+
+  render json: issue
 end
 ```
 
@@ -20,8 +20,8 @@ end
 def method
   issue = Issue.new
   issue.save
-  
-  render json: issue 
+
+  render json: issue
 end
 ```
 

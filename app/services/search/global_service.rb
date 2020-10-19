@@ -1,5 +1,11 @@
+# frozen_string_literal: true
+
 module Search
   class GlobalService
+    include Gitlab::Utils::StrongMemoize
+
+    ALLOWED_SCOPES = %w(issues merge_requests milestones users).freeze
+
     attr_accessor :current_user, :params
 
     def initialize(user, params)
@@ -7,19 +13,27 @@ module Search
     end
 
     def execute
-      Gitlab::SearchResults.new(current_user, projects, params[:search])
+      Gitlab::SearchResults.new(current_user,
+                                params[:search],
+                                projects,
+                                sort: params[:sort],
+                                filters: { state: params[:state], confidential: params[:confidential] })
     end
 
     def projects
-      @projects ||= ProjectsFinder.new(current_user: current_user).execute
+      @projects ||= ProjectsFinder.new(params: { non_archived: true }, current_user: current_user).execute
+    end
+
+    def allowed_scopes
+      ALLOWED_SCOPES
     end
 
     def scope
-      @scope ||= begin
-        allowed_scopes = %w[issues merge_requests milestones]
-
-        allowed_scopes.delete(params[:scope]) { 'projects' }
+      strong_memoize(:scope) do
+        allowed_scopes.include?(params[:scope]) ? params[:scope] : 'projects'
       end
     end
   end
 end
+
+Search::GlobalService.prepend_if_ee('EE::Search::GlobalService')

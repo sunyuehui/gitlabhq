@@ -1,54 +1,69 @@
-# coding: utf-8
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ApplicationHelper do
-  include UploadHelpers
-
-  let(:gitlab_host) { "http://#{Gitlab.config.gitlab.host}" }
-
+RSpec.describe ApplicationHelper do
   describe 'current_controller?' do
-    it 'returns true when controller matches argument' do
+    before do
       stub_controller_name('foo')
+    end
 
-      expect(helper.current_controller?(:foo)).to eq true
+    it 'returns true when controller matches argument' do
+      expect(helper.current_controller?(:foo)).to be_truthy
     end
 
     it 'returns false when controller does not match argument' do
-      stub_controller_name('foo')
-
-      expect(helper.current_controller?(:bar)).to eq false
+      expect(helper.current_controller?(:bar)).to be_falsey
     end
 
     it 'takes any number of arguments' do
-      stub_controller_name('foo')
+      expect(helper.current_controller?(:baz, :bar)).to be_falsey
+      expect(helper.current_controller?(:baz, :bar, :foo)).to be_truthy
+    end
 
-      expect(helper.current_controller?(:baz, :bar)).to eq false
-      expect(helper.current_controller?(:baz, :bar, :foo)).to eq true
+    context 'when namespaced' do
+      before do
+        stub_controller_path('bar/foo')
+      end
+
+      it 'returns true when controller matches argument' do
+        expect(helper.current_controller?(:foo)).to be_truthy
+      end
+
+      it 'returns true when controller and namespace matches argument in path notation' do
+        expect(helper.current_controller?('bar/foo')).to be_truthy
+      end
+
+      it 'returns false when namespace doesnt match' do
+        expect(helper.current_controller?('foo/foo')).to be_falsey
+      end
     end
 
     def stub_controller_name(value)
       allow(helper.controller).to receive(:controller_name).and_return(value)
     end
+
+    def stub_controller_path(value)
+      allow(helper.controller).to receive(:controller_path).and_return(value)
+    end
   end
 
   describe 'current_action?' do
-    it 'returns true when action matches' do
+    before do
       stub_action_name('foo')
+    end
 
-      expect(helper.current_action?(:foo)).to eq true
+    it 'returns true when action matches' do
+      expect(helper.current_action?(:foo)).to be_truthy
     end
 
     it 'returns false when action does not match' do
-      stub_action_name('foo')
-
-      expect(helper.current_action?(:bar)).to eq false
+      expect(helper.current_action?(:bar)).to be_falsey
     end
 
     it 'takes any number of arguments' do
-      stub_action_name('foo')
-
-      expect(helper.current_action?(:baz, :bar)).to eq false
-      expect(helper.current_action?(:baz, :bar, :foo)).to eq true
+      expect(helper.current_action?(:baz, :bar)).to be_falsey
+      expect(helper.current_action?(:baz, :bar, :foo)).to be_truthy
     end
 
     def stub_action_name(value)
@@ -56,162 +71,24 @@ describe ApplicationHelper do
     end
   end
 
-  describe 'project_icon' do
-    it 'returns an url for the avatar' do
-      project = create(:project, avatar: File.open(uploaded_image_temp_path))
-      avatar_url = "/uploads/-/system/project/avatar/#{project.id}/banana_sample.gif"
-
-      expect(helper.project_icon(project.full_path).to_s)
-        .to eq "<img data-src=\"#{avatar_url}\" class=\" lazy\" src=\"#{LazyImageTagHelper.placeholder_image}\" />"
-
-      allow(ActionController::Base).to receive(:asset_host).and_return(gitlab_host)
-      avatar_url = "#{gitlab_host}/uploads/-/system/project/avatar/#{project.id}/banana_sample.gif"
-
-      expect(helper.project_icon(project.full_path).to_s)
-        .to eq "<img data-src=\"#{avatar_url}\" class=\" lazy\" src=\"#{LazyImageTagHelper.placeholder_image}\" />"
-    end
-
-    it 'gives uploaded icon when present' do
-      project = create(:project)
-
-      allow_any_instance_of(Project).to receive(:avatar_in_git).and_return(true)
-
-      avatar_url = "#{gitlab_host}#{project_avatar_path(project)}"
-      expect(helper.project_icon(project.full_path).to_s)
-        .to eq "<img data-src=\"#{avatar_url}\" class=\" lazy\" src=\"#{LazyImageTagHelper.placeholder_image}\" />"
-    end
-  end
-
-  describe 'avatar_icon' do
-    let(:user) { create(:user, avatar: File.open(uploaded_image_temp_path)) }
-
-    context 'using an email' do
-      context 'when there is a matching user' do
-        it 'returns a relative URL for the avatar' do
-          expect(helper.avatar_icon(user.email).to_s)
-            .to eq("/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
-        end
-
-        context 'when an asset_host is set in the config' do
-          let(:asset_host) { 'http://assets' }
-
-          before do
-            allow(ActionController::Base).to receive(:asset_host).and_return(asset_host)
-          end
-
-          it 'returns an absolute URL on that asset host' do
-            expect(helper.avatar_icon(user.email, only_path: false).to_s)
-              .to eq("#{asset_host}/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
-          end
-        end
-
-        context 'when only_path is set to false' do
-          it 'returns an absolute URL for the avatar' do
-            expect(helper.avatar_icon(user.email, only_path: false).to_s)
-              .to eq("#{gitlab_host}/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
-          end
-        end
-
-        context 'when the GitLab instance is at a relative URL' do
-          before do
-            stub_config_setting(relative_url_root: '/gitlab')
-            # Must be stubbed after the stub above, and separately
-            stub_config_setting(url: Settings.send(:build_gitlab_url))
-          end
-
-          it 'returns a relative URL with the correct prefix' do
-            expect(helper.avatar_icon(user.email).to_s)
-              .to eq("/gitlab/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
-          end
-        end
-      end
-
-      context 'when no user exists for the email' do
-        it 'calls gravatar_icon' do
-          expect(helper).to receive(:gravatar_icon).with('foo@example.com', 20, 2)
-
-          helper.avatar_icon('foo@example.com', 20, 2)
-        end
-      end
-    end
-
-    describe 'using a user' do
-      context 'when only_path is true' do
-        it 'returns a relative URL for the avatar' do
-          expect(helper.avatar_icon(user, only_path: true).to_s)
-            .to eq("/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
-        end
-      end
-
-      context 'when only_path is false' do
-        it 'returns an absolute URL for the avatar' do
-          expect(helper.avatar_icon(user, only_path: false).to_s)
-            .to eq("#{gitlab_host}/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
-        end
-      end
-    end
-  end
-
-  describe 'gravatar_icon' do
-    let(:user_email) { 'user@email.com' }
-
-    context 'with Gravatar disabled' do
+  describe '#admin_section?' do
+    context 'when controller is under the admin namespace' do
       before do
-        stub_application_setting(gravatar_enabled?: false)
+        allow(helper).to receive(:controller).and_return(Admin::UsersController.new)
       end
 
-      it 'returns a generic avatar' do
-        expect(helper.gravatar_icon(user_email)).to match('no_avatar.png')
+      it 'returns true' do
+        expect(helper.admin_section?).to eq(true)
       end
     end
 
-    context 'with Gravatar enabled' do
+    context 'when controller is not under the admin namespace' do
       before do
-        stub_application_setting(gravatar_enabled?: true)
+        allow(helper).to receive(:controller).and_return(UsersController.new)
       end
 
-      it 'returns a generic avatar when email is blank' do
-        expect(helper.gravatar_icon('')).to match('no_avatar.png')
-      end
-
-      it 'returns a valid Gravatar URL' do
-        stub_config_setting(https: false)
-
-        expect(helper.gravatar_icon(user_email))
-          .to match('http://www.gravatar.com/avatar/b58c6f14d292556214bd64909bcdb118')
-      end
-
-      it 'uses HTTPs when configured' do
-        stub_config_setting(https: true)
-
-        expect(helper.gravatar_icon(user_email))
-          .to match('https://secure.gravatar.com')
-      end
-
-      it 'returns custom gravatar path when gravatar_url is set' do
-        stub_gravatar_setting(plain_url: 'http://example.local/?s=%{size}&hash=%{hash}')
-
-        expect(gravatar_icon(user_email, 20))
-          .to eq('http://example.local/?s=40&hash=b58c6f14d292556214bd64909bcdb118')
-      end
-
-      it 'accepts a custom size argument' do
-        expect(helper.gravatar_icon(user_email, 64)).to include '?s=128'
-      end
-
-      it 'defaults size to 40@2x when given an invalid size' do
-        expect(helper.gravatar_icon(user_email, nil)).to include '?s=80'
-      end
-
-      it 'accepts a scaling factor' do
-        expect(helper.gravatar_icon(user_email, 40, 3)).to include '?s=120'
-      end
-
-      it 'ignores case and surrounding whitespace' do
-        normal = helper.gravatar_icon('foo@example.com')
-        upcase = helper.gravatar_icon(' FOO@EXAMPLE.COM ')
-
-        expect(normal).to eq upcase
+      it 'returns true' do
+        expect(helper.admin_section?).to eq(false)
       end
     end
   end
@@ -235,8 +112,11 @@ describe ApplicationHelper do
   end
 
   describe 'time_ago_with_tooltip' do
+    around do |example|
+      Time.use_zone('UTC') { example.run }
+    end
+
     def element(*arguments)
-      Time.zone = 'UTC'
       @time = Time.zone.parse('2015-07-02 08:23')
       element = helper.time_ago_with_tooltip(@time, *arguments)
 
@@ -264,8 +144,7 @@ describe ApplicationHelper do
     end
 
     it 'accepts a custom html_class' do
-      expect(element(html_class: 'custom_class').attr('class'))
-        .to eq 'js-timeago custom_class'
+      expect(element(html_class: 'custom_class').attr('class')).to eq 'js-timeago custom_class'
     end
 
     it 'accepts a custom tooltip placement' do
@@ -278,6 +157,7 @@ describe ApplicationHelper do
 
     it 'add class for the short format' do
       timeago_element = element(short_format: 'short')
+
       expect(timeago_element.attr('class')).to eq 'js-short-timeago'
       expect(timeago_element.next_element).to eq nil
     end
@@ -288,15 +168,49 @@ describe ApplicationHelper do
     it { expect(helper.active_when(false)).to eq(nil) }
   end
 
+  describe '#promo_host' do
+    subject { helper.promo_host }
+
+    it 'returns the url' do
+      is_expected.to eq('about.gitlab.com')
+    end
+  end
+
+  describe '#promo_url' do
+    subject { helper.promo_url }
+
+    it 'returns the url' do
+      is_expected.to eq('https://about.gitlab.com')
+    end
+
+    it 'changes if promo_host changes' do
+      allow(helper).to receive(:promo_host).and_return('foobar.baz')
+
+      is_expected.to eq('https://foobar.baz')
+    end
+  end
+
+  describe '#contact_sales_url' do
+    subject { helper.contact_sales_url }
+
+    it 'returns the url' do
+      is_expected.to eq('https://about.gitlab.com/sales')
+    end
+
+    it 'changes if promo_url changes' do
+      allow(helper).to receive(:promo_url).and_return('https://somewhere.else')
+
+      is_expected.to eq('https://somewhere.else/sales')
+    end
+  end
+
   describe '#support_url' do
     context 'when alternate support url is specified' do
       let(:alternate_url) { 'http://company.example.com/getting-help' }
 
-      before do
-        stub_application_setting(help_page_support_url: alternate_url)
-      end
-
       it 'returns the alternate support url' do
+        stub_application_setting(help_page_support_url: alternate_url)
+
         expect(helper.support_url).to eq(alternate_url)
       end
     end
@@ -305,6 +219,242 @@ describe ApplicationHelper do
       it 'builds the support url from the promo_url' do
         expect(helper.support_url).to eq(helper.promo_url + '/getting-help/')
       end
+    end
+  end
+
+  describe '#instance_review_permitted?' do
+    let_it_be(:non_admin_user) { create :user }
+    let_it_be(:admin_user) { create :user, :admin }
+
+    before do
+      allow(::Gitlab::CurrentSettings).to receive(:instance_review_permitted?).and_return(app_setting)
+      allow(helper).to receive(:current_user).and_return(current_user)
+    end
+
+    subject { helper.instance_review_permitted? }
+
+    where(app_setting: [true, false], is_admin: [true, false, nil])
+
+    with_them do
+      let(:current_user) do
+        if is_admin.nil?
+          nil
+        else
+          is_admin ? admin_user : non_admin_user
+        end
+      end
+
+      it { is_expected.to be(app_setting && is_admin) }
+    end
+  end
+
+  describe '#locale_path' do
+    it 'returns the locale path with an `_`' do
+      Gitlab::I18n.with_locale('pt-BR') do
+        expect(helper.locale_path).to include('assets/locale/pt_BR/app')
+      end
+    end
+  end
+
+  describe '#client_class_list' do
+    it 'returns string containing CSS classes representing client browser and platform' do
+      class_list = helper.client_class_list
+      expect(class_list).to eq('gl-browser-generic gl-platform-other')
+    end
+  end
+
+  describe '#client_js_flags' do
+    it 'returns map containing JS flags representing client browser and platform' do
+      flags_list = helper.client_js_flags
+      expect(flags_list[:isGeneric]).to eq(true)
+      expect(flags_list[:isOther]).to eq(true)
+    end
+  end
+
+  describe '#page_startup_api_calls' do
+    it 'returns map containing JS Page Startup Calls' do
+      helper.add_page_startup_api_call("testURL")
+
+      startup_calls = helper.page_startup_api_calls
+
+      expect(startup_calls["testURL"]).to eq({})
+    end
+  end
+
+  describe '#autocomplete_data_sources' do
+    let(:project) { create(:project) }
+    let(:noteable_type) { Issue }
+
+    it 'returns paths for autocomplete_sources_controller' do
+      sources = helper.autocomplete_data_sources(project, noteable_type)
+      expect(sources.keys).to match_array([:members, :issues, :mergeRequests, :labels, :milestones, :commands, :snippets])
+      sources.keys.each do |key|
+        expect(sources[key]).not_to be_nil
+      end
+    end
+  end
+
+  describe '#external_storage_url_or_path' do
+    let(:project) { create(:project) }
+
+    context 'when external storage is disabled' do
+      it 'returns the passed path' do
+        expect(helper.external_storage_url_or_path('/foo/bar', project)).to eq('/foo/bar')
+      end
+    end
+
+    context 'when @snippet is set' do
+      it 'returns the passed path' do
+        snippet = create(:snippet)
+        assign(:snippet, snippet)
+
+        expect(helper.external_storage_url_or_path('/foo/bar', project)).to eq('/foo/bar')
+      end
+    end
+
+    context 'when external storage is enabled' do
+      let(:user) { create(:user, static_object_token: 'hunter1') }
+
+      before do
+        allow_next_instance_of(ApplicationSetting) do |instance|
+          allow(instance).to receive(:static_objects_external_storage_url).and_return('https://cdn.gitlab.com')
+        end
+        allow(helper).to receive(:current_user).and_return(user)
+      end
+
+      it 'returns the external storage URL prepended to the path' do
+        expect(helper.external_storage_url_or_path('/foo/bar', project)).to eq("https://cdn.gitlab.com/foo/bar?token=#{user.static_object_token}")
+      end
+
+      it 'preserves the path query parameters' do
+        url = helper.external_storage_url_or_path('/foo/bar?unicode=1', project)
+
+        expect(url).to eq("https://cdn.gitlab.com/foo/bar?token=#{user.static_object_token}&unicode=1")
+      end
+
+      context 'when project is public' do
+        let(:project) { create(:project, :public) }
+
+        it 'returns does not append a token parameter' do
+          expect(helper.external_storage_url_or_path('/foo/bar', project)).to eq('https://cdn.gitlab.com/foo/bar')
+        end
+      end
+    end
+  end
+
+  describe '#body_data' do
+    context 'when @project is not set' do
+      it 'does not include project data in the body data elements' do
+        expect(helper.body_data).to eq(
+          {
+            page: 'application',
+            page_type_id: nil,
+            find_file: nil,
+            group: nil
+          }
+        )
+      end
+
+      context 'when @group is set' do
+        it 'sets group in the body data elements' do
+          group = create(:group)
+
+          assign(:group, group)
+
+          expect(helper.body_data).to eq(
+            {
+              page: 'application',
+              page_type_id: nil,
+              find_file: nil,
+              group: group.path
+            }
+          )
+        end
+      end
+    end
+
+    context 'when @project is set' do
+      let_it_be(:project) { create(:project, :repository) }
+      let_it_be(:user) { create(:user) }
+
+      before do
+        assign(:project, project)
+        allow(helper).to receive(:current_user).and_return(nil)
+      end
+
+      it 'includes all possible body data elements and associates the project elements with project' do
+        expect(helper).to receive(:can?).with(nil, :download_code, project)
+        expect(helper.body_data).to eq(
+          {
+            page: 'application',
+            page_type_id: nil,
+            find_file: nil,
+            group: nil,
+            project_id: project.id,
+            project: project.name,
+            namespace_id: project.namespace.id
+          }
+        )
+      end
+
+      context 'when @project is owned by a group' do
+        let_it_be(:project) { create(:project, :repository, group: create(:group)) }
+
+        it 'includes all possible body data elements and associates the project elements with project' do
+          expect(helper).to receive(:can?).with(nil, :download_code, project)
+          expect(helper.body_data).to eq(
+            {
+              page: 'application',
+              page_type_id: nil,
+              find_file: nil,
+              group: project.group.name,
+              project_id: project.id,
+              project: project.name,
+              namespace_id: project.namespace.id
+            }
+          )
+        end
+      end
+
+      context 'when controller is issues' do
+        before do
+          stub_controller_method(:controller_path, 'projects:issues')
+        end
+
+        context 'when params[:id] is present and the issue exsits and action_name is show' do
+          it 'sets all project and id elements correctly related to the issue' do
+            issue = create(:issue, project: project)
+            stub_controller_method(:action_name, 'show')
+            stub_controller_method(:params, { id: issue.id })
+
+            expect(helper).to receive(:can?).with(nil, :download_code, project).and_return(false)
+            expect(helper.body_data).to eq(
+              {
+                page: 'projects:issues:show',
+                page_type_id: issue.id,
+                find_file: nil,
+                group: nil,
+                project_id: issue.project.id,
+                project: issue.project.name,
+                namespace_id: issue.project.namespace.id
+              }
+            )
+          end
+        end
+      end
+
+      context 'when current_user has download_code permission' do
+        it 'returns find_file with the default branch' do
+          allow(helper).to receive(:current_user).and_return(user)
+
+          expect(helper).to receive(:can?).with(user, :download_code, project).and_return(true)
+          expect(helper.body_data[:find_file]).to end_with(project.default_branch)
+        end
+      end
+    end
+
+    def stub_controller_method(method_name, value)
+      allow(helper.controller).to receive(method_name).and_return(value)
     end
   end
 end

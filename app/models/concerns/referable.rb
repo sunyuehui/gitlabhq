@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # == Referable concern
 #
 # Contains functionality related to making a model referable in Markdown, such
@@ -7,7 +9,7 @@ module Referable
 
   # Returns the String necessary to reference this object in Markdown
   #
-  # from_project - Refering Project object
+  # from - Referring parent object
   #
   # This should be overridden by the including class.
   #
@@ -17,12 +19,20 @@ module Referable
   #   Issue.last.to_reference(other_project) # => "cross-project#1"
   #
   # Returns a String
-  def to_reference(_from_project = nil, full:)
+  def to_reference(_from = nil, full:)
     ''
   end
 
-  def reference_link_text(from_project = nil)
-    to_reference(from_project)
+  # If this referable object can serve as the base for the
+  # reference of child objects (e.g. projects are the base of
+  # issues), but it is formatted differently, then you may wish
+  # to override this method.
+  def to_reference_base(from = nil, full:)
+    to_reference(from, full: full)
+  end
+
+  def reference_link_text(from = nil)
+    to_reference(from)
   end
 
   included do
@@ -38,7 +48,7 @@ module Referable
     end
   end
 
-  module ClassMethods
+  class_methods do
     # The character that prefixes the actual reference identifier
     #
     # This should be overridden by the including class.
@@ -71,10 +81,11 @@ module Referable
         (?<url>
           #{Regexp.escape(Gitlab.config.gitlab.url)}
           \/#{Project.reference_pattern}
-          \/#{Regexp.escape(route)}
+          (?:\/\-)?
+          \/#{route.is_a?(Regexp) ? route : Regexp.escape(route)}
           \/#{pattern}
           (?<path>
-            (\/[a-z0-9_=-]+)*
+            (\/[a-z0-9_=-]+)*\/*
           )?
           (?<query>
             \?[a-z0-9_=-]+

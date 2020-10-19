@@ -1,9 +1,17 @@
-# Instrumenting Ruby Code
+---
+stage: Monitor
+group: APM
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see https://about.gitlab.com/handbook/engineering/ux/technical-writing/#designated-technical-writers
+---
 
-GitLab Performance Monitoring allows instrumenting of both methods and custom
+# Instrumenting Ruby code
+
+[GitLab Performance Monitoring](../administration/monitoring/performance/index.md) allows instrumenting of both methods and custom
 blocks of Ruby code. Method instrumentation is the primary form of
 instrumentation with block-based instrumentation only being used when we want to
 drill down to specific regions of code within a method.
+
+Please refer to [Product Analytics](product_analytics/index.md) if you are tracking product usage patterns.
 
 ## Instrumenting Methods
 
@@ -11,12 +19,12 @@ Instrumenting methods is done by using the `Gitlab::Metrics::Instrumentation`
 module. This module offers a few different methods that can be used to
 instrument code:
 
-* `instrument_method`: instruments a single class method.
-* `instrument_instance_method`: instruments a single instance method.
-* `instrument_class_hierarchy`: given a Class this method will recursively
+- `instrument_method`: instruments a single class method.
+- `instrument_instance_method`: instruments a single instance method.
+- `instrument_class_hierarchy`: given a Class this method will recursively
   instrument all sub-classes (both class and instance methods).
-* `instrument_methods`: instruments all public and private class methods of a Module.
-* `instrument_instance_methods`: instruments all public and private instance methods of a
+- `instrument_methods`: instruments all public and private class methods of a Module.
+- `instrument_instance_methods`: instruments all public and private instance methods of a
   Module.
 
 To remove the need for typing the full `Gitlab::Metrics::Instrumentation`
@@ -35,7 +43,7 @@ Using this method is in general preferred over directly calling the various
 instrumentation methods.
 
 Method instrumentation should be added in the initializer
-`config/initializers/8_metrics.rb`.
+`config/initializers/zz_metrics.rb`.
 
 ### Examples
 
@@ -69,7 +77,7 @@ The easiest way to check if a method has been instrumented is to check its
 source location. For example:
 
 ```ruby
-method = Rugged::TagCollection.instance_method(:[])
+method = Banzai::Renderer.method(:render)
 
 method.source_location
 ```
@@ -81,13 +89,11 @@ If you're using Pry you can use the `$` command to display the source code of a
 method (along with its source location), this is easier than running the above
 Ruby code. In case of the above snippet you'd run the following:
 
-```
-$ Rugged::TagCollection#[]
-```
+- `$ Banzai::Renderer.render`
 
 This will print out something along the lines of:
 
-```
+```plaintext
 From: /path/to/your/gitlab/lib/gitlab/metrics/instrumentation.rb @ line 148:
 Owner: #<Module:0x0055f0865c6d50>
 Visibility: public
@@ -117,11 +123,11 @@ The block is executed and the execution time is stored as a set of fields in the
 currently running transaction. If no transaction is present the block is yielded
 without measuring anything.
 
-3 values are measured for a block:
+Three values are measured for a block:
 
-1. The real time elapsed, stored in NAME_real_time.
-2. The CPU time elapsed, stored in NAME_cpu_time.
-3. The call count, stored in NAME_call_count.
+- The real time elapsed, stored in `NAME_real_time`.
+- The CPU time elapsed, stored in `NAME_cpu_time`.
+- The call count, stored in `NAME_call_count`.
 
 Both the real and CPU timings are measured in milliseconds.
 

@@ -1,19 +1,19 @@
-- page_title "Repository"
+- breadcrumb_title _("Repository Settings")
+- page_title _("Repository")
 - @content_class = "limit-container-width" unless fluid_layout
+- deploy_token_description = s_('DeployTokens|Deploy tokens allow access to packages, your repository, and registry images.')
 
-- if show_new_nav?
-  - add_to_breadcrumbs("Settings", edit_project_path(@project))
-
-= render "projects/settings/head"
-
-- content_for :page_specific_javascripts do
-  = page_specific_javascript_bundle_tag('common_vue')
-  = page_specific_javascript_bundle_tag('deploy_keys')
+= render "projects/default_branch/show"
+= render_if_exists "projects/push_rules/index"
+= render "projects/mirrors/mirror_repos"
 
 -# Protected branches & tags use a lot of nested partials.
 -# The shared parts of the views can be found in the `shared` directory.
 -# Those are used throughout the actual views. These `shared` views are then
 -# reused in EE.
-= render "projects/protected_branches/index"
-= render "projects/protected_tags/index"
+= render "projects/settings/repository/protected_branches"
+= render "shared/deploy_tokens/index", group_or_project: @project, description: deploy_token_description
 = render @deploy_keys
+= render "projects/cleanup/show"
+
+= render_if_exists 'shared/promotions/promote_repository_features'

@@ -1,18 +1,66 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Badge::Pipeline::Template do
-  let(:badge) { double(entity: 'pipeline', status: 'success') }
+RSpec.describe Gitlab::Badge::Pipeline::Template do
+  let(:badge) { double(entity: 'pipeline', status: 'success', customization: {}) }
   let(:template) { described_class.new(badge) }
 
   describe '#key_text' do
-    it 'is always says pipeline' do
+    it 'says pipeline by default' do
       expect(template.key_text).to eq 'pipeline'
+    end
+
+    context 'when custom key_text is defined' do
+      before do
+        allow(badge).to receive(:customization).and_return({ key_text: 'custom text' })
+      end
+
+      it 'returns custom value' do
+        expect(template.key_text).to eq 'custom text'
+      end
+
+      context 'when its size is larger than the max allowed value' do
+        before do
+          allow(badge).to receive(:customization).and_return({ key_text: 't' * 65 })
+        end
+
+        it 'returns default value' do
+          expect(template.key_text).to eq 'pipeline'
+        end
+      end
     end
   end
 
   describe '#value_text' do
     it 'is status value' do
       expect(template.value_text).to eq 'passed'
+    end
+  end
+
+  describe '#key_width' do
+    it 'is fixed by default' do
+      expect(template.key_width).to eq 62
+    end
+
+    context 'when custom key_width is defined' do
+      before do
+        allow(badge).to receive(:customization).and_return({ key_width: 101 })
+      end
+
+      it 'returns custom value' do
+        expect(template.key_width).to eq 101
+      end
+
+      context 'when it is larger than the max allowed value' do
+        before do
+          allow(badge).to receive(:customization).and_return({ key_width: 513 })
+        end
+
+        it 'returns default value' do
+          expect(template.key_width).to eq 62
+        end
+      end
     end
   end
 
@@ -56,6 +104,16 @@ describe Gitlab::Badge::Pipeline::Template do
 
       it 'has expected color' do
         expect(template.value_color).to eq '#dfb317'
+      end
+    end
+
+    context 'when status is preparing' do
+      before do
+        allow(badge).to receive(:status).and_return('preparing')
+      end
+
+      it 'has expected color' do
+        expect(template.value_color).to eq '#a7a7a7'
       end
     end
 

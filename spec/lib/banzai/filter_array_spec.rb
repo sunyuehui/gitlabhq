@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::FilterArray do
+RSpec.describe Banzai::FilterArray do
   describe '#insert_after' do
     it 'inserts an element after a provided element' do
       filters = described_class.new(%w(a b c))

@@ -1,9 +1,8 @@
-module API
-  class BroadcastMessages < Grape::API
-    include PaginationParams
+# frozen_string_literal: true
 
-    before { authenticate! }
-    before { authenticated_as_admin! }
+module API
+  class BroadcastMessages < ::API::Base
+    include PaginationParams
 
     resource :broadcast_messages do
       helpers do
@@ -20,7 +19,7 @@ module API
         use :pagination
       end
       get do
-        messages = BroadcastMessage.all
+        messages = BroadcastMessage.all.order_id_desc
 
         present paginate(messages), with: Entities::BroadcastMessage
       end
@@ -30,13 +29,18 @@ module API
         success Entities::BroadcastMessage
       end
       params do
-        requires :message,   type: String,   desc: 'Message to display'
+        requires :message, type: String, desc: 'Message to display'
         optional :starts_at, type: DateTime, desc: 'Starting time', default: -> { Time.zone.now }
-        optional :ends_at,   type: DateTime, desc: 'Ending time',   default: -> { 1.hour.from_now }
-        optional :color,     type: String,   desc: 'Background color'
-        optional :font,      type: String,   desc: 'Foreground color'
+        optional :ends_at, type: DateTime, desc: 'Ending time', default: -> { 1.hour.from_now }
+        optional :color, type: String, desc: 'Background color'
+        optional :font, type: String, desc: 'Foreground color'
+        optional :target_path, type: String, desc: 'Target path'
+        optional :broadcast_type, type: String, values: BroadcastMessage.broadcast_types.keys, desc: 'Broadcast type. Defaults to banner', default: -> { 'banner' }
+        optional :dismissable, type: Boolean, desc: 'Is dismissable'
       end
       post do
+        authenticated_as_admin!
+
         message = BroadcastMessage.create(declared_params(include_missing: false))
 
         if message.persisted?
@@ -64,14 +68,19 @@ module API
         success Entities::BroadcastMessage
       end
       params do
-        requires :id,        type: Integer,  desc: 'Broadcast message ID'
-        optional :message,   type: String,   desc: 'Message to display'
+        requires :id, type: Integer, desc: 'Broadcast message ID'
+        optional :message, type: String, desc: 'Message to display'
         optional :starts_at, type: DateTime, desc: 'Starting time'
-        optional :ends_at,   type: DateTime, desc: 'Ending time'
-        optional :color,     type: String,   desc: 'Background color'
-        optional :font,      type: String,   desc: 'Foreground color'
+        optional :ends_at, type: DateTime, desc: 'Ending time'
+        optional :color, type: String, desc: 'Background color'
+        optional :font, type: String, desc: 'Foreground color'
+        optional :target_path, type: String, desc: 'Target path'
+        optional :broadcast_type, type: String, values: BroadcastMessage.broadcast_types.keys, desc: 'Broadcast Type'
+        optional :dismissable, type: Boolean, desc: 'Is dismissable'
       end
       put ':id' do
+        authenticated_as_admin!
+
         message = find_message
 
         if message.update(declared_params(include_missing: false))
@@ -89,10 +98,11 @@ module API
         requires :id, type: Integer, desc: 'Broadcast message ID'
       end
       delete ':id' do
+        authenticated_as_admin!
+
         message = find_message
 
-        status 204
-        message.destroy
+        destroy_conditionally!(message)
       end
     end
   end

@@ -15,13 +15,13 @@ Kerberos and Atlassian Crowd are only available on the Enterprise Edition, so
 you should disable these mechanisms before downgrading and you should provide
 alternative authentication methods to your users.
 
-### Remove Jenkins CI Service entries from the database
+### Remove Service Integration entries from the database
 
-The `JenkinsService` class is only available on the Enterprise Edition codebase,
+The `JenkinsService` and `GithubService` classes are only available in the Enterprise Edition codebase,
 so if you downgrade to the Community Edition, you'll come across the following
 error:
 
-```
+```plaintext
 Completed 500 Internal Server Error in 497ms (ActiveRecord: 32.2ms)
 
 ActionView::Template::Error (The single-table inheritance mechanism failed to locate the subclass: 'JenkinsService'. This
@@ -30,23 +30,37 @@ column if you didn't intend it to be used for storing the inheritance class or o
 use another column for that information.)
 ```
 
+or
+
+```plaintext
+Completed 500 Internal Server Error in 497ms (ActiveRecord: 32.2ms)
+
+ActionView::Template::Error (The single-table inheritance mechanism failed to locate the subclass: 'GithubService'. This
+error is raised because the column 'type' is reserved for storing the class in case of inheritance. Please rename this
+column if you didn't intend it to be used for storing the inheritance class or overwrite Service.inheritance_column to
+use another column for that information.)
+```
+
 All services are created automatically for every project you have, so in order
 to avoid getting this error, you need to remove all instances of the
-`JenkinsService` from your database:
+`JenkinsService` and `GithubService` from your database:
 
 **Omnibus Installation**
 
-```
-$ sudo gitlab-rails runner "Service.where(type: ['JenkinsService', 'JenkinsDeprecatedService']).delete_all"
+```shell
+sudo gitlab-rails runner "Service.where(type: ['JenkinsService', 'GithubService']).delete_all"
 ```
 
 **Source Installation**
 
-```
-$ bundle exec rails runner "Service.where(type: ['JenkinsService', 'JenkinsDeprecatedService']).delete_all" production
+```shell
+bundle exec rails runner "Service.where(type: ['JenkinsService', 'GithubService']).delete_all" production
 ```
 
-### Secret variables environment scopes
+NOTE: **Note:**
+If you are running `GitLab =< v13.0` you need to also remove `JenkinsDeprecatedService` records.
+
+### Variables environment scopes
 
 If you're using this feature and there are variables sharing the same
 key, but they have different scopes in a project, then you might want to
@@ -70,7 +84,7 @@ To downgrade an Omnibus installation, it is sufficient to install the Community
 Edition package on top of the currently installed one. You can do this manually,
 by directly [downloading the package](https://packages.gitlab.com/gitlab/gitlab-ce)
 you need, or by adding our CE package repository and following the
-[CE installation instructions](https://about.gitlab.com/downloads/).
+[CE installation instructions](https://about.gitlab.com/install/?version=ce).
 
 **Source Installation**
 
@@ -78,10 +92,10 @@ To downgrade a source installation, you need to replace the current remote of
 your GitLab installation with the Community Edition's remote, fetch the latest
 changes, and checkout the latest stable branch:
 
-```
-$ git remote set-url origin git@gitlab.com:gitlab-org/gitlab-ce.git
-$ git fetch --all
-$ git checkout 8-x-stable
+```shell
+git remote set-url origin git@gitlab.com:gitlab-org/gitlab-foss.git
+git fetch --all
+git checkout 8-x-stable
 ```
 
 Remember to follow the correct [update guides](../update/README.md) to make

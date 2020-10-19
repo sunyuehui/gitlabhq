@@ -1,11 +1,12 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Template type dropdown selector', js: true do
+RSpec.describe 'Projects > Files > Template type dropdown selector', :js do
   let(:project) { create(:project, :repository) }
-  let(:user) { create(:user) }
+  let(:user) { project.owner }
 
   before do
-    project.team << [user, :master]
     sign_in user
   end
 
@@ -14,17 +15,18 @@ feature 'Template type dropdown selector', js: true do
       create_and_edit_file('.random-file.js')
     end
 
-    scenario 'not displayed' do
+    it 'not displayed' do
       check_type_selector_display(false)
     end
 
-    scenario 'selects every template type correctly' do
+    it 'selects every template type correctly' do
       fill_in 'file_path', with: '.gitignore'
       try_selecting_all_types
     end
 
-    scenario 'updates toggle value when input matches' do
+    it 'updates template type toggle value when template is chosen' do
       fill_in 'file_path', with: '.gitignore'
+      select_template('gitignore', 'Actionscript')
       check_type_selector_toggle_text('.gitignore')
     end
   end
@@ -34,15 +36,11 @@ feature 'Template type dropdown selector', js: true do
       visit project_edit_blob_path(project, File.join(project.default_branch, 'LICENSE'))
     end
 
-    scenario 'displayed' do
+    it 'displayed' do
       check_type_selector_display(true)
     end
 
-    scenario 'is displayed when input matches' do
-      check_type_selector_display(true)
-    end
-
-    scenario 'selects every template type correctly' do
+    it 'selects every template type correctly' do
       try_selecting_all_types
     end
 
@@ -51,7 +49,7 @@ feature 'Template type dropdown selector', js: true do
         click_link 'Preview changes'
       end
 
-      scenario 'type selector is hidden and shown correctly' do
+      it 'type selector is hidden and shown correctly' do
         check_type_selector_display(false)
         click_link 'Write'
         check_type_selector_display(true)
@@ -64,15 +62,21 @@ feature 'Template type dropdown selector', js: true do
       visit project_new_blob_path(project, 'master', file_name: '.gitignore')
     end
 
-    scenario 'is displayed' do
+    it 'is displayed' do
       check_type_selector_display(true)
     end
 
-    scenario 'toggle is set to the correct value' do
+    it 'toggle is set to the correct value' do
+      select_template('gitignore', 'Actionscript')
       check_type_selector_toggle_text('.gitignore')
     end
 
-    scenario 'selects every template type correctly' do
+    it 'sets the toggle text when selecting the template type' do
+      select_template_type('.gitignore')
+      check_type_selector_toggle_text('.gitignore')
+    end
+
+    it 'selects every template type correctly' do
       try_selecting_all_types
     end
   end
@@ -82,15 +86,15 @@ feature 'Template type dropdown selector', js: true do
       visit project_new_blob_path(project, project.default_branch)
     end
 
-    scenario 'type selector is shown' do
+    it 'type selector is shown' do
       check_type_selector_display(true)
     end
 
-    scenario 'toggle is set to the proper value' do
-      check_type_selector_toggle_text('Choose type')
+    it 'toggle is set to the proper value' do
+      check_type_selector_toggle_text('Select a template type')
     end
 
-    scenario 'selects every template type correctly' do
+    it 'selects every template type correctly' do
       try_selecting_all_types
     end
   end
@@ -102,21 +106,25 @@ def check_type_selector_display(is_visible)
 end
 
 def try_selecting_all_types
-  try_selecting_template_type('LICENSE', 'Apply a license template')
-  try_selecting_template_type('Dockerfile', 'Apply a Dockerfile template')
-  try_selecting_template_type('.gitlab-ci.yml', 'Apply a GitLab CI Yaml template')
-  try_selecting_template_type('.gitignore', 'Apply a .gitignore template')
+  try_selecting_template_type('LICENSE', 'Apply a template')
+  try_selecting_template_type('Dockerfile', 'Apply a template')
+  try_selecting_template_type('.gitlab-ci.yml', 'Apply a template')
+  try_selecting_template_type('.gitignore', 'Apply a template')
 end
 
 def try_selecting_template_type(template_type, selector_label)
   select_template_type(template_type)
   check_template_selector_display(selector_label)
-  check_type_selector_toggle_text(template_type)
 end
 
 def select_template_type(template_type)
   find('.js-template-type-selector').click
   find('.dropdown-content li', text: template_type).click
+end
+
+def select_template(type, template)
+  find(".js-#{type}-selector-wrap").click
+  find('.dropdown-content li', text: template).click
 end
 
 def check_template_selector_display(content)

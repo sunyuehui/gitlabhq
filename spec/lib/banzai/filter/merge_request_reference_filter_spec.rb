@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::MergeRequestReferenceFilter do
+RSpec.describe Banzai::Filter::MergeRequestReferenceFilter do
   include FilterSpecHelper
 
   let(:project) { create(:project, :public) }
@@ -30,6 +32,23 @@ describe Banzai::Filter::MergeRequestReferenceFilter do
     end
   end
 
+  describe 'all references' do
+    let(:doc) { reference_filter(merge.to_reference) }
+    let(:tag_el) { doc.css('a').first }
+
+    it 'adds merge request iid' do
+      expect(tag_el["data-iid"]).to eq(merge.iid.to_s)
+    end
+
+    it 'adds project data attribute with project id' do
+      expect(tag_el["data-project-path"]).to eq(project.full_path)
+    end
+
+    it 'does not add `has-tooltip` class' do
+      expect(tag_el["class"]).not_to include('has-tooltip')
+    end
+  end
+
   context 'internal reference' do
     let(:reference) { merge.to_reference }
 
@@ -42,7 +61,7 @@ describe Banzai::Filter::MergeRequestReferenceFilter do
 
     it 'links with adjacent text' do
       doc = reference_filter("Merge (#{reference}.)")
-      expect(doc.to_html).to match(/\(<a.+>#{Regexp.escape(reference)}<\/a>\.\)/)
+      expect(doc.to_html).to match(%r{\(<a.+>#{Regexp.escape(reference)}</a>\.\)})
     end
 
     it 'ignores invalid merge IDs' do
@@ -57,9 +76,9 @@ describe Banzai::Filter::MergeRequestReferenceFilter do
       expect(reference_filter(act).to_html).to eq exp
     end
 
-    it 'includes a title attribute' do
+    it 'has no title' do
       doc = reference_filter("Merge #{reference}")
-      expect(doc.css('a').first.attr('title')).to eq merge.title
+      expect(doc.css('a').first.attr('title')).to eq ""
     end
 
     it 'escapes the title attribute' do
@@ -69,9 +88,9 @@ describe Banzai::Filter::MergeRequestReferenceFilter do
       expect(doc.text).to eq "Merge #{reference}"
     end
 
-    it 'includes default classes' do
+    it 'includes default classes, without tooltip' do
       doc = reference_filter("Merge #{reference}")
-      expect(doc.css('a').first.attr('class')).to eq 'gfm gfm-merge_request has-tooltip'
+      expect(doc.css('a').first.attr('class')).to eq 'gfm gfm-merge_request'
     end
 
     it 'includes a data-project attribute' do
@@ -196,6 +215,49 @@ describe Banzai::Filter::MergeRequestReferenceFilter do
     end
   end
 
+  context 'URL reference for a commit' do
+    let(:mr) { create(:merge_request, :with_diffs) }
+    let(:reference) do
+      urls.project_merge_request_url(mr.project, mr) + "/diffs?commit_id=#{mr.diff_head_sha}"
+    end
+
+    let(:commit) { mr.commits.find { |commit| commit.sha == mr.diff_head_sha } }
+
+    it 'links to a valid reference' do
+      doc = reference_filter("See #{reference}")
+
+      expect(doc.css('a').first.attr('href'))
+        .to eq reference
+    end
+
+    it 'commit ref tag is valid' do
+      doc = reference_filter("See #{reference}")
+      commit_ref_tag = doc.css('a').first.css('span.gfm.gfm-commit')
+
+      expect(commit_ref_tag.text).to eq(commit.short_id)
+    end
+
+    it 'has valid text' do
+      doc = reference_filter("See #{reference}")
+
+      expect(doc.text).to eq("See #{mr.to_reference(full: true)} (#{commit.short_id})")
+    end
+
+    it 'has valid title attribute' do
+      doc = reference_filter("See #{reference}")
+
+      expect(doc.css('a').first.attr('title')).to eq(commit.title)
+    end
+
+    it 'ignores invalid commit short_ids on link text' do
+      invalidate_commit_reference =
+        urls.project_merge_request_url(mr.project, mr) + "/diffs?commit_id=12345678"
+      doc = reference_filter("See #{invalidate_commit_reference}")
+
+      expect(doc.text).to eq("See #{mr.to_reference(full: true)} (diffs)")
+    end
+  end
+
   context 'cross-project URL reference' do
     let(:namespace) { create(:namespace, name: 'cross-reference') }
     let(:project2)  { create(:project, :public, namespace: namespace) }
@@ -211,7 +273,17 @@ describe Banzai::Filter::MergeRequestReferenceFilter do
 
     it 'links with adjacent text' do
       doc = reference_filter("Merge (#{reference}.)")
-      expect(doc.to_html).to match(/\(<a.+>#{Regexp.escape(merge.to_reference(project))} \(diffs, comment 123\)<\/a>\.\)/)
+      expect(doc.to_html).to match(%r{\(<a.+>#{Regexp.escape(merge.to_reference(project))} \(diffs, comment 123\)</a>\.\)})
+    end
+  end
+
+  context 'group context' do
+    it 'links to a valid reference' do
+      reference = "#{project.full_path}!#{merge.iid}"
+
+      result = reference_filter("See #{reference}", { project: nil, group: create(:group) } )
+
+      expect(result.css('a').first.attr('href')).to eq(urls.project_merge_request_url(project, merge))
     end
   end
 end

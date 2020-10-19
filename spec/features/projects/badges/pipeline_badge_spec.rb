@@ -1,26 +1,17 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Pipeline Badge' do
-  set(:project) { create(:project, :repository, :public) }
+RSpec.describe 'Pipeline Badge' do
+  let_it_be(:project) { create(:project, :repository, :public) }
   let(:ref) { project.default_branch }
-
-  # this can't be tested in the controller, as it bypasses the rails router
-  # and constructs a route based on the controller being tested
-  # Keep around until 10.0, see gitlab-org/gitlab-ce#35307
-  context 'when the deprecated badge is requested' do
-    it 'displays the badge' do
-      visit build_project_badges_path(project, ref: ref, format: :svg)
-
-      expect(page.status_code).to eq(200)
-    end
-  end
 
   context 'when the project has a pipeline' do
     let!(:pipeline) { create(:ci_empty_pipeline, project: project, ref: ref, sha: project.commit(ref).sha) }
     let!(:job) { create(:ci_build, pipeline: pipeline) }
 
-    context 'when the pipeline was successfull' do
-      it 'displays so on the badge' do
+    context 'when the pipeline was successful' do
+      it 'displays so on the badge', :sidekiq_might_not_need_inline do
         job.success
 
         visit pipeline_project_badges_path(project, ref: ref, format: :svg)
@@ -31,7 +22,7 @@ feature 'Pipeline Badge' do
     end
 
     context 'when the pipeline failed' do
-      it 'shows displays so on the badge' do
+      it 'shows displays so on the badge', :sidekiq_might_not_need_inline do
         job.drop
 
         visit pipeline_project_badges_path(project, ref: ref, format: :svg)
@@ -41,8 +32,27 @@ feature 'Pipeline Badge' do
       end
     end
 
+    context 'when the pipeline is preparing' do
+      let!(:job) { create(:ci_build, status: 'created', pipeline: pipeline) }
+
+      before do
+        # Prevent skipping directly to 'pending'
+        allow(Ci::BuildPrepareWorker).to receive(:perform_async)
+        allow(job).to receive(:prerequisites).and_return([double])
+      end
+
+      it 'displays the preparing badge', :sidekiq_might_not_need_inline do
+        job.enqueue
+
+        visit pipeline_project_badges_path(project, ref: ref, format: :svg)
+
+        expect(page.status_code).to eq(200)
+        expect_badge('preparing')
+      end
+    end
+
     context 'when the pipeline is running' do
-      it 'shows displays so on the badge' do
+      it 'shows displays so on the badge', :sidekiq_might_not_need_inline do
         create(:ci_build, pipeline: pipeline, name: 'second build', status_event: 'run')
 
         visit pipeline_project_badges_path(project, ref: ref, format: :svg)

@@ -1,7 +1,8 @@
-require 'spec_helper'
-require 'lib/gitlab/cycle_analytics/shared_event_spec'
+# frozen_string_literal: true
 
-describe Gitlab::CycleAnalytics::IssueEventFetcher do
+require 'spec_helper'
+
+RSpec.describe Gitlab::CycleAnalytics::IssueEventFetcher do
   let(:stage_name) { :issue }
 
   it_behaves_like 'default query config'

@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 module Editable
   extend ActiveSupport::Concern
 
-  def is_edited?
+  def edited?
     last_edited_at.present? && last_edited_at != created_at
   end
 

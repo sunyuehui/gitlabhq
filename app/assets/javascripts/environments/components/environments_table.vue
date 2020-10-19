@@ -2,38 +2,142 @@
 /**
  * Render environments table.
  */
-import EnvironmentTableRowComponent from './environment_item.vue';
-import loadingIcon from '../../vue_shared/components/loading_icon.vue';
+import { GlLoadingIcon } from '@gitlab/ui';
+import { flow, reverse, sortBy } from 'lodash/fp';
+import { s__ } from '~/locale';
+import EnvironmentItem from './environment_item.vue';
 
 export default {
   components: {
-    'environment-item': EnvironmentTableRowComponent,
-    loadingIcon,
+    EnvironmentItem,
+    GlLoadingIcon,
+    DeployBoard: () => import('ee_component/environments/components/deploy_board_component.vue'),
+    CanaryDeploymentCallout: () =>
+      import('ee_component/environments/components/canary_deployment_callout.vue'),
+    EnvironmentAlert: () => import('ee_component/environments/components/environment_alert.vue'),
   },
-
   props: {
     environments: {
       type: Array,
       required: true,
-      default: () => ([]),
+      default: () => [],
     },
-
+    deployBoardsHelpPath: {
+      type: String,
+      required: false,
+      default: '',
+    },
     canReadEnvironment: {
       type: Boolean,
       required: false,
       default: false,
     },
-
-    canCreateDeployment: {
+    canaryDeploymentFeatureId: {
+      type: String,
+      required: false,
+      default: '',
+    },
+    helpCanaryDeploymentsPath: {
+      type: String,
+      required: false,
+      default: '',
+    },
+    lockPromotionSvgPath: {
+      type: String,
+      required: false,
+      default: '',
+    },
+    showCanaryDeploymentCallout: {
       type: Boolean,
       required: false,
       default: false,
     },
+    userCalloutsPath: {
+      type: String,
+      required: false,
+      default: '',
+    },
   },
-
+  computed: {
+    sortedEnvironments() {
+      return this.sortEnvironments(this.environments).map(env =>
+        this.shouldRenderFolderContent(env)
+          ? { ...env, children: this.sortEnvironments(env.children) }
+          : env,
+      );
+    },
+    tableData() {
+      return {
+        // percent spacing for cols, should add up to 100
+        name: {
+          title: s__('Environments|Environment'),
+          spacing: 'section-15',
+        },
+        deploy: {
+          title: s__('Environments|Deployment'),
+          spacing: 'section-10',
+        },
+        build: {
+          title: s__('Environments|Job'),
+          spacing: 'section-15',
+        },
+        commit: {
+          title: s__('Environments|Commit'),
+          spacing: 'section-20',
+        },
+        date: {
+          title: s__('Environments|Updated'),
+          spacing: 'section-10',
+        },
+        autoStop: {
+          title: s__('Environments|Auto stop in'),
+          spacing: 'section-5',
+        },
+        actions: {
+          spacing: 'section-25',
+        },
+      };
+    },
+  },
   methods: {
     folderUrl(model) {
       return `${window.location.pathname}/folders/${model.folderName}`;
+    },
+    shouldRenderDeployBoard(model) {
+      return model.hasDeployBoard && model.isDeployBoardVisible;
+    },
+    shouldRenderFolderContent(env) {
+      return env.isFolder && env.isOpen && env.children && env.children.length > 0;
+    },
+    shouldShowCanaryCallout(env) {
+      return env.showCanaryCallout && this.showCanaryDeploymentCallout;
+    },
+    shouldRenderAlert(env) {
+      return env?.has_opened_alert;
+    },
+    sortEnvironments(environments) {
+      /*
+       * The sorting algorithm should sort in the following priorities:
+       *
+       * 1. folders first,
+       * 2. last updated descending,
+       * 3. by name ascending,
+       *
+       * the sorting algorithm must:
+       *
+       * 1. Sort by name ascending,
+       * 2. Reverse (sort by name descending),
+       * 3. Sort by last deployment ascending,
+       * 4. Reverse (last deployment descending, name ascending),
+       * 5. Put folders first.
+       */
+      return flow(
+        sortBy(env => (env.isFolder ? env.folderName : env.name)),
+        reverse,
+        sortBy(env => (env.last_deployment ? env.last_deployment.created_at : '0000')),
+        reverse,
+        sortBy(env => (env.isFolder ? -1 : 1)),
+      )(environments);
     },
   },
 };
@@ -41,56 +145,89 @@ export default {
 <template>
   <div class="ci-table" role="grid">
     <div class="gl-responsive-table-row table-row-header" role="row">
-      <div class="table-section section-10 environments-name" role="columnheader">
-        Environment
+      <div class="table-section" :class="tableData.name.spacing" role="columnheader">
+        {{ tableData.name.title }}
       </div>
-      <div class="table-section section-10 environments-deploy" role="columnheader">
-        Deployment
+      <div class="table-section" :class="tableData.deploy.spacing" role="columnheader">
+        {{ tableData.deploy.title }}
       </div>
-      <div class="table-section section-15 environments-build" role="columnheader">
-        Job
+      <div class="table-section" :class="tableData.build.spacing" role="columnheader">
+        {{ tableData.build.title }}
       </div>
-      <div class="table-section section-25 environments-commit" role="columnheader">
-        Commit
+      <div class="table-section" :class="tableData.commit.spacing" role="columnheader">
+        {{ tableData.commit.title }}
       </div>
-      <div class="table-section section-10 environments-date" role="columnheader">
-        Updated
+      <div class="table-section" :class="tableData.date.spacing" role="columnheader">
+        {{ tableData.date.title }}
+      </div>
+      <div class="table-section" :class="tableData.autoStop.spacing" role="columnheader">
+        {{ tableData.autoStop.title }}
       </div>
     </div>
-    <template
-      v-for="model in environments"
-      v-bind:model="model">
+    <template v-for="(model, i) in sortedEnvironments" :model="model">
       <div
         is="environment-item"
+        :key="`environment-item-${i}`"
         :model="model"
-        :can-create-deployment="canCreateDeployment"
         :can-read-environment="canReadEnvironment"
-        />
+        :table-data="tableData"
+      />
 
-      <template v-if="model.isFolder && model.isOpen && model.children && model.children.length > 0">
-        <div v-if="model.isLoadingFolderContent">
-          <loading-icon size="2" />
+      <div
+        v-if="shouldRenderDeployBoard(model)"
+        :key="`deploy-board-row-${i}`"
+        class="js-deploy-board-row"
+      >
+        <div class="deploy-board-container">
+          <deploy-board
+            :deploy-board-data="model.deployBoardData"
+            :deploy-boards-help-path="deployBoardsHelpPath"
+            :is-loading="model.isLoadingDeployBoard"
+            :is-empty="model.isEmptyDeployBoard"
+            :logs-path="model.logs_path"
+          />
+        </div>
+      </div>
+      <environment-alert
+        v-if="shouldRenderAlert(model)"
+        :key="`alert-row-${i}`"
+        :environment="model"
+      />
+
+      <template v-if="shouldRenderFolderContent(model)">
+        <div v-if="model.isLoadingFolderContent" :key="`loading-item-${i}`">
+          <gl-loading-icon size="md" class="gl-mt-5" />
         </div>
 
         <template v-else>
           <div
             is="environment-item"
-            v-for="children in model.children"
+            v-for="(children, index) in model.children"
+            :key="`env-item-${i}-${index}`"
             :model="children"
-            :can-create-deployment="canCreateDeployment"
             :can-read-environment="canReadEnvironment"
-            />
+            :table-data="tableData"
+          />
 
-          <div>
-            <div class="text-center prepend-top-10">
-              <a
-                :href="folderUrl(model)"
-                class="btn btn-default">
-                Show all
+          <div :key="`sub-div-${i}`">
+            <div class="text-center gl-mt-3">
+              <a :href="folderUrl(model)" class="btn btn-default">
+                {{ s__('Environments|Show all') }}
               </a>
             </div>
           </div>
         </template>
+      </template>
+
+      <template v-if="shouldShowCanaryCallout(model)">
+        <canary-deployment-callout
+          :key="`canary-promo-${i}`"
+          :canary-deployment-feature-id="canaryDeploymentFeatureId"
+          :user-callouts-path="userCalloutsPath"
+          :lock-promotion-svg-path="lockPromotionSvgPath"
+          :help-canary-deployments-path="helpCanaryDeploymentsPath"
+          :data-js-canary-promo-key="i"
+        />
       </template>
     </template>
   </div>

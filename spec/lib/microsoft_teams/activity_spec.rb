@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe MicrosoftTeams::Activity do
+RSpec.describe MicrosoftTeams::Activity do
   subject { described_class.new(title: 'title', subtitle: 'subtitle', text: 'text', image: 'image') }
 
   describe '#prepare' do

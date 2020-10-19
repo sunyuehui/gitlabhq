@@ -1,13 +1,18 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe TeamcityService, :use_clean_rails_memory_store_caching do
+RSpec.describe TeamcityService, :use_clean_rails_memory_store_caching do
   include ReactiveCachingHelpers
+  include StubRequests
 
   let(:teamcity_url) { 'http://gitlab.com/teamcity' }
+  let(:teamcity_full_url) { 'http://gitlab.com/teamcity/httpAuth/app/rest/builds/branch:unspecified:any,revision:123' }
+  let(:project) { create(:project) }
 
   subject(:service) do
-    described_class.create(
-      project: create(:project),
+    described_class.create!(
+      project: project,
       properties: {
         teamcity_url: teamcity_url,
         username: 'mic',
@@ -80,7 +85,7 @@ describe TeamcityService, :use_clean_rails_memory_store_caching do
           teamcity_service = service
 
           teamcity_service.teamcity_url = 'http://gitlab1.com'
-          teamcity_service.save
+          teamcity_service.save!
 
           expect(teamcity_service.password).to be_nil
         end
@@ -89,7 +94,7 @@ describe TeamcityService, :use_clean_rails_memory_store_caching do
           teamcity_service = service
 
           teamcity_service.username = 'some_name'
-          teamcity_service.save
+          teamcity_service.save!
 
           expect(teamcity_service.password).to eq('password')
         end
@@ -99,7 +104,7 @@ describe TeamcityService, :use_clean_rails_memory_store_caching do
 
           teamcity_service.teamcity_url = 'http://gitlab_edited.com'
           teamcity_service.password = 'password'
-          teamcity_service.save
+          teamcity_service.save!
 
           expect(teamcity_service.password).to eq('password')
           expect(teamcity_service.teamcity_url).to eq('http://gitlab_edited.com')
@@ -112,7 +117,7 @@ describe TeamcityService, :use_clean_rails_memory_store_caching do
 
         teamcity_service.teamcity_url = 'http://gitlab_edited.com'
         teamcity_service.password = 'password'
-        teamcity_service.save
+        teamcity_service.save!
 
         expect(teamcity_service.password).to eq('password')
         expect(teamcity_service.teamcity_url).to eq('http://gitlab_edited.com')
@@ -161,6 +166,16 @@ describe TeamcityService, :use_clean_rails_memory_store_caching do
           is_expected.to eq('http://gitlab.com/teamcity/viewLog.html?buildId=666&buildTypeId=foo')
         end
       end
+
+      it 'returns the teamcity_url when teamcity is unreachable' do
+        stub_full_request(teamcity_full_url).to_raise(Errno::ECONNREFUSED)
+
+        expect(Gitlab::ErrorTracking)
+          .to receive(:log_exception)
+          .with(instance_of(Errno::ECONNREFUSED), project_id: project.id)
+
+        is_expected.to eq(teamcity_url)
+      end
     end
 
     context 'commit_status' do
@@ -201,16 +216,116 @@ describe TeamcityService, :use_clean_rails_memory_store_caching do
 
         is_expected.to eq(:error)
       end
+
+      it 'sets commit status to :error when teamcity is unreachable' do
+        stub_full_request(teamcity_full_url).to_raise(Errno::ECONNREFUSED)
+
+        expect(Gitlab::ErrorTracking)
+          .to receive(:log_exception)
+          .with(instance_of(Errno::ECONNREFUSED), project_id: project.id)
+
+        is_expected.to eq(:error)
+      end
     end
   end
 
+  describe '#execute' do
+    context 'when push' do
+      let(:data) do
+        {
+          object_kind: 'push',
+          ref: 'refs/heads/dev-123_branch',
+          after: '0220c11b9a3e6c69dc8fd35321254ca9a7b98f7e',
+          total_commits_count: 1
+        }
+      end
+
+      it 'handles push request correctly' do
+        stub_post_to_build_queue(branch: 'dev-123_branch')
+
+        expect(service.execute(data)).to include('Ok')
+      end
+
+      it 'returns nil when ref is blank' do
+        data[:after] = Gitlab::Git::BLANK_SHA
+
+        expect(service.execute(data)).to be_nil
+      end
+
+      it 'returns nil when there is no content' do
+        data[:total_commits_count] = 0
+
+        expect(service.execute(data)).to be_nil
+      end
+
+      it 'returns nil when a merge request is opened for the same ref' do
+        create(:merge_request, source_project: project, source_branch: 'dev-123_branch')
+
+        expect(service.execute(data)).to be_nil
+      end
+    end
+
+    context 'when merge_request' do
+      let(:data) do
+        {
+          object_kind: 'merge_request',
+          ref: 'refs/heads/dev-123_branch',
+          after: '0220c11b9a3e6c69dc8fd35321254ca9a7b98f7e',
+          total_commits_count: 1,
+          object_attributes: {
+            state: 'opened',
+            source_branch: 'dev-123_branch',
+            merge_status: 'unchecked'
+          }
+        }
+      end
+
+      it 'handles merge request correctly' do
+        stub_post_to_build_queue(branch: 'dev-123_branch')
+
+        expect(service.execute(data)).to include('Ok')
+      end
+
+      it 'returns nil when merge request is not opened' do
+        data[:object_attributes][:state] = 'closed'
+
+        expect(service.execute(data)).to be_nil
+      end
+
+      it 'returns nil unless merge request is marked as unchecked' do
+        data[:object_attributes][:merge_status] = 'can_be_merged'
+
+        expect(service.execute(data)).to be_nil
+      end
+    end
+
+    it 'returns nil when event is not supported' do
+      data = { object_kind: 'foo' }
+
+      expect(service.execute(data)).to be_nil
+    end
+  end
+
+  def stub_post_to_build_queue(branch:)
+    teamcity_full_url = 'http://gitlab.com/teamcity/httpAuth/app/rest/buildQueue'
+    body ||= %Q(<build branchName=\"#{branch}\"><buildType id=\"foo\"/></build>)
+    auth = %w(mic password)
+
+    stub_full_request(teamcity_full_url, method: :post).with(
+      basic_auth: auth,
+      body: body,
+      headers: {
+        'Content-Type' => 'application/xml'
+      }
+    ).to_return(status: 200, body: 'Ok', headers: {})
+  end
+
   def stub_request(status: 200, body: nil, build_status: 'success')
-    teamcity_full_url = 'http://gitlab.com/teamcity/httpAuth/app/rest/builds/branch:unspecified:any,number:123'
     auth = %w(mic password)
 
     body ||= %Q({"build":{"status":"#{build_status}","id":"666"}})
 
-    WebMock.stub_request(:get, teamcity_full_url).with(basic_auth: auth).to_return(
+    stub_full_request(teamcity_full_url).with(basic_auth: auth).to_return(
       status: status,
       headers: { 'Content-Type' => 'application/json' },
       body: body

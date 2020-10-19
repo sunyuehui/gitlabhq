@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Diff::InlineDiff do
+RSpec.describe Gitlab::Diff::InlineDiff do
   describe '.for_lines' do
     let(:diff) do
       <<-EOF.strip_heredoc
@@ -30,6 +32,10 @@ describe Gitlab::Diff::InlineDiff do
       expect(subject[6]).to eq([5..15])
       expect(subject[7]).to eq([17..17])
       expect(subject[8]).to be_nil
+    end
+
+    it 'can handle unchanged empty lines' do
+      expect { described_class.for_lines(['- bar', '+ baz', '']) }.not_to raise_error
     end
   end
 

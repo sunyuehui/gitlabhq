@@ -1,20 +1,28 @@
+# frozen_string_literal: true
+
 module Gitlab
   class Highlight
-    def self.highlight(blob_name, blob_content, repository: nil, plain: false)
-      new(blob_name, blob_content, repository: repository)
+    TIMEOUT_BACKGROUND = 30.seconds
+    TIMEOUT_FOREGROUND = 1.5.seconds
+    MAXIMUM_TEXT_HIGHLIGHT_SIZE = 512.kilobytes
+
+    def self.highlight(blob_name, blob_content, language: nil, plain: false)
+      new(blob_name, blob_content, language: language)
         .highlight(blob_content, continue: false, plain: plain)
     end
 
     attr_reader :blob_name
 
-    def initialize(blob_name, blob_content, repository: nil)
+    def initialize(blob_name, blob_content, language: nil)
       @formatter = Rouge::Formatters::HTMLGitlab
-      @repository = repository
+      @language = language
       @blob_name = blob_name
       @blob_content = blob_content
     end
 
     def highlight(text, continue: true, plain: false)
+      plain ||= text.length > MAXIMUM_TEXT_HIGHLIGHT_SIZE
+
       highlighted_text = highlight_text(text, continue: continue, plain: plain)
       highlighted_text = link_dependencies(text, highlighted_text) if blob_name
       highlighted_text
@@ -23,19 +31,17 @@ module Gitlab
     def lexer
       @lexer ||= custom_language || begin
         Rouge::Lexer.guess(filename: @blob_name, source: @blob_content).new
-      rescue Rouge::Guesser::Ambiguous => e
-        e.alternatives.sort_by(&:tag).first
+                                    rescue Rouge::Guesser::Ambiguous => e
+                                      e.alternatives.min_by(&:tag)
       end
     end
 
     private
 
     def custom_language
-      language_name = @repository && @repository.gitattribute(@blob_name, 'gitlab-language')
+      return unless @language
 
-      return nil unless language_name
-
-      Rouge::Lexer.find_fancy(language_name)
+      Rouge::Lexer.find_fancy(@language)
     end
 
     def highlight_text(text, continue: true, plain: false)
@@ -51,9 +57,18 @@ module Gitlab
     end
 
     def highlight_rich(text, continue: true)
-      @formatter.format(lexer.lex(text, continue: continue), tag: lexer.tag).html_safe
+      tag = lexer.tag
+      tokens = lexer.lex(text, continue: continue)
+      Timeout.timeout(timeout_time) { @formatter.format(tokens, tag: tag).html_safe }
+    rescue Timeout::Error => e
+      Gitlab::ErrorTracking.track_and_raise_for_dev_exception(e)
+      highlight_plain(text)
     rescue
       highlight_plain(text)
+    end
+
+    def timeout_time
+      Gitlab::Runtime.sidekiq? ? TIMEOUT_BACKGROUND : TIMEOUT_FOREGROUND
     end
 
     def link_dependencies(text, highlighted_text)

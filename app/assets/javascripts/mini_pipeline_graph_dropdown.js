@@ -1,5 +1,7 @@
-/* eslint-disable no-new */
-/* global Flash */
+import $ from 'jquery';
+import { deprecatedCreateFlash as flash } from './flash';
+import axios from './lib/utils/axios_utils';
+import { __ } from './locale';
 
 /**
  * In each pipelines table we have a mini pipeline graph for each pipeline.
@@ -45,7 +47,7 @@ export default class MiniPipelineGraph {
     $(document).on(
       'click',
       `${this.container} .js-builds-dropdown-list a.mini-pipeline-graph-dropdown-item`,
-      (e) => {
+      e => {
         e.stopPropagation();
       },
     );
@@ -59,7 +61,7 @@ export default class MiniPipelineGraph {
    */
   renderBuildsList(stageContainer, data) {
     const dropdownContainer = stageContainer.parentElement.querySelector(
-      `${this.dropdownListSelector} .js-builds-dropdown-list`,
+      `${this.dropdownListSelector} .js-builds-dropdown-list ul`,
     );
 
     dropdownContainer.innerHTML = data;
@@ -78,27 +80,27 @@ export default class MiniPipelineGraph {
     const button = e.relatedTarget;
     const endpoint = button.dataset.stageEndpoint;
 
-    return $.ajax({
-      dataType: 'json',
-      type: 'GET',
-      url: endpoint,
-      beforeSend: () => {
-        this.renderBuildsList(button, '');
-        this.toggleLoading(button);
-      },
-      success: (data) => {
+    this.renderBuildsList(button, '');
+    this.toggleLoading(button);
+
+    axios
+      .get(endpoint)
+      .then(({ data }) => {
         this.toggleLoading(button);
         this.renderBuildsList(button, data.html);
         this.stopDropdownClickPropagation();
-      },
-      error: () => {
+      })
+      .catch(() => {
         this.toggleLoading(button);
-        if ($(button).parent().hasClass('open')) {
+        if (
+          $(button)
+            .parent()
+            .hasClass('open')
+        ) {
           $(button).dropdown('toggle');
         }
-        new Flash('An error occurred while fetching the builds.', 'alert');
-      },
-    });
+        flash(__('An error occurred while fetching the builds.'), 'alert');
+      });
   }
 
   /**
@@ -108,8 +110,8 @@ export default class MiniPipelineGraph {
    * @return {type}
    */
   toggleLoading(stageContainer) {
-    stageContainer.parentElement.querySelector(
-      `${this.dropdownListSelector} .js-builds-dropdown-loading`,
-    ).classList.toggle('hidden');
+    stageContainer.parentElement
+      .querySelector(`${this.dropdownListSelector} .js-builds-dropdown-loading`)
+      .classList.toggle('hidden');
   }
 }

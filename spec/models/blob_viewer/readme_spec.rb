@@ -1,10 +1,13 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe BlobViewer::Readme do
+RSpec.describe BlobViewer::Readme do
   include FakeBlobHelpers
 
-  let(:project) { create(:project, :repository) }
+  let(:project) { create(:project, :repository, :wiki_repo) }
   let(:blob) { fake_blob(path: 'README.md') }
+
   subject { described_class.new(blob) }
 
   describe '#render_error' do
@@ -37,7 +40,7 @@ describe BlobViewer::Readme do
 
       context 'when the wiki is not empty' do
         before do
-          WikiPages::CreateService.new(project, project.owner, title: 'home', content: 'Home page').execute
+          create(:wiki_page, wiki: project.wiki, title: 'home', content: 'Home page')
         end
 
         it 'returns nil' do

@@ -1,23 +1,25 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe API::AccessRequests do
-  let(:master) { create(:user) }
-  let(:developer) { create(:user) }
-  let(:access_requester) { create(:user) }
-  let(:stranger) { create(:user) }
+RSpec.describe API::AccessRequests do
+  let_it_be(:maintainer) { create(:user) }
+  let_it_be(:developer) { create(:user) }
+  let_it_be(:access_requester) { create(:user) }
+  let_it_be(:stranger) { create(:user) }
 
-  let(:project) do
-    create(:project, :public, :access_requestable, creator_id: master.id, namespace: master.namespace) do |project|
-      project.team << [developer, :developer]
-      project.team << [master, :master]
+  let_it_be(:project) do
+    create(:project, :public, creator_id: maintainer.id, namespace: maintainer.namespace) do |project|
+      project.add_developer(developer)
+      project.add_maintainer(maintainer)
       project.request_access(access_requester)
     end
   end
 
-  let(:group) do
-    create(:group, :public, :access_requestable) do |group|
+  let_it_be(:group) do
+    create(:group, :public) do |group|
       group.add_developer(developer)
-      group.add_owner(master)
+      group.add_owner(maintainer)
       group.request_access(access_requester)
     end
   end
@@ -28,24 +30,24 @@ describe API::AccessRequests do
         let(:route) { get api("/#{source_type.pluralize}/#{source.id}/access_requests", stranger) }
       end
 
-      context 'when authenticated as a non-master/owner' do
+      context 'when authenticated as a non-maintainer/owner' do
         %i[developer access_requester stranger].each do |type|
           context "as a #{type}" do
             it 'returns 403' do
               user = public_send(type)
               get api("/#{source_type.pluralize}/#{source.id}/access_requests", user)
 
-              expect(response).to have_http_status(403)
+              expect(response).to have_gitlab_http_status(:forbidden)
             end
           end
         end
       end
 
-      context 'when authenticated as a master/owner' do
+      context 'when authenticated as a maintainer/owner' do
         it 'returns access requesters' do
-          get api("/#{source_type.pluralize}/#{source.id}/access_requests", master)
+          get api("/#{source_type.pluralize}/#{source.id}/access_requests", maintainer)
 
-          expect(response).to have_http_status(200)
+          expect(response).to have_gitlab_http_status(:ok)
           expect(response).to include_pagination_headers
           expect(json_response).to be_an Array
           expect(json_response.size).to eq(1)
@@ -61,14 +63,14 @@ describe API::AccessRequests do
       end
 
       context 'when authenticated as a member' do
-        %i[developer master].each do |type|
+        %i[developer maintainer].each do |type|
           context "as a #{type}" do
             it 'returns 403' do
               expect do
                 user = public_send(type)
                 post api("/#{source_type.pluralize}/#{source.id}/access_requests", user)
 
-                expect(response).to have_http_status(403)
+                expect(response).to have_gitlab_http_status(:forbidden)
               end.not_to change { source.requesters.count }
             end
           end
@@ -80,7 +82,7 @@ describe API::AccessRequests do
           expect do
             post api("/#{source_type.pluralize}/#{source.id}/access_requests", access_requester)
 
-            expect(response).to have_http_status(400)
+            expect(response).to have_gitlab_http_status(:bad_request)
           end.not_to change { source.requesters.count }
         end
       end
@@ -88,14 +90,14 @@ describe API::AccessRequests do
       context 'when authenticated as a stranger' do
         context "when access request is disabled for the #{source_type}" do
           before do
-            source.update_attributes(request_access_enabled: false)
+            source.update!(request_access_enabled: false)
           end
 
           it 'returns 403' do
             expect do
               post api("/#{source_type.pluralize}/#{source.id}/access_requests", stranger)
 
-              expect(response).to have_http_status(403)
+              expect(response).to have_gitlab_http_status(:forbidden)
             end.not_to change { source.requesters.count }
           end
         end
@@ -104,7 +106,7 @@ describe API::AccessRequests do
           expect do
             post api("/#{source_type.pluralize}/#{source.id}/access_requests", stranger)
 
-            expect(response).to have_http_status(201)
+            expect(response).to have_gitlab_http_status(:created)
           end.to change { source.requesters.count }.by(1)
 
           # User attributes
@@ -128,26 +130,26 @@ describe API::AccessRequests do
         let(:route) { put api("/#{source_type.pluralize}/#{source.id}/access_requests/#{access_requester.id}/approve", stranger) }
       end
 
-      context 'when authenticated as a non-master/owner' do
+      context 'when authenticated as a non-maintainer/owner' do
         %i[developer access_requester stranger].each do |type|
           context "as a #{type}" do
             it 'returns 403' do
               user = public_send(type)
               put api("/#{source_type.pluralize}/#{source.id}/access_requests/#{access_requester.id}/approve", user)
 
-              expect(response).to have_http_status(403)
+              expect(response).to have_gitlab_http_status(:forbidden)
             end
           end
         end
       end
 
-      context 'when authenticated as a master/owner' do
+      context 'when authenticated as a maintainer/owner' do
         it 'returns 201' do
           expect do
-            put api("/#{source_type.pluralize}/#{source.id}/access_requests/#{access_requester.id}/approve", master),
-                access_level: Member::MASTER
+            put api("/#{source_type.pluralize}/#{source.id}/access_requests/#{access_requester.id}/approve", maintainer),
+                params: { access_level: Member::MAINTAINER }
 
-            expect(response).to have_http_status(201)
+            expect(response).to have_gitlab_http_status(:created)
           end.to change { source.members.count }.by(1)
           # User attributes
           expect(json_response['id']).to eq(access_requester.id)
@@ -158,15 +160,15 @@ describe API::AccessRequests do
           expect(json_response['web_url']).to eq(Gitlab::Routing.url_helpers.user_url(access_requester))
 
           # Member attributes
-          expect(json_response['access_level']).to eq(Member::MASTER)
+          expect(json_response['access_level']).to eq(Member::MAINTAINER)
         end
 
         context 'user_id does not match an existing access requester' do
           it 'returns 404' do
             expect do
-              put api("/#{source_type.pluralize}/#{source.id}/access_requests/#{stranger.id}/approve", master)
+              put api("/#{source_type.pluralize}/#{source.id}/access_requests/#{stranger.id}/approve", maintainer)
 
-              expect(response).to have_http_status(404)
+              expect(response).to have_gitlab_http_status(:not_found)
             end.not_to change { source.members.count }
           end
         end
@@ -180,14 +182,14 @@ describe API::AccessRequests do
         let(:route) { delete api("/#{source_type.pluralize}/#{source.id}/access_requests/#{access_requester.id}", stranger) }
       end
 
-      context 'when authenticated as a non-master/owner' do
+      context 'when authenticated as a non-maintainer/owner' do
         %i[developer stranger].each do |type|
           context "as a #{type}" do
             it 'returns 403' do
               user = public_send(type)
               delete api("/#{source_type.pluralize}/#{source.id}/access_requests/#{access_requester.id}", user)
 
-              expect(response).to have_http_status(403)
+              expect(response).to have_gitlab_http_status(:forbidden)
             end
           end
         end
@@ -198,26 +200,26 @@ describe API::AccessRequests do
           expect do
             delete api("/#{source_type.pluralize}/#{source.id}/access_requests/#{access_requester.id}", access_requester)
 
-            expect(response).to have_http_status(204)
+            expect(response).to have_gitlab_http_status(:no_content)
           end.to change { source.requesters.count }.by(-1)
         end
       end
 
-      context 'when authenticated as a master/owner' do
+      context 'when authenticated as a maintainer/owner' do
         it 'deletes the access requester' do
           expect do
-            delete api("/#{source_type.pluralize}/#{source.id}/access_requests/#{access_requester.id}", master)
+            delete api("/#{source_type.pluralize}/#{source.id}/access_requests/#{access_requester.id}", maintainer)
 
-            expect(response).to have_http_status(204)
+            expect(response).to have_gitlab_http_status(:no_content)
           end.to change { source.requesters.count }.by(-1)
         end
 
         context 'user_id matches a member, not an access requester' do
           it 'returns 404' do
             expect do
-              delete api("/#{source_type.pluralize}/#{source.id}/access_requests/#{developer.id}", master)
+              delete api("/#{source_type.pluralize}/#{source.id}/access_requests/#{developer.id}", maintainer)
 
-              expect(response).to have_http_status(404)
+              expect(response).to have_gitlab_http_status(:not_found)
             end.not_to change { source.requesters.count }
           end
         end
@@ -225,9 +227,9 @@ describe API::AccessRequests do
         context 'user_id does not match an existing access requester' do
           it 'returns 404' do
             expect do
-              delete api("/#{source_type.pluralize}/#{source.id}/access_requests/#{stranger.id}", master)
+              delete api("/#{source_type.pluralize}/#{source.id}/access_requests/#{stranger.id}", maintainer)
 
-              expect(response).to have_http_status(404)
+              expect(response).to have_gitlab_http_status(:not_found)
             end.not_to change { source.requesters.count }
           end
         end

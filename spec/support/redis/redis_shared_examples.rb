@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 RSpec.shared_examples "redis_shared_examples" do
   include StubENV
 
-  let(:test_redis_url)  { "redis://redishost:#{redis_port}"}
+  let(:test_redis_url) { "redis://redishost:#{redis_port}"}
 
   before do
     stub_env(environment_config_file_name, Rails.root.join(config_file_name))
@@ -65,10 +67,18 @@ RSpec.shared_examples "redis_shared_examples" do
   end
 
   describe '.url' do
+    it 'withstands mutation' do
+      url1 = described_class.url
+      url2 = described_class.url
+      url1 << 'foobar' unless url1.frozen?
+
+      expect(url2).not_to end_with('foobar')
+    end
+
     context 'when yml file with env variable' do
       let(:config_file_name) { config_with_environment_variable_inside }
 
-      before  do
+      before do
         stub_env(config_env_variable_url, test_redis_url)
       end
 
@@ -80,9 +90,10 @@ RSpec.shared_examples "redis_shared_examples" do
 
   describe '._raw_config' do
     subject { described_class._raw_config }
+
     let(:config_file_name) { '/var/empty/doesnotexist' }
 
-    it 'should be frozen' do
+    it 'is frozen' do
       expect(subject).to be_frozen
     end
 
@@ -101,14 +112,13 @@ RSpec.shared_examples "redis_shared_examples" do
     before do
       clear_pool
     end
-
     after do
       clear_pool
     end
 
-    context 'when running not on sidekiq workers' do
+    context 'when running on single-threaded runtime' do
       before do
-        allow(Sidekiq).to receive(:server?).and_return(false)
+        allow(Gitlab::Runtime).to receive(:multi_threaded?).and_return(false)
       end
 
       it 'instantiates a connection pool with size 5' do
@@ -118,10 +128,10 @@ RSpec.shared_examples "redis_shared_examples" do
       end
     end
 
-    context 'when running on sidekiq workers' do
+    context 'when running on multi-threaded runtime' do
       before do
-        allow(Sidekiq).to receive(:server?).and_return(true)
-        allow(Sidekiq).to receive(:options).and_return({ concurrency: 18 })
+        allow(Gitlab::Runtime).to receive(:multi_threaded?).and_return(true)
+        allow(Gitlab::Runtime).to receive(:max_threads).and_return(18)
       end
 
       it 'instantiates a connection pool with a size based on the concurrency of the worker' do
@@ -140,7 +150,7 @@ RSpec.shared_examples "redis_shared_examples" do
 
       it 'returns an array of hashes with host and port keys' do
         is_expected.to include(host: 'localhost', port: sentinel_port)
-        is_expected.to include(host: 'slave2', port: sentinel_port)
+        is_expected.to include(host: 'replica2', port: sentinel_port)
       end
     end
 

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Mattermost
   ClientError = Class.new(Mattermost::Error)
 
@@ -47,7 +49,7 @@ module Mattermost
     end
 
     def json_response(response)
-      json_response = JSON.parse(response.body)
+      json_response = Gitlab::Json.parse(response.body, legacy_mode: true)
 
       unless response.success?
         raise Mattermost::ClientError.new(json_response['message'] || 'Undefined error')

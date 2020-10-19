@@ -1,34 +1,80 @@
-# Webhooks
+---
+stage: Create
+group: Ecosystem
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see https://about.gitlab.com/handbook/engineering/ux/technical-writing/#designated-technical-writers
+---
 
->**Note:**
-Starting from GitLab 8.5:
-- the `repository` key is deprecated in favor of the `project` key
-- the `project.ssh_url` key is deprecated in favor of the `project.git_ssh_url` key
-- the `project.http_url` key is deprecated in favor of the `project.git_http_url` key
+# Webhooks
 
 Project webhooks allow you to trigger a URL if for example new code is pushed or
 a new issue is created. You can configure webhooks to listen for specific events
 like pushes, issues or merge requests. GitLab will send a POST request with data
 to the webhook URL.
 
+In most cases, you'll need to set up your own [webhook receiver](#example-webhook-receiver)
+to receive information from GitLab, and send it to another app, according to your needs.
+We already have a [built-in receiver](slack.md)
+for sending [Slack](https://api.slack.com/incoming-webhooks) notifications _per project_.
+
+## Overview
+
+[Webhooks](https://en.wikipedia.org/wiki/Webhook) are "_user-defined HTTP
+callbacks_". They are usually triggered by some
+event, such as pushing code to a repository or a comment being posted to a blog.
+When that event occurs, the source app makes an HTTP request to the URI
+configured for the webhook. The action taken may be anything.
+Common uses are to trigger builds with continuous integration systems or to
+notify bug tracking systems.
+
 Webhooks can be used to update an external issue tracker, trigger CI jobs,
 update a backup mirror, or even deploy to your production server.
+They are available **per project** for GitLab Community Edition,
+and **per project and per group** for **GitLab Enterprise Edition**.
 
 Navigate to the webhooks page by going to your project's
-**Settings ➔ Integrations**.
+**Settings ➔ Webhooks**.
+
+NOTE: **Note:**
+On GitLab.com, the [maximum number of webhooks and their size](../../../user/gitlab_com/index.md#webhooks) per project, and per group, is limited.
+
+## Version history
+
+Starting from GitLab 8.5:
+
+- the `repository` key is deprecated in favor of the `project` key
+- the `project.ssh_url` key is deprecated in favor of the `project.git_ssh_url` key
+- the `project.http_url` key is deprecated in favor of the `project.git_http_url` key
+
+Starting from GitLab 11.1, the logs of webhooks are automatically removed after
+one month.
+
+Starting from GitLab 11.2:
+
+- The `description` field for issues, merge requests, comments, and wiki pages
+  is rewritten so that simple Markdown image references (like
+  `![](/uploads/...)`) have their target URL changed to an absolute URL. See
+  [image URL rewriting](#image-url-rewriting) for more details.
+
+## Use-cases
+
+- You can set up a webhook in GitLab to send a notification to
+  [Slack](https://api.slack.com/incoming-webhooks) every time a job fails.
+- You can [integrate with Twilio to be notified via SMS](https://www.datadoghq.com/blog/send-alerts-sms-customizable-webhooks-twilio/)
+  every time an issue is created for a specific project or group within GitLab
+- You can use them to [automatically assign labels to merge requests](https://about.gitlab.com/blog/2016/08/19/applying-gitlab-labels-automatically/).
 
 ## Webhook endpoint tips
 
 If you are writing your own endpoint (web server) that will receive
 GitLab webhooks keep in mind the following things:
 
--   Your endpoint should send its HTTP response as fast as possible. If
-    you wait too long, GitLab may decide the hook failed and retry it.
--   Your endpoint should ALWAYS return a valid HTTP response. If you do
-    not do this then GitLab will think the hook failed and retry it.
-    Most HTTP libraries take care of this for you automatically but if
-    you are writing a low-level hook this is important to remember.
--   GitLab ignores the HTTP status code returned by your endpoint.
+- Your endpoint should send its HTTP response as fast as possible. If
+  you wait too long, GitLab may decide the hook failed and retry it.
+- Your endpoint should ALWAYS return a valid HTTP response. If you do
+  not do this then GitLab will think the hook failed and retry it.
+  Most HTTP libraries take care of this for you automatically but if
+  you are writing a low-level hook this is important to remember.
+- GitLab ignores the HTTP status code returned by your endpoint.
 
 ## Secret token
 
@@ -46,6 +92,14 @@ You can turn this off in the webhook settings in your GitLab projects.
 
 ![SSL Verification](img/webhooks_ssl.png)
 
+## Branch filtering
+
+> [Introduced](https://gitlab.com/gitlab-org/gitlab-foss/-/issues/20338) in GitLab 11.3.
+
+Push events can be filtered by branch using a branch name or wildcard pattern
+to limit which push events are sent to your webhook endpoint. By default the
+field is blank causing all push events to be sent to your webhook endpoint.
+
 ## Events
 
 Below are described the supported events.
@@ -54,9 +108,19 @@ Below are described the supported events.
 
 Triggered when you push to the repository except when pushing tags.
 
+NOTE: **Note:**
+When more than 20 commits are pushed at once, the `commits` webhook
+attribute will only contain the first 20 for performance reasons. Loading
+detailed commit data is expensive. Note that despite only 20 commits being
+present in the `commits` attribute, the `total_commits_count` attribute will
+contain the actual total.
+
+Also, if a single push includes changes for more than three (by default, depending on
+[`push_event_hooks_limit` setting](../../../api/settings.md#list-of-settings-that-can-be-accessed-via-api-calls)) branches, this hook won't be executed.
+
 **Request header**:
 
-```
+```plaintext
 X-Gitlab-Event: Push Hook
 ```
 
@@ -76,6 +140,7 @@ X-Gitlab-Event: Push Hook
   "user_avatar": "https://s.gravatar.com/avatar/d4c74594d841139328695756648b6bd6?s=8://s.gravatar.com/avatar/d4c74594d841139328695756648b6bd6?s=80",
   "project_id": 15,
   "project":{
+    "id": 15,
     "name":"Diaspora",
     "description":"",
     "web_url":"http://example.com/mike/diaspora",
@@ -103,7 +168,8 @@ X-Gitlab-Event: Push Hook
   "commits": [
     {
       "id": "b6568db1bc1dcd7f8b4d5a946b0b91f9dacd7327",
-      "message": "Update Catalan translation to e38cb41.",
+      "message": "Update Catalan translation to e38cb41.\n\nSee https://gitlab.com/gitlab-org/gitlab for more information",
+      "title": "Update Catalan translation to e38cb41.",
       "timestamp": "2011-12-12T14:27:31+02:00",
       "url": "http://example.com/mike/diaspora/commit/b6568db1bc1dcd7f8b4d5a946b0b91f9dacd7327",
       "author": {
@@ -117,6 +183,7 @@ X-Gitlab-Event: Push Hook
     {
       "id": "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
       "message": "fixed readme",
+      "title": "fixed readme",
       "timestamp": "2012-01-03T23:36:29+02:00",
       "url": "http://example.com/mike/diaspora/commit/da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
       "author": {
@@ -136,9 +203,13 @@ X-Gitlab-Event: Push Hook
 
 Triggered when you create (or delete) tags to the repository.
 
+NOTE: **Note:**
+If a single push includes changes for more than three (by default, depending on
+[`push_event_hooks_limit` setting](../../../api/settings.md#list-of-settings-that-can-be-accessed-via-api-calls)) tags, this hook won't be executed.
+
 **Request header**:
 
-```
+```plaintext
 X-Gitlab-Event: Tag Push Hook
 ```
 
@@ -156,6 +227,7 @@ X-Gitlab-Event: Tag Push Hook
   "user_avatar": "https://s.gravatar.com/avatar/d4c74594d841139328695756648b6bd6?s=8://s.gravatar.com/avatar/d4c74594d841139328695756648b6bd6?s=80",
   "project_id": 1,
   "project":{
+    "id": 1,
     "name":"Example",
     "description":"",
     "web_url":"http://example.com/jsmith/example",
@@ -185,13 +257,13 @@ X-Gitlab-Event: Tag Push Hook
 }
 ```
 
-### Issues events
+### Issue events
 
 Triggered when a new issue is created or an existing issue was updated/closed/reopened.
 
 **Request header**:
 
-```
+```plaintext
 X-Gitlab-Event: Issue Hook
 ```
 
@@ -200,12 +272,15 @@ X-Gitlab-Event: Issue Hook
 ```json
 {
   "object_kind": "issue",
+  "event_type": "issue",
   "user": {
     "name": "Administrator",
     "username": "root",
-    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
+    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon",
+    "email": "admin@example.com"
   },
-  "project":{
+  "project": {
+    "id": 1,
     "name":"Gitlab Test",
     "description":"Aut reprehenderit ut est.",
     "web_url":"http://example.com/gitlabhq/gitlab-test",
@@ -216,16 +291,11 @@ X-Gitlab-Event: Issue Hook
     "visibility_level":20,
     "path_with_namespace":"gitlabhq/gitlab-test",
     "default_branch":"master",
+    "ci_config_path": null,
     "homepage":"http://example.com/gitlabhq/gitlab-test",
     "url":"http://example.com/gitlabhq/gitlab-test.git",
     "ssh_url":"git@example.com:gitlabhq/gitlab-test.git",
     "http_url":"http://example.com/gitlabhq/gitlab-test.git"
-  },
-  "repository":{
-    "name": "Gitlab Test",
-    "url": "http://example.com/gitlabhq/gitlab-test.git",
-    "description": "Aut reprehenderit ut est.",
-    "homepage": "http://example.com/gitlabhq/gitlab-test"
   },
   "object_attributes": {
     "id": 301,
@@ -236,14 +306,45 @@ X-Gitlab-Event: Issue Hook
     "project_id": 14,
     "created_at": "2013-12-03T17:15:43Z",
     "updated_at": "2013-12-03T17:15:43Z",
-    "position": 0,
-    "branch_name": null,
+    "updated_by_id": 1,
+    "last_edited_at": null,
+    "last_edited_by_id": null,
+    "relative_position": 0,
     "description": "Create new API for manipulations with repository",
     "milestone_id": null,
-    "state": "opened",
+    "state_id": 1,
+    "confidential": false,
+    "discussion_locked": true,
+    "due_date": null,
+    "moved_to_id": null,
+    "duplicated_to_id": null,
+    "time_estimate": 0,
+    "total_time_spent": 0,
+    "human_total_time_spent": null,
+    "human_time_estimate": null,
+    "weight": null,
     "iid": 23,
     "url": "http://example.com/diaspora/issues/23",
-    "action": "open"
+    "state": "opened",
+    "action": "open",
+    "labels": [{
+        "id": 206,
+        "title": "API",
+        "color": "#ffffff",
+        "project_id": 14,
+        "created_at": "2013-12-03T17:15:43Z",
+        "updated_at": "2013-12-03T17:15:43Z",
+        "template": false,
+        "description": "API related issues",
+        "type": "ProjectLabel",
+        "group_id": 41
+      }]
+  },
+  "repository": {
+    "name": "Gitlab Test",
+    "url": "http://example.com/gitlabhq/gitlab-test.git",
+    "description": "Aut reprehenderit ut est.",
+    "homepage": "http://example.com/gitlabhq/gitlab-test"
   },
   "assignees": [{
     "name": "User1",
@@ -266,30 +367,66 @@ X-Gitlab-Event: Issue Hook
     "description": "API related issues",
     "type": "ProjectLabel",
     "group_id": 41
-  }]
+  }],
+  "changes": {
+    "updated_by_id": {
+      "previous": null,
+      "current": 1
+    },
+    "updated_at": {
+      "previous": "2017-09-15 16:50:55 UTC",
+      "current": "2017-09-15 16:52:00 UTC"
+    },
+    "labels": {
+      "previous": [{
+        "id": 206,
+        "title": "API",
+        "color": "#ffffff",
+        "project_id": 14,
+        "created_at": "2013-12-03T17:15:43Z",
+        "updated_at": "2013-12-03T17:15:43Z",
+        "template": false,
+        "description": "API related issues",
+        "type": "ProjectLabel",
+        "group_id": 41
+      }],
+      "current": [{
+        "id": 205,
+        "title": "Platform",
+        "color": "#123123",
+        "project_id": 14,
+        "created_at": "2013-12-03T17:15:43Z",
+        "updated_at": "2013-12-03T17:15:43Z",
+        "template": false,
+        "description": "Platform related issues",
+        "type": "ProjectLabel",
+        "group_id": 41
+      }]
+    }
+  }
 }
 ```
 
-**Note**: `assignee` and `assignee_id` keys are deprecated and now show the first assignee only.
+> **Note**: `assignee` and `assignee_id` keys are deprecated and now show the first assignee only.
 
 ### Comment events
 
 Triggered when a new comment is made on commits, merge requests, issues, and code snippets.
 The note data will be stored in `object_attributes` (e.g. `note`, `noteable_type`). The
 payload will also include information about the target of the comment. For example,
-a comment on a issue will include the specific issue information under the `issue` key.
+a comment on an issue will include the specific issue information under the `issue` key.
 Valid target types:
 
-1. `commit`
-2. `merge_request`
-3. `issue`
-4. `snippet`
+- `commit`
+- `merge_request`
+- `issue`
+- `snippet`
 
 #### Comment on commit
 
 **Request header**:
 
-```
+```plaintext
 X-Gitlab-Event: Note Hook
 ```
 
@@ -305,6 +442,7 @@ X-Gitlab-Event: Note Hook
   },
   "project_id": 5,
   "project":{
+    "id": 5,
     "name":"Gitlab Test",
     "description":"Aut reprehenderit ut est.",
     "web_url":"http://example.com/gitlabhq/gitlab-test",
@@ -353,12 +491,12 @@ X-Gitlab-Event: Note Hook
   },
   "commit": {
     "id": "cfe32cf61b73a0d5e9f13e774abde7ff789b1660",
-    "message": "Add submodule\n\nSigned-off-by: Dmitriy Zaporozhets \u003cdmitriy.zaporozhets@gmail.com\u003e\n",
+    "message": "Add submodule\n\nSigned-off-by: Example User \u003cuser@example.com.com\u003e\n",
     "timestamp": "2014-02-27T10:06:20+02:00",
     "url": "http://example.com/gitlab-org/gitlab-test/commit/cfe32cf61b73a0d5e9f13e774abde7ff789b1660",
     "author": {
-      "name": "Dmitriy Zaporozhets",
-      "email": "dmitriy.zaporozhets@gmail.com"
+      "name": "Example User",
+      "email": "user@example.com"
     }
   }
 }
@@ -368,7 +506,7 @@ X-Gitlab-Event: Note Hook
 
 **Request header**:
 
-```
+```plaintext
 X-Gitlab-Event: Note Hook
 ```
 
@@ -384,6 +522,7 @@ X-Gitlab-Event: Note Hook
   },
   "project_id": 5,
   "project":{
+    "id": 5,
     "name":"Gitlab Test",
     "description":"Aut reprehenderit ut est.",
     "web_url":"http://example.com/gitlab-org/gitlab-test",
@@ -494,7 +633,7 @@ X-Gitlab-Event: Note Hook
 
 **Request header**:
 
-```
+```plaintext
 X-Gitlab-Event: Note Hook
 ```
 
@@ -510,6 +649,7 @@ X-Gitlab-Event: Note Hook
   },
   "project_id": 5,
   "project":{
+    "id": 5,
     "name":"Gitlab Test",
     "description":"Aut reprehenderit ut est.",
     "web_url":"http://example.com/gitlab-org/gitlab-test",
@@ -561,18 +701,44 @@ X-Gitlab-Event: Note Hook
     "description": "test",
     "milestone_id": null,
     "state": "closed",
-    "iid": 17
+    "iid": 17,
+    "labels": [
+      {
+        "id": 25,
+        "title": "Afterpod",
+        "color": "#3e8068",
+        "project_id": null,
+        "created_at": "2019-06-05T14:32:20.211Z",
+        "updated_at": "2019-06-05T14:32:20.211Z",
+        "template": false,
+        "description": null,
+        "type": "GroupLabel",
+        "group_id": 4
+      },
+      {
+        "id": 86,
+        "title": "Element",
+        "color": "#231afe",
+        "project_id": 4,
+        "created_at": "2019-06-05T14:32:20.637Z",
+        "updated_at": "2019-06-05T14:32:20.637Z",
+        "template": false,
+        "description": null,
+        "type": "ProjectLabel",
+        "group_id": null
+      }
+    ]
   }
 }
 ```
 
-**Note**: `assignee_id` field is deprecated and now shows the first assignee only.
+> **Note**: `assignee_id` field is deprecated and now shows the first assignee only.
 
 #### Comment on code snippet
 
 **Request header**:
 
-```
+```plaintext
 X-Gitlab-Event: Note Hook
 ```
 
@@ -588,6 +754,7 @@ X-Gitlab-Event: Note Hook
   },
   "project_id": 5,
   "project":{
+    "id": 5,
     "name":"Gitlab Test",
     "description":"Aut reprehenderit ut est.",
     "web_url":"http://example.com/gitlab-org/gitlab-test",
@@ -647,7 +814,7 @@ Triggered when a new merge request is created, an existing merge request was upd
 
 **Request header**:
 
-```
+```plaintext
 X-Gitlab-Event: Merge Request Hook
 ```
 
@@ -661,6 +828,29 @@ X-Gitlab-Event: Merge Request Hook
     "username": "root",
     "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
   },
+  "project": {
+    "id": 1,
+    "name":"Gitlab Test",
+    "description":"Aut reprehenderit ut est.",
+    "web_url":"http://example.com/gitlabhq/gitlab-test",
+    "avatar_url":null,
+    "git_ssh_url":"git@example.com:gitlabhq/gitlab-test.git",
+    "git_http_url":"http://example.com/gitlabhq/gitlab-test.git",
+    "namespace":"GitlabHQ",
+    "visibility_level":20,
+    "path_with_namespace":"gitlabhq/gitlab-test",
+    "default_branch":"master",
+    "homepage":"http://example.com/gitlabhq/gitlab-test",
+    "url":"http://example.com/gitlabhq/gitlab-test.git",
+    "ssh_url":"git@example.com:gitlabhq/gitlab-test.git",
+    "http_url":"http://example.com/gitlabhq/gitlab-test.git"
+  },
+  "repository": {
+    "name": "Gitlab Test",
+    "url": "http://example.com/gitlabhq/gitlab-test.git",
+    "description": "Aut reprehenderit ut est.",
+    "homepage": "http://example.com/gitlabhq/gitlab-test"
+  },
   "object_attributes": {
     "id": 99,
     "target_branch": "master",
@@ -671,15 +861,13 @@ X-Gitlab-Event: Merge Request Hook
     "title": "MS-Viewport",
     "created_at": "2013-12-03T17:23:34Z",
     "updated_at": "2013-12-03T17:23:34Z",
-    "st_commits": null,
-    "st_diffs": null,
     "milestone_id": null,
     "state": "opened",
     "merge_status": "unchecked",
     "target_project_id": 14,
     "iid": 1,
     "description": "",
-    "source":{
+    "source": {
       "name":"Awesome Project",
       "description":"Aut reprehenderit ut est.",
       "web_url":"http://example.com/awesome_space/awesome_project",
@@ -729,6 +917,54 @@ X-Gitlab-Event: Merge Request Hook
       "username": "user1",
       "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
     }
+  },
+  "labels": [{
+    "id": 206,
+    "title": "API",
+    "color": "#ffffff",
+    "project_id": 14,
+    "created_at": "2013-12-03T17:15:43Z",
+    "updated_at": "2013-12-03T17:15:43Z",
+    "template": false,
+    "description": "API related issues",
+    "type": "ProjectLabel",
+    "group_id": 41
+  }],
+  "changes": {
+    "updated_by_id": {
+      "previous": null,
+      "current": 1
+    },
+    "updated_at": {
+      "previous": "2017-09-15 16:50:55 UTC",
+      "current":"2017-09-15 16:52:00 UTC"
+    },
+    "labels": {
+      "previous": [{
+        "id": 206,
+        "title": "API",
+        "color": "#ffffff",
+        "project_id": 14,
+        "created_at": "2013-12-03T17:15:43Z",
+        "updated_at": "2013-12-03T17:15:43Z",
+        "template": false,
+        "description": "API related issues",
+        "type": "ProjectLabel",
+        "group_id": 41
+      }],
+      "current": [{
+        "id": 205,
+        "title": "Platform",
+        "color": "#123123",
+        "project_id": 14,
+        "created_at": "2013-12-03T17:15:43Z",
+        "updated_at": "2013-12-03T17:15:43Z",
+        "template": false,
+        "description": "Platform related issues",
+        "type": "ProjectLabel",
+        "group_id": 41
+      }]
+    }
   }
 }
 ```
@@ -739,7 +975,7 @@ Triggered when a wiki page is created, updated or deleted.
 
 **Request Header**:
 
-```
+```plaintext
 X-Gitlab-Event: Wiki Page Hook
 ```
 
@@ -754,6 +990,7 @@ X-Gitlab-Event: Wiki Page Hook
     "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=80\u0026d=identicon"
   },
   "project": {
+    "id": 1,
     "name": "awesome-project",
     "description": "This is awesome",
     "web_url": "http://example.com/root/awesome-project",
@@ -770,7 +1007,7 @@ X-Gitlab-Event: Wiki Page Hook
     "http_url": "http://example.com/root/awesome-project.git"
   },
   "wiki": {
-    "web_url": "http://example.com/root/awesome-project/wikis/home",
+    "web_url": "http://example.com/root/awesome-project/-/wikis/home",
     "git_ssh_url": "git@example.com:root/awesome-project.wiki.git",
     "git_http_url": "http://example.com/root/awesome-project.wiki.git",
     "path_with_namespace": "root/awesome-project.wiki",
@@ -782,7 +1019,7 @@ X-Gitlab-Event: Wiki Page Hook
     "format": "markdown",
     "message": "adding an awesome page to the wiki",
     "slug": "awesome",
-    "url": "http://example.com/root/awesome-project/wikis/awesome",
+    "url": "http://example.com/root/awesome-project/-/wikis/awesome",
     "action": "create"
   }
 }
@@ -794,7 +1031,7 @@ Triggered on status change of Pipeline.
 
 **Request Header**:
 
-```
+```plaintext
 X-Gitlab-Event: Pipeline Hook
 ```
 
@@ -809,6 +1046,7 @@ X-Gitlab-Event: Pipeline Hook
       "tag": false,
       "sha": "bcbb5ec396a2c0f828686f14fac9b80b780504f2",
       "before_sha": "bcbb5ec396a2c0f828686f14fac9b80b780504f2",
+      "source": "merge_request_event",
       "status": "success",
       "stages":[
          "build",
@@ -817,14 +1055,34 @@ X-Gitlab-Event: Pipeline Hook
       ],
       "created_at": "2016-08-12 15:23:28 UTC",
       "finished_at": "2016-08-12 15:26:29 UTC",
-      "duration": 63
+      "duration": 63,
+      "variables": [
+        {
+          "key": "NESTOR_PROD_ENVIRONMENT",
+          "value": "us-west-1"
+        }
+      ]
+   },
+    "merge_request": {
+      "id": 1,
+      "iid": 1,
+      "title": "Test",
+      "source_branch": "test",
+      "source_project_id": 1,
+      "target_branch": "master",
+      "target_project_id": 1,
+      "state": "opened",
+      "merge_status": "can_be_merged",
+      "url": "http://192.168.64.1:3005/gitlab-org/gitlab-test/merge_requests/1"
    },
    "user":{
       "name": "Administrator",
       "username": "root",
-      "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
+      "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon",
+      "email": "user_email@gitlab.com"
    },
    "project":{
+      "id": 1,
       "name": "Gitlab Test",
       "description": "Atque in sunt eos similique dolores voluptatem.",
       "web_url": "http://192.168.64.1:3005/gitlab-org/gitlab-test",
@@ -857,6 +1115,7 @@ X-Gitlab-Event: Pipeline Hook
          "finished_at": null,
          "when": "manual",
          "manual": true,
+         "allow_failure": false,
          "user":{
             "name": "Administrator",
             "username": "root",
@@ -878,12 +1137,18 @@ X-Gitlab-Event: Pipeline Hook
          "finished_at": null,
          "when": "on_success",
          "manual": false,
+         "allow_failure": false,
          "user":{
             "name": "Administrator",
             "username": "root",
             "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
          },
-         "runner": null,
+         "runner": {
+            "id":380987,
+            "description":"shared-runners-manager-6.gitlab.com",
+            "active":true,
+            "is_shared":true
+         },
          "artifacts_file":{
             "filename": null,
             "size": null
@@ -899,12 +1164,18 @@ X-Gitlab-Event: Pipeline Hook
          "finished_at": "2016-08-12 15:26:29 UTC",
          "when": "on_success",
          "manual": false,
+         "allow_failure": false,
          "user":{
             "name": "Administrator",
             "username": "root",
             "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
          },
-         "runner": null,
+         "runner": {
+            "id":380987,
+            "description":"shared-runners-manager-6.gitlab.com",
+            "active":true,
+            "is_shared":true
+         },
          "artifacts_file":{
             "filename": null,
             "size": null
@@ -920,12 +1191,18 @@ X-Gitlab-Event: Pipeline Hook
          "finished_at": "2016-08-12 15:25:26 UTC",
          "when": "on_success",
          "manual": false,
+         "allow_failure": false,
          "user":{
             "name": "Administrator",
             "username": "root",
             "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
          },
-         "runner": null,
+         "runner": {
+            "id":380987,
+            "description":"shared-runners-manager-6.gitlab.com",
+            "active":true,
+            "is_shared":true
+         },
          "artifacts_file":{
             "filename": null,
             "size": null
@@ -941,6 +1218,7 @@ X-Gitlab-Event: Pipeline Hook
          "finished_at": null,
          "when": "on_success",
          "manual": false,
+         "allow_failure": false,
          "user":{
             "name": "Administrator",
             "username": "root",
@@ -956,14 +1234,14 @@ X-Gitlab-Event: Pipeline Hook
 }
 ```
 
-### Build events
+### Job events
 
-Triggered on status change of a Build.
+Triggered on status change of a job.
 
 **Request Header**:
 
-```
-X-Gitlab-Event: Build Hook
+```plaintext
+X-Gitlab-Event: Job Hook
 ```
 
 **Request Body**:
@@ -983,12 +1261,15 @@ X-Gitlab-Event: Build Hook
   "build_finished_at": null,
   "build_duration": null,
   "build_allow_failure": false,
+  "build_failure_reason": "script_failure",
+  "pipeline_id": 2366,
   "project_id": 380,
   "project_name": "gitlab-org/gitlab-test",
   "user": {
     "id": 3,
     "name": "User",
-    "email": "user@gitlab.com"
+    "email": "user@gitlab.com",
+    "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
   },
   "commit": {
     "id": 2366,
@@ -1003,26 +1284,112 @@ X-Gitlab-Event: Build Hook
   },
   "repository": {
     "name": "gitlab_test",
-    "git_ssh_url": "git@192.168.64.1:gitlab-org/gitlab-test.git",
     "description": "Atque in sunt eos similique dolores voluptatem.",
     "homepage": "http://192.168.64.1:3005/gitlab-org/gitlab-test",
     "git_ssh_url": "git@192.168.64.1:gitlab-org/gitlab-test.git",
     "git_http_url": "http://192.168.64.1:3005/gitlab-org/gitlab-test.git",
     "visibility_level": 20
+  },
+  "runner": {
+    "active": true,
+    "is_shared": false,
+    "id": 380987,
+    "description": "shared-runners-manager-6.gitlab.com"
   }
 }
 ```
 
+Note that `commit.id` is the ID of the pipeline, not the ID of the commit.
+
+### Deployment events
+
+Triggered when a deployment:
+
+- Starts ([Introduced](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/41214) in GitLab 13.5.)
+- Succeeds
+- Fails
+- Is cancelled
+
+**Request Header**:
+
+```plaintext
+X-Gitlab-Event: Deployment Hook
+```
+
+**Request Body**:
+
+```json
+{
+  "object_kind": "deployment",
+  "status": "success",
+  "deployable_id": 796,
+  "deployable_url": "http://10.126.0.2:3000/root/test-deployment-webhooks/-/jobs/796",
+  "environment": "staging",
+  "project": {
+    "id": 30,
+    "name": "test-deployment-webhooks",
+    "description": "",
+    "web_url": "http://10.126.0.2:3000/root/test-deployment-webhooks",
+    "avatar_url": null,
+    "git_ssh_url": "ssh://vlad@10.126.0.2:2222/root/test-deployment-webhooks.git",
+    "git_http_url": "http://10.126.0.2:3000/root/test-deployment-webhooks.git",
+    "namespace": "Administrator",
+    "visibility_level": 0,
+    "path_with_namespace": "root/test-deployment-webhooks",
+    "default_branch": "master",
+    "ci_config_path": "",
+    "homepage": "http://10.126.0.2:3000/root/test-deployment-webhooks",
+    "url": "ssh://vlad@10.126.0.2:2222/root/test-deployment-webhooks.git",
+    "ssh_url": "ssh://vlad@10.126.0.2:2222/root/test-deployment-webhooks.git",
+    "http_url": "http://10.126.0.2:3000/root/test-deployment-webhooks.git"
+  },
+  "short_sha": "279484c0",
+  "user": {
+    "name": "Administrator",
+    "username": "root",
+    "avatar_url": "https://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=80&d=identicon",
+    "email": "admin@example.com"
+  },
+  "user_url": "http://10.126.0.2:3000/root",
+  "commit_url": "http://10.126.0.2:3000/root/test-deployment-webhooks/-/commit/279484c09fbe69ededfced8c1bb6e6d24616b468",
+  "commit_title": "Add new file"
+}
+```
+
+Note that `deployable_id` is the ID of the CI job.
+
+## Image URL rewriting
+
+From GitLab 11.2, simple image references are rewritten to use an absolute URL
+in webhooks. So if an image, merge request, comment, or wiki page has this in
+its description:
+
+```markdown
+![image](/uploads/$sha/image.png)
+```
+
+It will appear in the webhook body as the below (assuming that GitLab is
+installed at `gitlab.example.com`, and the project is at
+`example-group/example-project`):
+
+```markdown
+![image](https://gitlab.example.com/example-group/example-project/uploads/$sha/image.png)
+```
+
+This will not rewrite URLs that already are pointing to HTTP, HTTPS, or
+protocol-relative URLs. It will also not rewrite image URLs using advanced
+Markdown features, like link labels.
+
 ## Testing webhooks
 
-You can trigger the webhook manually. Sample data from the project will be used.Sample data will take from the project. 
+You can trigger the webhook manually. Sample data from the project will be used.
 > For example: for triggering `Push Events` your project should have at least one commit.
 
 ![Webhook testing](img/webhook_testing.png)
 
 ## Troubleshoot webhooks
 
-Gitlab stores each perform of the webhook.
+GitLab stores each perform of the webhook.
 You can find records for last 2 days in "Recent Deliveries" section on the edit page of each webhook.
 
 ![Recent deliveries](img/webhook_logs.png)
@@ -1034,7 +1401,29 @@ On this page, you can see data that GitLab sends (request headers and body) and 
 
 From this page, you can repeat delivery with the same data by clicking `Resend Request` button.
 
->**Note:** If URL or secret token of the webhook were updated, data will be delivered to the new address.
+NOTE: **Note:**
+If URL or secret token of the webhook were updated, data will be delivered to the new address.
+
+### Receiving duplicate or multiple webhook requests triggered by one event
+
+When GitLab sends a webhook it expects a response in 10 seconds (set default value). If it does not receive one, it'll retry the webhook.
+If the endpoint doesn't send its HTTP response within those 10 seconds, GitLab may decide the hook failed and retry it.
+
+If you are receiving multiple requests, you can try increasing the default value to wait for the HTTP response after sending the webhook
+by uncommenting or adding the following setting to your `/etc/gitlab/gitlab.rb`:
+
+```ruby
+gitlab_rails['webhook_timeout'] = 10
+```
+
+### Troubleshooting: "Unable to get local issuer certificate"
+
+When SSL verification is enabled, this error indicates that GitLab isn't able to verify the SSL certificate of the webhook endpoint.
+Typically, this is because the root certificate isn't issued by a trusted certification authority as
+determined by [CAcert.org](http://www.cacert.org/).
+
+Should that not be the case, consider using [SSL Checker](https://www.sslshopper.com/ssl-checker.html) to identify faults.
+Missing intermediate certificates are a common point of verification failure.
 
 ## Example webhook receiver
 
@@ -1059,14 +1448,17 @@ server.start
 ```
 
 Pick an unused port (e.g. 8000) and start the script: `ruby print_http_body.rb
-8000`.  Then add your server as a webhook receiver in GitLab as
+8000`. Then add your server as a webhook receiver in GitLab as
 `http://my.host:8000/`.
 
 When you press 'Test' in GitLab, you should see something like this in the
 console:
 
-```
+```plaintext
 {"before":"077a85dd266e6f3573ef7e9ef8ce3343ad659c4e","after":"95cd4a99e93bc4bbabacfa2cd10e6725b1403c60",<SNIP>}
 example.com - - [14/May/2014:07:45:26 EDT] "POST / HTTP/1.1" 200 0
 - -> /
 ```
+
+NOTE: **Note:**
+You may need to [allow requests to the local network](../../../security/webhooks.md) for this receiver to be added.

@@ -1,10 +1,5 @@
-# Explore GitLab projects
+---
+redirect_to: '../../../gitlab-basics/README.md'
+---
 
-----------
-
-- Dashboard
-- User Preferences
-- Issues
-- Milestones and Labels
-- Manage project members
-- Project settings
+This document was moved to [another location](../../../gitlab-basics/README.md).

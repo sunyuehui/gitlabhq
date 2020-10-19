@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::PodspecJsonLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::PodspecJsonLinker do
   describe '.support?' do
     it 'supports *.podspec.json' do
       expect(described_class.support?('Reachability.podspec.json')).to be_truthy

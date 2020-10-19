@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::SidekiqStatus do
+RSpec.describe Gitlab::SidekiqStatus do
   describe '.set', :clean_gitlab_redis_shared_state do
     it 'stores the job ID' do
       described_class.set('123')
@@ -36,6 +38,18 @@ describe Gitlab::SidekiqStatus do
       described_class.set('123')
 
       expect(described_class.all_completed?(%w(123 456))).to eq(false)
+    end
+  end
+
+  describe '.running?', :clean_gitlab_redis_shared_state do
+    it 'returns true if job is running' do
+      described_class.set('123')
+
+      expect(described_class.running?('123')).to be(true)
+    end
+
+    it 'returns false if job is not found' do
+      expect(described_class.running?('123')).to be(false)
     end
   end
 

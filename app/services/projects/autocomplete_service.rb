@@ -1,5 +1,8 @@
+# frozen_string_literal: true
+
 module Projects
   class AutocompleteService < BaseService
+    include LabelsAsHash
     def issues
       IssuesFinder.new(current_user, project_id: project.id, state: 'opened').execute.select([:iid, :title])
     end
@@ -11,7 +14,7 @@ module Projects
         order: { due_date: :asc, title: :asc }
       }
 
-      finder_params[:group_ids] = [@project.group.id] if @project.group
+      finder_params[:group_ids] = @project.group.self_and_ancestors.select(:id) if @project.group
 
       MilestonesFinder.new(finder_params).execute.select([:iid, :title])
     end
@@ -20,31 +23,20 @@ module Projects
       MergeRequestsFinder.new(current_user, project_id: project.id, state: 'opened').execute.select([:iid, :title])
     end
 
-    def labels
-      LabelsFinder.new(current_user, project_id: project.id).execute.select([:title, :color])
+    def commands(noteable, type)
+      return [] unless noteable
+
+      QuickActions::InterpretService.new(project, current_user).available_commands(noteable)
     end
 
-    def commands(noteable, type)
-      noteable ||=
-        case type
-        when 'Issue'
-          @project.issues.build
-        when 'MergeRequest'
-          @project.merge_requests.build
-        end
+    def snippets
+      SnippetsFinder.new(current_user, project: project).execute.select([:id, :title])
+    end
 
-      return [] unless noteable && noteable.is_a?(Issuable)
-
-      opts = {
-        project: project,
-        issuable: noteable,
-        current_user: current_user
-      }
-      QuickActions::InterpretService.command_definitions.map do |definition|
-        next unless definition.available?(opts)
-
-        definition.to_h(opts)
-      end.compact
+    def labels_as_hash(target)
+      super(target, project_id: project.id, include_ancestor_groups: true)
     end
   end
 end
+
+Projects::AutocompleteService.prepend_if_ee('EE::Projects::AutocompleteService')

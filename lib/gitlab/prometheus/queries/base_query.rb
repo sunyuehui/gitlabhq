@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Prometheus
     module Queries
@@ -19,6 +21,10 @@ module Gitlab
 
         def query(*args)
           raise NotImplementedError
+        end
+
+        def self.transform_reactive_result(result)
+          result
         end
       end
     end

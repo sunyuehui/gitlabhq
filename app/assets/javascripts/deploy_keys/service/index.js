@@ -1,34 +1,19 @@
-import Vue from 'vue';
-import VueResource from 'vue-resource';
-
-Vue.use(VueResource);
+import axios from '~/lib/utils/axios_utils';
 
 export default class DeployKeysService {
   constructor(endpoint) {
     this.endpoint = endpoint;
-
-    this.resource = Vue.resource(`${this.endpoint}{/id}`, {}, {
-      enable: {
-        method: 'PUT',
-        url: `${this.endpoint}{/id}/enable`,
-      },
-      disable: {
-        method: 'PUT',
-        url: `${this.endpoint}{/id}/disable`,
-      },
-    });
   }
 
   getKeys() {
-    return this.resource.get()
-      .then(response => response.json());
+    return axios.get(this.endpoint).then(response => response.data);
   }
 
   enableKey(id) {
-    return this.resource.enable({ id }, {});
+    return axios.put(`${this.endpoint}/${id}/enable`).then(response => response.data);
   }
 
   disableKey(id) {
-    return this.resource.disable({ id }, {});
+    return axios.put(`${this.endpoint}/${id}/disable`).then(response => response.data);
   }
 }

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Snippets::NotesController do
+RSpec.describe Snippets::NotesController do
   let(:user) { create(:user) }
 
   let(:private_snippet)  { create(:personal_snippet, :private) }
@@ -16,15 +18,15 @@ describe Snippets::NotesController do
       before do
         note_on_public
 
-        get :index, { snippet_id: public_snippet }
+        get :index, params: { snippet_id: public_snippet }
       end
 
       it "returns status 200" do
-        expect(response).to have_http_status(200)
+        expect(response).to have_gitlab_http_status(:ok)
       end
 
       it "returns not empty array of notes" do
-        expect(JSON.parse(response.body)["notes"].empty?).to be_falsey
+        expect(json_response["notes"].empty?).to be_falsey
       end
     end
 
@@ -35,9 +37,9 @@ describe Snippets::NotesController do
 
       context 'when user not logged in' do
         it "returns status 404" do
-          get :index, { snippet_id: internal_snippet }
+          get :index, params: { snippet_id: internal_snippet }
 
-          expect(response).to have_http_status(404)
+          expect(response).to have_gitlab_http_status(:not_found)
         end
       end
 
@@ -47,9 +49,9 @@ describe Snippets::NotesController do
         end
 
         it "returns status 200" do
-          get :index, { snippet_id: internal_snippet }
+          get :index, params: { snippet_id: internal_snippet }
 
-          expect(response).to have_http_status(200)
+          expect(response).to have_gitlab_http_status(:ok)
         end
       end
     end
@@ -61,9 +63,9 @@ describe Snippets::NotesController do
 
       context 'when user not logged in' do
         it "returns status 404" do
-          get :index, { snippet_id: private_snippet }
+          get :index, params: { snippet_id: private_snippet }
 
-          expect(response).to have_http_status(404)
+          expect(response).to have_gitlab_http_status(:not_found)
         end
       end
 
@@ -73,9 +75,9 @@ describe Snippets::NotesController do
         end
 
         it "returns status 404" do
-          get :index, { snippet_id: private_snippet }
+          get :index, params: { snippet_id: private_snippet }
 
-          expect(response).to have_http_status(404)
+          expect(response).to have_gitlab_http_status(:not_found)
         end
       end
 
@@ -87,15 +89,15 @@ describe Snippets::NotesController do
         end
 
         it "returns status 200" do
-          get :index, { snippet_id: private_snippet }
+          get :index, params: { snippet_id: private_snippet }
 
-          expect(response).to have_http_status(200)
+          expect(response).to have_gitlab_http_status(:ok)
         end
 
         it "returns 1 note" do
-          get :index, { snippet_id: private_snippet }
+          get :index, params: { snippet_id: private_snippet }
 
-          expect(JSON.parse(response.body)['notes'].count).to eq(1)
+          expect(json_response['notes'].count).to eq(1)
         end
       end
     end
@@ -106,13 +108,126 @@ describe Snippets::NotesController do
 
         sign_in(user)
 
-        expect_any_instance_of(Note).to receive(:cross_reference_not_visible_for?).and_return(true)
+        expect_any_instance_of(Note).to receive(:readable_by?).and_return(false)
       end
 
       it "does not return any note" do
-        get :index, { snippet_id: public_snippet }
+        get :index, params: { snippet_id: public_snippet }
 
-        expect(JSON.parse(response.body)['notes'].count).to eq(0)
+        expect(json_response['notes'].count).to eq(0)
+      end
+    end
+  end
+
+  describe 'POST create' do
+    context 'when a snippet is public' do
+      let(:request_params) do
+        {
+          note: attributes_for(:note_on_personal_snippet, noteable: public_snippet),
+          snippet_id: public_snippet.id
+        }
+      end
+
+      before do
+        sign_in user
+      end
+
+      it 'returns status 302' do
+        post :create, params: request_params
+
+        expect(response).to have_gitlab_http_status(:found)
+      end
+
+      it 'creates the note' do
+        expect { post :create, params: request_params }.to change { Note.count }.by(1)
+      end
+    end
+
+    context 'when a snippet is internal' do
+      let(:request_params) do
+        {
+          note: attributes_for(:note_on_personal_snippet, noteable: internal_snippet),
+          snippet_id: internal_snippet.id
+        }
+      end
+
+      before do
+        sign_in user
+      end
+
+      it 'returns status 302' do
+        post :create, params: request_params
+
+        expect(response).to have_gitlab_http_status(:found)
+      end
+
+      it 'creates the note' do
+        expect { post :create, params: request_params }.to change { Note.count }.by(1)
+      end
+    end
+
+    context 'when a snippet is private' do
+      let(:request_params) do
+        {
+          note: attributes_for(:note_on_personal_snippet, noteable: private_snippet),
+          snippet_id: private_snippet.id
+        }
+      end
+
+      before do
+        sign_in user
+      end
+
+      context 'when user is not the author' do
+        before do
+          sign_in(user)
+        end
+
+        it 'returns status 404' do
+          post :create, params: request_params
+
+          expect(response).to have_gitlab_http_status(:not_found)
+        end
+
+        it 'does not create the note' do
+          expect { post :create, params: request_params }.not_to change { Note.count }
+        end
+
+        context 'when user sends a snippet_id for a public snippet' do
+          let(:request_params) do
+            {
+              note: attributes_for(:note_on_personal_snippet, noteable: private_snippet),
+              snippet_id: public_snippet.id
+            }
+          end
+
+          it 'returns status 302' do
+            post :create, params: request_params
+
+            expect(response).to have_gitlab_http_status(:found)
+          end
+
+          it 'creates the note on the public snippet' do
+            expect { post :create, params: request_params }.to change { Note.count }.by(1)
+            expect(Note.last.noteable).to eq public_snippet
+          end
+        end
+      end
+
+      context 'when user is the author' do
+        before do
+          sign_in(private_snippet.author)
+        end
+
+        it 'returns status 302' do
+          post :create, params: request_params
+
+          expect(response).to have_gitlab_http_status(:found)
+        end
+
+        it 'creates the note' do
+          expect { post :create, params: request_params }.to change { Note.count }.by(1)
+        end
       end
     end
   end
@@ -132,13 +247,13 @@ describe Snippets::NotesController do
       end
 
       it "returns status 200" do
-        delete :destroy, request_params
+        delete :destroy, params: request_params
 
-        expect(response).to have_http_status(200)
+        expect(response).to have_gitlab_http_status(:ok)
       end
 
       it "deletes the note" do
-        expect { delete :destroy, request_params }.to change { Note.count }.from(1).to(0)
+        expect { delete :destroy, params: request_params }.to change { Note.count }.from(1).to(0)
       end
 
       context 'system note' do
@@ -147,7 +262,7 @@ describe Snippets::NotesController do
         end
 
         it "does not delete the note" do
-          expect { delete :destroy, request_params }.not_to change { Note.count }
+          expect { delete :destroy, params: request_params }.not_to change { Note.count }
         end
       end
     end
@@ -160,37 +275,39 @@ describe Snippets::NotesController do
       end
 
       it "returns status 404" do
-        delete :destroy, request_params
+        delete :destroy, params: request_params
 
-        expect(response).to have_http_status(404)
+        expect(response).to have_gitlab_http_status(:not_found)
       end
 
       it "does not update the note" do
-        expect { delete :destroy, request_params }.not_to change { Note.count }
+        expect { delete :destroy, params: request_params }.not_to change { Note.count }
       end
     end
   end
 
   describe 'POST toggle_award_emoji' do
     let(:note) { create(:note_on_personal_snippet, noteable: public_snippet) }
+    let(:emoji_name) { 'thumbsup'}
+
     before do
       sign_in(user)
     end
 
-    subject { post(:toggle_award_emoji, snippet_id: public_snippet, id: note.id, name: "thumbsup") }
+    subject { post(:toggle_award_emoji, params: { snippet_id: public_snippet, id: note.id, name: emoji_name }) }
 
     it "toggles the award emoji" do
       expect { subject }.to change { note.award_emoji.count }.by(1)
 
-      expect(response).to have_http_status(200)
+      expect(response).to have_gitlab_http_status(:ok)
     end
 
     it "removes the already awarded emoji when it exists" do
-      note.toggle_award_emoji('thumbsup', user) # create award emoji before
+      create(:award_emoji, awardable: note, name: emoji_name, user: user)
 
       expect { subject }.to change { AwardEmoji.count }.by(-1)
 
-      expect(response).to have_http_status(200)
+      expect(response).to have_gitlab_http_status(:ok)
     end
   end
 end

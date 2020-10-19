@@ -1,6 +1,14 @@
 .dropdown {
   position: relative;
 
+  // Once the new design (https://gitlab.com/gitlab-org/gitlab-foss/-/issues/63499/designs)
+  // for Snippets is introduced and Clone button is relocated, we won't
+  // need this style.
+  // Issue for the refactoring: https://gitlab.com/gitlab-org/gitlab/-/issues/213327
+  &.gl-new-dropdown button.dropdown-toggle {
+    @include gl-display-inline-flex;
+  }
+
   .btn-link {
     &:hover {
       cursor: pointer;
@@ -16,30 +24,33 @@
 
 @mixin set-visible {
   transform: translateY(0);
-  visibility: visible;
-  opacity: 1;
-  transition-duration: 100ms, 150ms, 25ms;
-  transition-delay: 35ms, 50ms, 25ms;
+  display: block;
 }
 
 @mixin set-invisible {
   transform: translateY(-10px);
-  visibility: hidden;
-  opacity: 0;
-  transition-property: opacity, transform, visibility;
-  transition-duration: 70ms, 250ms, 250ms;
-  transition-timing-function: linear, $dropdown-animation-timing;
-  transition-delay: 25ms, 50ms, 0ms;
+  display: none;
 }
 
-.open {
-  .dropdown-menu,
-  .dropdown-menu-nav {
+.show.dropdown {
+  .dropdown-menu {
     @include set-visible;
-    display: block;
+    min-height: $dropdown-min-height;
+    max-height: $dropdown-max-height;
+    overflow-y: auto;
 
-    @media (max-width: $screen-xs-max) {
+    &.dropdown-extended-height {
+      max-height: 400px;
+    }
+
+    @include media-breakpoint-down(xs) {
       width: 100%;
+    }
+
+    &.frequent-items-dropdown-menu {
+      padding: 0;
+      overflow-y: initial;
+      max-height: initial;
     }
   }
 
@@ -49,14 +60,20 @@
     border-color: $gray-darkest;
   }
 
-  [data-toggle="dropdown"] {
+  [data-toggle='dropdown'] {
     outline: 0;
   }
 }
 
-.dropdown-toggle {
+// Get search dropdown to line up with other nav dropdowns
+.search-input-container .dropdown-menu {
+  margin-top: 11px;
+}
+
+.dropdown-toggle,
+.confidential-merge-request-fork-group .dropdown-toggle {
   padding: 6px 8px 6px 10px;
-  background-color: $white-light;
+  background-color: $white;
   color: $gl-text-color;
   font-size: 14px;
   text-align: left;
@@ -64,9 +81,8 @@
   border-radius: $border-radius-base;
   white-space: nowrap;
 
-  &[disabled] {
-    opacity: .65;
-    cursor: not-allowed;
+  &:disabled.read-only {
+    color: $gl-text-color !important;
   }
 
   &.no-outline {
@@ -121,7 +137,7 @@
   @extend .dropdown-toggle;
   padding-right: 25px;
   position: relative;
-  width: 163px;
+  width: 160px;
   text-overflow: ellipsis;
   overflow: hidden;
 
@@ -140,37 +156,79 @@
     top: 11px;
     right: 8px;
   }
+
+  .spinner {
+    position: absolute;
+    top: 9px;
+    right: 8px;
+  }
+
+  .dropdown-menu-toggle-icon {
+    position: absolute;
+    right: $gl-padding-8;
+    color: $gray-darkest;
+  }
+}
+
+.labels {
+  // Prevent double scroll-bars for labels dropdown.
+  .dropdown-menu-toggle.wide + .dropdown-select {
+    max-height: unset;
+  }
+}
+
+.gl-dropdown .dropdown-menu-toggle {
+  padding-right: $gl-padding-8;
+
+  .gl-dropdown-toggle-text {
+    min-height: $gl-line-height-20;
+  }
+}
+
+@mixin dropdown-item-hover {
+  background-color: $gray-darker;
+  color: $gl-text-color;
+  outline: 0;
 }
 
 @mixin dropdown-link {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   display: block;
+  font-weight: $gl-font-weight-normal;
   position: relative;
-  padding: 5px 8px;
+  padding: $dropdown-item-padding-y $dropdown-item-padding-x;
   color: $gl-text-color;
-  line-height: initial;
-  border-radius: 2px;
-  white-space: nowrap;
+  line-height: $gl-btn-line-height;
+  white-space: normal;
   overflow: hidden;
+  text-align: left;
+  width: 100%;
 
-  &:hover,
-  &:focus,
-  &.is-focused {
-    background-color: $dropdown-link-hover-bg;
+  &.disable-hover {
     text-decoration: none;
-
-    .badge {
-      background-color: darken($dropdown-link-hover-bg, 5%);
-    }
   }
 
-  &.dropdown-menu-empty-link {
-    &.is-focused {
-      background-color: $dropdown-empty-row-bg;
-    }
+  &:not(.disable-hover):hover,
+  &:active,
+  &:focus,
+  &.is-focused {
+    @include dropdown-item-hover;
+
+    text-decoration: none;
   }
 
   &.dropdown-menu-user-link {
     line-height: 16px;
+    padding-top: 10px;
+    padding-bottom: 7px;
+    white-space: nowrap;
+
+    .dropdown-menu-user-username {
+      display: block;
+    }
   }
 
   .icon-play {
@@ -181,26 +239,27 @@
   }
 }
 
-.dropdown-menu,
-.dropdown-menu-nav {
-  @include set-invisible;
-  display: block;
+.dropdown-menu {
+  display: none;
   position: absolute;
   width: auto;
   top: 100%;
-  left: 0;
-  z-index: 9;
+  z-index: 300;
   min-width: 240px;
   max-width: 500px;
-  margin-top: 2px;
-  margin-bottom: 0;
+  margin-top: $dropdown-vertical-offset;
+  margin-bottom: 24px;
   font-size: 14px;
-  font-weight: normal;
+  font-weight: $gl-font-weight-normal;
   padding: 8px 0;
-  background-color: $white-light;
-  border: 1px solid $dropdown-border-color;
+  background-color: $white;
+  border: 1px solid $border-color;
   border-radius: $border-radius-base;
   box-shadow: 0 2px 4px $dropdown-shadow-color;
+
+  &.dropdown-open-top {
+    margin-bottom: $dropdown-vertical-offset;
+  }
 
   &.dropdown-open-left {
     right: 0;
@@ -232,16 +291,28 @@
   }
 
   li {
+    display: block;
     text-align: left;
     list-style: none;
-    padding: 0 10px;
+    padding: 0 1px;
+
+    > a,
+    button,
+    .gl-button.btn-link,
+    .menu-item {
+      @include dropdown-link;
+    }
   }
 
   .divider {
     height: 1px;
-    margin: 6px 10px;
+    margin: #{$grid-size / 2} 0;
     padding: 0;
-    background-color: $dropdown-divider-color;
+    background-color: $dropdown-divider-bg;
+
+    &:hover {
+      background-color: $dropdown-divider-bg;
+    }
   }
 
   .separator {
@@ -249,18 +320,22 @@
     height: 1px;
     margin-top: 8px;
     margin-bottom: 8px;
-    background-color: $dropdown-divider-color;
+    background-color: $dropdown-divider-bg;
   }
 
-  a {
-    @include dropdown-link;
+  .dropdown-menu-empty-item a {
+    &:hover,
+    &:focus {
+      background-color: transparent;
+    }
   }
 
   .dropdown-header {
-    color: $gl-text-color-secondary;
+    color: $black;
     font-size: 13px;
-    line-height: 22px;
-    padding: 0 16px;
+    font-weight: $gl-font-weight-bold;
+    line-height: $gl-line-height;
+    padding: $dropdown-item-padding-y $dropdown-item-padding-x;
   }
 
   &.capitalize-header .dropdown-header {
@@ -268,14 +343,9 @@
   }
 
   .dropdown-bold-header {
-    font-weight: 600;
-    line-height: 22px;
-    padding: 0 16px;
-  }
-
-  .separator + .dropdown-header,
-  .separator + .dropdown-bold-header {
-    padding-top: 2px;
+    font-weight: $gl-font-weight-bold;
+    line-height: $gl-line-height;
+    padding: $dropdown-item-padding-y $dropdown-item-padding-x;
   }
 
   .unclickable {
@@ -284,10 +354,18 @@
     color: $gl-text-color-secondary;
   }
 
-  .badge + span:not(.badge) {
+  .badge.badge-pill + span:not(.badge.badge-pill) {
     // Expects up to 3 digits on the badge
     margin-right: 40px;
   }
+
+  .dropdown-menu-content {
+    padding: $dropdown-item-padding-y $dropdown-item-padding-x;
+  }
+}
+
+.dropdown-item {
+  @include dropdown-link;
 }
 
 .droplab-dropdown {
@@ -295,60 +373,56 @@
     pointer-events: none;
   }
 
-  .dropdown-menu li {
-    padding: $gl-btn-padding;
-    cursor: pointer;
+  .dropdown-menu {
+    display: none;
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
 
-    > a,
-    > button {
-      display: flex;
-      margin: 0;
-      padding: 0;
-      border-radius: 0;
-      text-overflow: inherit;
-      background-color: inherit;
-      color: inherit;
-      border: inherit;
-      text-align: left;
+    li {
+      cursor: pointer;
 
-      &:hover,
-      &:focus {
-        background-color: inherit;
-        color: inherit;
+      &.droplab-item-active button {
+        @include dropdown-item-hover;
       }
 
-      &.btn .fa:not(:last-child) {
+      > a,
+      > button {
+        display: flex;
+        margin: 0;
+        text-overflow: inherit;
+        text-align: left;
+
+        &.btn .fa:not(:last-child) {
+          margin-left: 5px;
+        }
+      }
+
+      > button.dropdown-epic-button {
+        flex-direction: column;
+
+        .reference {
+          color: $gray-300;
+          margin-top: $gl-padding-4;
+        }
+      }
+
+      &.droplab-item-selected i {
+        visibility: visible;
+      }
+
+      .icon {
+        visibility: hidden;
+      }
+
+      .description {
+        display: inline-block;
+        white-space: normal;
         margin-left: 5px;
-      }
-    }
 
-    &:hover,
-    &:focus {
-      background-color: $dropdown-hover-color;
-      color: $white-light;
-    }
-
-    &.droplab-item-selected i {
-      visibility: visible;
-    }
-
-    &.divider {
-      margin: 0 8px;
-      padding: 0;
-      border-top: $gray-darkest;
-    }
-
-    .icon {
-      visibility: hidden;
-    }
-
-    .description {
-      display: inline-block;
-      white-space: normal;
-      margin-left: 5px;
-
-      p {
-        margin-bottom: 0;
+        p {
+          margin-bottom: 0;
+        }
       }
     }
   }
@@ -360,17 +434,12 @@
   }
 }
 
-.droplab-dropdown .dropdown-menu,
-.droplab-dropdown .dropdown-menu-nav {
-  display: none;
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
+.comment-type-dropdown.show .dropdown-menu {
+  display: block;
 }
 
 .filtered-search-box-input-container {
-  .dropdown-menu,
-  .dropdown-menu-nav {
+  .dropdown-menu {
     max-width: 280px;
   }
 }
@@ -425,14 +494,9 @@
   }
 }
 
-.dropdown-menu-user-link {
-  padding-top: 10px;
-  padding-bottom: 7px;
-}
-
 .dropdown-menu-user-full-name {
   display: block;
-  font-weight: 500;
+  font-weight: $gl-font-weight-normal;
   line-height: 16px;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -450,73 +514,68 @@
 .dropdown-select {
   width: $dropdown-width;
 
-  @media (max-width: $screen-sm-min) {
+  @include media-breakpoint-down(sm) {
     width: 100%;
   }
 }
 
-.dropdown-menu-align-right {
-  left: auto;
-  right: 0;
-  margin-top: -5px;
-}
-
 .dropdown-menu-selectable {
-  a {
-    padding-left: 26px;
-    position: relative;
+  li {
+    a,
+    button,
+    .dropdown-item {
+      padding: 8px 40px;
+      position: relative;
 
-    &.is-indeterminate,
-    &.is-active {
-      font-weight: 600;
-      color: $gl-text-color;
+      &.is-indeterminate,
+      &.is-active {
+        color: $gl-text-color;
 
-      &::before {
-        position: absolute;
-        left: 6px;
-        top: 50%;
-        transform: translateY(-50%);
-        font: normal normal normal 14px/1 FontAwesome;
-        font-size: inherit;
-        text-rendering: auto;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
+        &::before {
+          position: absolute;
+          left: 16px;
+          top: 16px;
+          transform: translateY(-50%);
+          font: normal normal normal 14px/1 FontAwesome;
+          font-size: inherit;
+          text-rendering: auto;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+        }
+
+        &.dropdown-menu-user-link::before {
+          top: 50%;
+        }
       }
-    }
 
-    &.is-indeterminate::before {
-      content: "\f068";
-    }
+      &.is-indeterminate::before {
+        content: '\f068';
+      }
 
-    &.is-active::before {
-      content: "\f00c";
-      position: absolute;
-      top: 50%;
-      transform: translateY(-50%);
+      &.is-active::before {
+        content: '\f00c';
+      }
     }
   }
 }
 
-
 .dropdown-title {
   position: relative;
-  padding: 2px 25px 10px;
-  margin: 0 10px 10px;
-  font-weight: 600;
+  padding: $dropdown-item-padding-y $dropdown-item-padding-x;
+  padding-bottom: #{2 * $dropdown-item-padding-y};
+  margin-bottom: $dropdown-item-padding-y;
+  font-weight: $gl-font-weight-bold;
   line-height: 1;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
-  border-bottom: 1px solid $dropdown-divider-color;
+  border-bottom: 1px solid $dropdown-divider-bg;
   overflow: hidden;
 }
 
 .dropdown-title-button {
-  position: absolute;
-  top: 0;
   padding: 0;
   color: $dropdown-title-btn-color;
-  font-size: 14px;
   border: 0;
   background: none;
   outline: 0;
@@ -526,16 +585,9 @@
   }
 }
 
-.dropdown-menu-close {
-  right: 5px;
-  width: 20px;
-  height: 20px;
-  top: -1px;
-}
-
 .dropdown-menu-back {
-  left: 7px;
-  top: 2px;
+  left: 10px;
+  top: $gl-padding-8;
 }
 
 .dropdown-input {
@@ -543,9 +595,12 @@
   margin-bottom: 10px;
   padding: 0 10px;
 
-  .fa {
+  .fa,
+  .input-icon,
+  .dropdown-input-clear,
+  .dropdown-input-search {
     position: absolute;
-    top: 10px;
+    top: $gl-padding-8;
     right: 20px;
     color: $dropdown-input-fa-color;
     font-size: 12px;
@@ -556,9 +611,12 @@
     display: none;
     cursor: pointer;
     pointer-events: all;
-    right: 22px;
-    top: 9px;
+    top: $gl-padding-8;
     font-size: 14px;
+
+    &:not(.gl-icon) {
+      right: 22px;
+    }
   }
 
   &.has-value {
@@ -574,35 +632,38 @@
 
 .dropdown-input-field,
 .default-dropdown-input {
+  background-color: $input-bg;
   display: block;
   width: 100%;
   min-height: 30px;
   padding: 0 7px;
-  color: $dropdown-input-color;
+  color: $gray-700;
   line-height: 30px;
-  border: 1px solid $dropdown-divider-color;
+  border: 1px solid $dropdown-divider-bg;
   border-radius: 2px;
   outline: 0;
 
   &:focus {
-    color: $dropdown-link-color;
-    border-color: $dropdown-input-focus-border;
+    color: $gray-700;
+    border-color: $blue-300;
     box-shadow: 0 0 4px $dropdown-input-focus-shadow;
 
-    ~ .fa {
-      color: $dropdown-link-color;
+    ~ .fa,
+    ~ .dropdown-input-clear {
+      color: $gray-700;
     }
   }
 
   &:hover {
-    ~ .fa {
-      color: $dropdown-link-color;
+    ~ .fa,
+    ~ .dropdown-input-clear {
+      color: $gray-700;
     }
   }
 }
 
 .dropdown-content {
-  max-height: 215px;
+  max-height: 252px;
   overflow-y: auto;
 }
 
@@ -615,7 +676,12 @@
   padding-top: 10px;
   margin-top: 10px;
   font-size: 13px;
-  border-top: 1px solid $dropdown-divider-color;
+  border-top: 1px solid $dropdown-divider-bg;
+}
+
+.dropdown-footer-content {
+  padding-left: 10px;
+  padding-right: 10px;
 }
 
 .dropdown-due-date-footer {
@@ -632,6 +698,16 @@
     cursor: pointer;
     padding-left: 10px;
   }
+}
+
+.dropdown-create-new-item-button {
+  @include dropdown-link;
+
+  width: 100%;
+  background-color: transparent;
+  border: 0;
+  text-align: left;
+  text-overflow: ellipsis;
 }
 
 .dropdown-loading {
@@ -664,6 +740,30 @@
   border-radius: $border-radius-base;
 }
 
+.git-revision-dropdown {
+  .dropdown-content {
+    max-height: 215px;
+  }
+}
+
+.sidebar-move-issue-dropdown {
+  .dropdown-content {
+    max-height: 160px;
+  }
+}
+
+.dropdown-menu-author {
+  .dropdown-content {
+    max-height: 215px;
+  }
+}
+
+.dropdown-menu-labels {
+  .dropdown-content {
+    max-height: 128px;
+  }
+}
+
 .dropdown-menu-due-date {
   .dropdown-content {
     max-height: 230px;
@@ -685,7 +785,7 @@
 .dropdown-menu-inner-title {
   display: block;
   color: $gl-text-color;
-  font-weight: 600;
+  font-weight: $gl-font-weight-bold;
 }
 
 .dropdown-menu-inner-content {
@@ -697,10 +797,6 @@
   &.is-default {
     color: $gl-text-color-secondary;
   }
-}
-
-.droplab-item-ignore {
-  pointer-events: none;
 }
 
 .pika-single.animate-picker.is-bound,
@@ -717,63 +813,306 @@
 
 .pika-single.animate-picker.is-bound {
   @include set-visible;
+
+  &.is-hidden {
+    @include set-invisible;
+    overflow: hidden;
+  }
 }
 
-.pika-single.animate-picker.is-bound.is-hidden {
-  @include set-invisible;
-  overflow: hidden;
+@include media-breakpoint-down(xs) {
+  .navbar-gitlab {
+    li.dropdown {
+      position: static;
+    }
+  }
+
+  header.navbar-gitlab .dropdown {
+    .dropdown-menu {
+      width: 100%;
+      min-width: 100%;
+    }
+  }
+
+  header.navbar-gitlab-new .header-content .dropdown {
+    .dropdown-menu {
+      left: 0;
+      min-width: 100%;
+    }
+  }
 }
 
-// TODO: change global style and remove mixin
-@mixin new-style-dropdown($selector: '') {
-  #{$selector}.dropdown-menu,
-  #{$selector}.dropdown-menu-nav {
-    .divider {
-      margin: 6px 0;
+header.header-content .dropdown-menu.frequent-items-dropdown-menu {
+  padding: 0;
+}
+
+.frequent-items-dropdown-container {
+  display: flex;
+  flex-direction: row;
+  width: 500px;
+  height: 354px;
+
+  .frequent-items-dropdown-sidebar,
+  .frequent-items-dropdown-content {
+    padding: 8px 0;
+  }
+
+  .loading-animation {
+    color: $almost-black;
+  }
+
+  .frequent-items-dropdown-sidebar {
+    width: 30%;
+    border-right: 1px solid $border-color;
+  }
+
+  .frequent-items-dropdown-content {
+    position: relative;
+    width: 70%;
+  }
+
+  @include media-breakpoint-down(xs) {
+    flex-direction: column;
+    width: 100%;
+    height: auto;
+    flex: 1;
+
+    .frequent-items-dropdown-sidebar,
+    .frequent-items-dropdown-content {
+      width: 100%;
     }
 
-    li {
-      padding: 0 1px;
+    .frequent-items-dropdown-sidebar {
+      border-bottom: 1px solid $border-color;
+      border-right: 0;
+    }
+  }
 
-      &.dropdown-header {
-        padding: 8px 16px;
-      }
+  .section-header,
+  .frequent-items-list-container li.section-empty {
+    padding: 0 $gl-padding;
+    color: $gl-text-color-secondary;
+    font-size: $gl-font-size;
+  }
 
-      a {
-        border-radius: 0;
-        padding: 8px 16px;
+  .frequent-items-list-container {
+    height: 304px;
+    padding: 8px 0;
+    overflow-y: auto;
 
-        &.is-focused,
-        &:hover,
-        &:active,
-        &:focus {
-          background-color: $gray-darker;
-        }
-
-        &.is-active {
-          font-weight: inherit;
-
-          &::before {
-            top: 16px;
-          }
-        }
-      }
+    li.section-empty.section-failure {
+      color: $red-700;
     }
 
-    &.dropdown-menu-selectable {
-      li {
-        a {
-          padding: 8px 40px;
+    .frequent-items-list-item-container a {
+      display: flex;
+    }
+  }
 
-          &.is-active::before {
-            left: 16px;
-          }
-        }
+  .search-input-container {
+    position: relative;
+    padding: 4px $gl-padding;
+
+    .search-icon {
+      position: absolute;
+      top: 13px;
+      right: 25px;
+      color: $gray-50;
+    }
+  }
+
+  .section-header {
+    font-weight: 700;
+    margin-top: 8px;
+  }
+
+  @include media-breakpoint-down(xs) {
+    .frequent-items-list-container {
+      width: auto;
+      height: auto;
+      padding-bottom: 0;
+    }
+  }
+}
+
+.frequent-items-list-item-container {
+  .frequent-items-item-avatar-container,
+  .frequent-items-item-metadata-container {
+    float: left;
+  }
+
+  .frequent-items-item-metadata-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .frequent-items-item-title,
+  .frequent-items-item-namespace {
+    max-width: 250px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &:hover {
+    .frequent-items-item-avatar-container .avatar {
+      border-color: $gray-50;
+    }
+  }
+
+  .frequent-items-item-title {
+    font-size: $gl-font-size;
+    font-weight: 400;
+    line-height: 16px;
+  }
+
+  .frequent-items-item-namespace {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 12px;
+    color: $gl-text-color-secondary;
+  }
+
+  @include media-breakpoint-down(xs) {
+    .frequent-items-item-metadata-container {
+      float: none;
+    }
+  }
+}
+
+.dropdown-content-faded-mask {
+  position: relative;
+
+  .dropdown-list {
+    max-height: $dropdown-max-height;
+    overflow-y: auto;
+    position: relative;
+  }
+
+  &::after {
+    height: $dropdown-fade-mask-height;
+    width: 100%;
+    position: absolute;
+    bottom: 0;
+    background: linear-gradient(to top, $white 0, rgba($white, 0));
+    transition: opacity $fade-mask-transition-duration $fade-mask-transition-curve;
+    content: '';
+    pointer-events: none;
+  }
+
+  &.fade-out::after {
+    opacity: 0;
+  }
+}
+
+.labels-select-wrapper {
+  &.is-standalone {
+    .labels-select-dropdown-contents {
+      max-height: 350px;
+
+      .dropdown-content {
+        height: 250px;
       }
     }
   }
 
-  #{$selector}.dropdown-menu-align-right {
-    margin-top: 2px;
+  .labels-select-dropdown-contents {
+    min-height: $dropdown-min-height;
+    max-height: 330px;
+    background-color: $white;
+    border: 1px solid $border-color;
+    box-shadow: 0 2px 4px $dropdown-shadow-color;
+    z-index: 2;
+
+    .dropdown-content {
+      height: 135px;
+    }
+  }
+
+  .labels-fetch-loading {
+    top: 0;
+    left: 0;
+    opacity: 0.5;
+    background-color: $white;
+    z-index: 1;
+  }
+
+  .dropdown-header-button {
+    .gl-icon {
+      color: $dropdown-title-btn-color;
+
+      &:hover {
+        color: $gray-300;
+      }
+    }
+  }
+
+  .label-item {
+    padding: 8px 20px;
+
+    &:hover,
+    &.is-focused {
+      @include dropdown-item-hover;
+
+      text-decoration: none;
+    }
+  }
+
+  .color-input-container {
+    .dropdown-label-color-preview {
+      border: 1px solid $gray-100;
+      border-right: 0;
+
+      &[style] {
+        border-color: transparent;
+      }
+    }
+  }
+}
+
+.bulk-update {
+  .dropdown-toggle-text {
+    &.is-default {
+      color: $gl-text-color;
+    }
+  }
+}
+
+// This class won't be needed once we can directly add utility classes to the child
+// https://github.com/bootstrap-vue/bootstrap-vue/issues/5669
+.gl-dropdown-text-py-0 {
+  .b-dropdown-text {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
+// This class won't be needed once we can directly add utility classes to the child
+// https://github.com/bootstrap-vue/bootstrap-vue/issues/5669
+.gl-dropdown-text-block {
+  .b-dropdown-text {
+    display: block;
+  }
+}
+
+// This class won't be needed once we can add a prop for this in the GitLab UI component
+// https://gitlab.com/gitlab-org/gitlab-ui/-/issues/966
+.gl-new-dropdown {
+  .gl-dropdown-menu-wide {
+    width: $gl-dropdown-width-wide;
+  }
+}
+
+.gl-dropdown-item-deprecated-adapter {
+  .dropdown-item {
+    align-items: flex-start;
+
+    .gl-new-dropdown-item-text-primary {
+      @include gl-font-weight-bold;
+    }
+
+    .gl-new-dropdown-item-text-secondary {
+      color: inherit;
+    }
   }
 }

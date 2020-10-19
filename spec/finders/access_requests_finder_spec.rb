@@ -1,17 +1,19 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe AccessRequestsFinder do
+RSpec.describe AccessRequestsFinder do
   let(:user) { create(:user) }
   let(:access_requester) { create(:user) }
 
   let(:project) do
-    create(:project, :public, :access_requestable) do |project|
+    create(:project, :public) do |project|
       project.request_access(access_requester)
     end
   end
 
   let(:group) do
-    create(:group, :public, :access_requestable) do |group|
+    create(:group, :public) do |group|
       group.request_access(access_requester)
     end
   end
@@ -51,7 +53,7 @@ describe AccessRequestsFinder do
 
     context 'when current user can see access requests' do
       before do
-        project.team << [user, :master]
+        project.add_maintainer(user)
         group.add_owner(user)
       end
 
@@ -78,7 +80,7 @@ describe AccessRequestsFinder do
 
     context 'when current user can see access requests' do
       before do
-        project.team << [user, :master]
+        project.add_maintainer(user)
         group.add_owner(user)
       end
 

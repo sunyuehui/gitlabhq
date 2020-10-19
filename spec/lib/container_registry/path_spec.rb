@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ContainerRegistry::Path do
+RSpec.describe ContainerRegistry::Path do
   subject { described_class.new(path) }
 
   describe '#components' do
@@ -85,6 +87,24 @@ describe ContainerRegistry::Path do
       let(:path) { 'Some/Registry' }
 
       it { is_expected.to be_valid }
+    end
+
+    context 'when path contains double underscore' do
+      let(:path) { 'my/repository__name' }
+
+      it { is_expected.to be_valid }
+    end
+
+    context 'when path contains invalid separator with dot' do
+      let(:path) { 'some/registry-.name' }
+
+      it { is_expected.not_to be_valid }
+    end
+
+    context 'when path contains invalid separator with underscore' do
+      let(:path) { 'some/registry._name' }
+
+      it { is_expected.not_to be_valid }
     end
   end
 

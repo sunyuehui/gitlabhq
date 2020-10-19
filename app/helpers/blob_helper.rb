@@ -1,51 +1,93 @@
-module BlobHelper
-  def highlight(blob_name, blob_content, repository: nil, plain: false)
-    highlighted = Gitlab::Highlight.highlight(blob_name, blob_content, plain: plain, repository: repository)
-    raw %(<pre class="code highlight"><code>#{highlighted}</code></pre>)
-  end
+# frozen_string_literal: true
 
+module BlobHelper
   def no_highlight_files
     %w(credits changelog news copying copyright license authors)
   end
 
-  def edit_path(project = @project, ref = @ref, path = @path, options = {})
+  def edit_blob_path(project = @project, ref = @ref, path = @path, options = {})
     project_edit_blob_path(project,
-                                     tree_join(ref, path),
-                                     options[:link_opts])
+                           tree_join(ref, path),
+                           options[:link_opts])
   end
 
-  def edit_blob_link(project = @project, ref = @ref, path = @path, options = {})
-    blob = options.delete(:blob)
-    blob ||= project.repository.blob_at(ref, path) rescue nil
+  def ide_edit_path(project = @project, ref = @ref, path = @path)
+    project_path =
+      if !current_user || can?(current_user, :push_code, project)
+        project.full_path
+      else
+        # We currently always fork to the user's namespace
+        # in edit_fork_button_tag
+        "#{current_user.namespace.full_path}/#{project.path}"
+      end
 
-    return unless blob && blob.readable_text?
-
-    common_classes = "btn js-edit-blob #{options[:extra_class]}"
-
-    if !on_top_of_branch?(project, ref)
-      button_tag 'Edit', class: "#{common_classes} disabled has-tooltip", title: "You can only edit files when you are on a branch", data: { container: 'body' }
-    # This condition applies to anonymous or users who can edit directly
-    elsif !current_user || (current_user && can_modify_blob?(blob, project, ref))
-      link_to 'Edit', edit_path(project, ref, path, options), class: "#{common_classes} btn-sm"
-    elsif current_user && can?(current_user, :fork_project, project)
-      continue_params = {
-        to: edit_path(project, ref, path, options),
-        notice: edit_in_new_fork_notice,
-        notice_now: edit_in_new_fork_notice_now
-      }
-      fork_path = project_forks_path(project, namespace_key: current_user.namespace.id, continue: continue_params)
-
-      button_tag 'Edit',
-        class: "#{common_classes} js-edit-blob-link-fork-toggler",
-        data: { action: 'edit', fork_path: fork_path }
-    end
+    segments = [ide_path, 'project', project_path, 'edit', encode_ide_path(ref)]
+    segments.concat(['-', encode_ide_path(path)]) if path.present?
+    File.join(segments)
   end
 
-  def modify_file_link(project = @project, ref = @ref, path = @path, label:, action:, btn_class:, modal_type:)
+  def ide_fork_and_edit_path(project = @project, ref = @ref, path = @path, options = {})
+    fork_path_for_current_user(project, ide_edit_path(project, ref, path))
+  end
+
+  def fork_and_edit_path(project = @project, ref = @ref, path = @path, options = {})
+    fork_path_for_current_user(project, edit_blob_path(project, ref, path, options))
+  end
+
+  def fork_path_for_current_user(project, path)
     return unless current_user
 
-    blob = project.repository.blob_at(ref, path) rescue nil
+    project_forks_path(project,
+                      namespace_key: current_user.namespace&.id,
+                      continue: edit_blob_fork_params(path))
+  end
 
+  def encode_ide_path(path)
+    ERB::Util.url_encode(path).gsub('%2F', '/')
+  end
+
+  def edit_blob_button(project = @project, ref = @ref, path = @path, options = {})
+    return unless blob = readable_blob(options, path, project, ref)
+
+    common_classes = "btn btn-primary js-edit-blob ml-2 #{options[:extra_class]}"
+    data = { track_event: 'click_edit', track_label: 'Edit' }
+
+    if Feature.enabled?(:web_ide_primary_edit, project.group)
+      common_classes += " btn-inverted"
+      data[:track_property] = 'secondary'
+    end
+
+    edit_button_tag(blob,
+                    common_classes,
+                    _('Edit'),
+                    edit_blob_path(project, ref, path, options),
+                    project,
+                    ref,
+                    data)
+  end
+
+  def ide_edit_button(project = @project, ref = @ref, path = @path, blob:)
+    return unless blob
+
+    common_classes = 'btn btn-primary ide-edit-button ml-2'
+    data = { track_event: 'click_edit_ide', track_label: 'Web IDE' }
+
+    unless Feature.enabled?(:web_ide_primary_edit, project.group)
+      common_classes += " btn-inverted"
+      data[:track_property] = 'secondary'
+    end
+
+    edit_button_tag(blob,
+                    common_classes,
+                    _('Web IDE'),
+                    ide_edit_path(project, ref, path),
+                    project,
+                    ref,
+                    data)
+  end
+
+  def modify_file_button(project = @project, ref = @ref, path = @path, blob:, label:, action:, btn_class:, modal_type:)
+    return unless current_user
     return unless blob
 
     common_classes = "btn btn-#{btn_class}"
@@ -56,40 +98,33 @@ module BlobHelper
       button_tag label, class: "#{common_classes} disabled has-tooltip", title: "It is not possible to #{action} files that are stored in LFS using the web interface", data: { container: 'body' }
     elsif can_modify_blob?(blob, project, ref)
       button_tag label, class: "#{common_classes}", 'data-target' => "#modal-#{modal_type}-blob", 'data-toggle' => 'modal'
-    elsif can?(current_user, :fork_project, project)
-      continue_params = {
-        to: request.fullpath,
-        notice: edit_in_new_fork_notice + " Try to #{action} this file again.",
-        notice_now: edit_in_new_fork_notice_now
-      }
-      fork_path = project_forks_path(project, namespace_key: current_user.namespace.id, continue: continue_params)
-
-      button_tag label,
-        class: "#{common_classes} js-edit-blob-link-fork-toggler",
-        data: { action: action, fork_path: fork_path }
+    elsif can?(current_user, :fork_project, project) && can?(current_user, :create_merge_request_in, project)
+      edit_fork_button_tag(common_classes, project, label, edit_modify_file_fork_params(action), action)
     end
   end
 
-  def replace_blob_link(project = @project, ref = @ref, path = @path)
-    modify_file_link(
+  def replace_blob_link(project = @project, ref = @ref, path = @path, blob:)
+    modify_file_button(
       project,
       ref,
       path,
-      label:      "Replace",
+      blob: blob,
+      label:      _("Replace"),
       action:     "replace",
       btn_class:  "default",
       modal_type: "upload"
     )
   end
 
-  def delete_blob_link(project = @project, ref = @ref, path = @path)
-    modify_file_link(
+  def delete_blob_link(project = @project, ref = @ref, path = @path, blob:)
+    modify_file_button(
       project,
       ref,
       path,
-      label:      "Delete",
+      blob: blob,
+      label:      _("Delete"),
       action:     "delete",
-      btn_class:  "remove",
+      btn_class:  "default",
       modal_type: "remove"
     )
   end
@@ -99,14 +134,14 @@ module BlobHelper
   end
 
   def leave_edit_message
-    "Leave edit mode?\nAll unsaved changes will be lost."
+    _("Leave edit mode? All unsaved changes will be lost.")
   end
 
   def editing_preview_title(filename)
     if Gitlab::MarkupHelper.previewable?(filename)
-      'Preview'
+      _('Preview')
     else
-      'Preview changes'
+      _('Preview changes')
     end
   end
 
@@ -115,21 +150,21 @@ module BlobHelper
   # mode - File unix mode
   # mode - File name
   def blob_icon(mode, name)
-    icon("#{file_type_icon_class('file', mode, name)} fw")
+    sprite_icon(file_type_icon_class('file', mode, name))
   end
 
-  def blob_raw_path
+  def blob_raw_url(**kwargs)
     if @build && @entry
-      raw_project_job_artifacts_path(@project, @build, path: @entry.path)
+      raw_project_job_artifacts_url(@project, @build, path: @entry.path, **kwargs)
     elsif @snippet
-      if @snippet.project_id
-        raw_project_snippet_path(@project, @snippet)
-      else
-        raw_snippet_path(@snippet)
-      end
+      gitlab_raw_snippet_url(@snippet)
     elsif @blob
-      project_raw_path(@project, @id)
+      project_raw_url(@project, @id, **kwargs)
     end
+  end
+
+  def blob_raw_path(**kwargs)
+    blob_raw_url(**kwargs, only_path: true)
   end
 
   # SVGs can contain malicious JavaScript; only include whitelisted
@@ -139,103 +174,90 @@ module BlobHelper
     Gitlab::Sanitizers::SVG.clean(data)
   end
 
-  # If we blindly set the 'real' content type when serving a Git blob we
-  # are enabling XSS attacks. An attacker could upload e.g. a Javascript
-  # file to a Git repository, trick the browser of a victim into
-  # downloading the blob, and then the 'application/javascript' content
-  # type would tell the browser to execute the attacker's Javascript. By
-  # overriding the content type and setting it to 'text/plain' (in the
-  # example of Javascript) we tell the browser of the victim not to
-  # execute untrusted data.
-  def safe_content_type(blob)
-    if blob.text?
-      'text/plain; charset=utf-8'
-    elsif blob.image?
-      blob.content_type
-    else
-      'application/octet-stream'
-    end
-  end
-
-  def cached_blob?
-    stale = stale?(etag: @blob.id) # The #stale? method sets cache headers.
-
-    # Because we are opionated we set the cache headers ourselves.
-    response.cache_control[:public] = @project.public?
-
-    response.cache_control[:max_age] =
-      if @ref && @commit && @ref == @commit.id
-        # This is a link to a commit by its commit SHA. That means that the blob
-        # is immutable. The only reason to invalidate the cache is if the commit
-        # was deleted or if the user lost access to the repository.
-        Blob::CACHE_TIME_IMMUTABLE
-      else
-        # A branch or tag points at this blob. That means that the expected blob
-        # value may change over time.
-        Blob::CACHE_TIME
-      end
-
-    response.etag = @blob.id
-    !stale
-  end
-
-  def licenses_for_select
-    return @licenses_for_select if defined?(@licenses_for_select)
-
-    licenses = Licensee::License.all
-
-    @licenses_for_select = {
-      Popular: licenses.select(&:featured).map { |license| { name: license.name, id: license.key } },
-      Other: licenses.reject(&:featured).map { |license| { name: license.name, id: license.key } }
-    }
-  end
-
   def ref_project
     @ref_project ||= @target_project || @project
   end
 
-  def gitignore_names
-    @gitignore_names ||= Gitlab::Template::GitignoreTemplate.dropdown_names
+  def template_dropdown_names(items)
+    grouped = items.group_by(&:category)
+    categories = grouped.keys
+
+    categories.each_with_object({}) do |category, hash|
+      hash[category] = grouped[category].map do |item|
+        { name: item.name, id: item.key }
+      end
+    end
+  end
+  private :template_dropdown_names
+
+  def licenses_for_select(project)
+    @licenses_for_select ||= template_dropdown_names(TemplateFinder.build(:licenses, project).execute)
   end
 
-  def gitlab_ci_ymls
-    @gitlab_ci_ymls ||= Gitlab::Template::GitlabCiYmlTemplate.dropdown_names(params[:context])
+  def gitignore_names(project)
+    @gitignore_names ||= template_dropdown_names(TemplateFinder.build(:gitignores, project).execute)
   end
 
-  def dockerfile_names
-    @dockerfile_names ||= Gitlab::Template::DockerfileTemplate.dropdown_names
+  def gitlab_ci_ymls(project)
+    @gitlab_ci_ymls ||= template_dropdown_names(TemplateFinder.build(:gitlab_ci_ymls, project).execute)
   end
 
-  def blob_editor_paths
+  def metrics_dashboard_ymls(project)
+    @metrics_dashboard_ymls ||= template_dropdown_names(TemplateFinder.build(:metrics_dashboard_ymls, project).execute)
+  end
+
+  def dockerfile_names(project)
+    @dockerfile_names ||= template_dropdown_names(TemplateFinder.build(:dockerfiles, project).execute)
+  end
+
+  def blob_editor_paths(project)
     {
       'relative-url-root' => Rails.application.config.relative_url_root,
       'assets-prefix' => Gitlab::Application.config.assets.prefix,
-      'blob-language' => @blob && @blob.language.try(:ace_mode)
+      'blob-filename' => @blob && @blob.path,
+      'project-id' => project.id,
+      'is-markdown' => @blob && @blob.path && Gitlab::MarkupHelper.gitlab_markdown?(@blob.path)
     }
   end
 
   def copy_file_path_button(file_path)
-    clipboard_button(text: file_path, gfm: "`#{file_path}`", class: 'btn-clipboard btn-transparent prepend-left-5', title: 'Copy file path to clipboard')
+    clipboard_button(text: file_path, gfm: "`#{file_path}`", class: 'btn-clipboard btn-transparent', title: _('Copy file path'))
   end
 
   def copy_blob_source_button(blob)
     return unless blob.rendered_as_text?(ignore_errors: false)
 
-    clipboard_button(target: ".blob-content[data-blob-id='#{blob.id}']", class: "btn btn-sm js-copy-blob-source-btn", title: "Copy source to clipboard")
+    clipboard_button(target: ".blob-content[data-blob-id='#{blob.id}']", class: "btn btn-sm js-copy-blob-source-btn", title: _("Copy file contents"))
   end
 
   def open_raw_blob_button(blob)
     return if blob.empty?
+    return if blob.binary? || blob.stored_externally?
 
-    if blob.raw_binary? || blob.stored_externally?
-      icon = icon('download')
-      title = 'Download'
-    else
-      icon = icon('file-code-o')
-      title = 'Open raw'
-    end
+    title = _('Open raw')
+    link_to sprite_icon('doc-code'),
+      external_storage_url_or_path(blob_raw_path),
+      class: 'btn btn-sm has-tooltip',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      aria: { label: title },
+      title: title,
+      data: { container: 'body' }
+  end
 
-    link_to icon, blob_raw_path, class: 'btn btn-sm has-tooltip', target: '_blank', rel: 'noopener noreferrer', title: title, data: { container: 'body' }
+  def download_blob_button(blob)
+    return if blob.empty?
+
+    title = _('Download')
+    link_to sprite_icon('download'),
+      external_storage_url_or_path(blob_raw_path(inline: false)),
+      download: @path,
+      class: 'btn btn-sm has-tooltip',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      aria: { label: title },
+      title: title,
+      data: { container: 'body' }
   end
 
   def blob_render_error_reason(viewer)
@@ -261,7 +283,7 @@ module BlobHelper
     options = []
 
     if error == :collapsed
-      options << link_to('load it anyway', url_for(params.merge(viewer: viewer.type, expanded: true, format: nil)))
+      options << link_to('load it anyway', url_for(safe_params.merge(viewer: viewer.type, expanded: true, format: nil)))
     end
 
     # If the error is `:server_side_but_stored_externally`, the simple viewer will show the same error,
@@ -282,11 +304,82 @@ module BlobHelper
       options << link_to("submit an issue", new_project_issue_path(project))
     end
 
-    merge_project = can?(current_user, :create_merge_request, project) ? project : (current_user && current_user.fork_of(project))
+    merge_project = merge_request_source_project_for_project(@project)
     if merge_project
       options << link_to("create a merge request", project_new_merge_request_path(project))
     end
 
     options
+  end
+
+  def readable_blob(options, path, project, ref)
+    blob = options.delete(:blob)
+    blob ||= project.repository.blob_at(ref, path) rescue nil
+
+    blob if blob&.readable_text?
+  end
+
+  def edit_blob_fork_params(path)
+    {
+      to: path,
+      notice: edit_in_new_fork_notice,
+      notice_now: edit_in_new_fork_notice_now
+    }
+  end
+
+  def edit_modify_file_fork_params(action)
+    {
+      to: request.fullpath,
+      notice: edit_in_new_fork_notice_action(action),
+      notice_now: edit_in_new_fork_notice_now
+    }
+  end
+
+  def edit_fork_button_tag(common_classes, project, label, params, action = 'edit')
+    fork_path = project_forks_path(project, namespace_key: current_user.namespace.id, continue: params)
+
+    button_tag label,
+               class: "#{common_classes} js-edit-blob-link-fork-toggler",
+               data: { action: action, fork_path: fork_path }
+  end
+
+  def edit_disabled_button_tag(button_text, common_classes)
+    button_tag(button_text, class: "#{common_classes} disabled has-tooltip", title: _('You can only edit files when you are on a branch'), data: { container: 'body' })
+  end
+
+  def edit_link_tag(link_text, edit_path, common_classes, data)
+    link_to link_text, edit_path, class: "#{common_classes} btn-sm", data: data
+  end
+
+  def edit_button_tag(blob, common_classes, text, edit_path, project, ref, data)
+    if !on_top_of_branch?(project, ref)
+      edit_disabled_button_tag(text, common_classes)
+      # This condition only applies to users who are logged in
+    elsif !current_user || (current_user && can_modify_blob?(blob, project, ref))
+      edit_link_tag(text, edit_path, common_classes, data)
+    elsif can?(current_user, :fork_project, project) && can?(current_user, :create_merge_request_in, project)
+      edit_fork_button_tag(common_classes, project, text, edit_blob_fork_params(edit_path))
+    end
+  end
+
+  def show_suggest_pipeline_creation_celebration?
+    experiment_enabled?(:suggest_pipeline) &&
+      @blob.path == Gitlab::FileDetector::PATTERNS[:gitlab_ci] &&
+      @blob.auxiliary_viewer&.valid?(project: @project, sha: @commit.sha, user: current_user) &&
+      @project.uses_default_ci_config? &&
+      cookies[suggest_pipeline_commit_cookie_name].present?
+  end
+
+  def suggest_pipeline_commit_cookie_name
+    "suggest_gitlab_ci_yml_commit_#{@project.id}"
+  end
+
+  def human_access
+    @project.team.human_max_access(current_user&.id).try(:downcase)
+  end
+
+  def editing_ci_config?
+    @path.to_s.end_with?(Ci::Pipeline::CONFIG_EXTENSION) ||
+      @path.to_s == @project.ci_config_path_or_default
   end
 end

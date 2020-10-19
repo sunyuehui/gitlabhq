@@ -1,8 +1,8 @@
-- breadcrumb_title "Integrations"
-- page_title @service.title, "Services"
+- breadcrumb_title @service.title
+- add_to_breadcrumbs _('Integration Settings'), project_settings_integrations_path(@project)
+- page_title @service.title, _('Integrations')
+- @content_class = 'limit-container-width' unless fluid_layout
 
-- if show_new_nav?
-  - add_to_breadcrumbs("Settings", edit_project_path(@project))
-
-= render "projects/settings/head"
 = render 'form'
+- if @web_hook_logs
+  = render partial: 'projects/hook_logs/index', locals: { hook: @service.service_hook, hook_logs: @web_hook_logs, project: @project }

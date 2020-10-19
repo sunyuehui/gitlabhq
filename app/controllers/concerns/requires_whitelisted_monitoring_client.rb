@@ -1,5 +1,8 @@
+# frozen_string_literal: true
+
 module RequiresWhitelistedMonitoringClient
   extend ActiveSupport::Concern
+
   included do
     before_action :validate_ip_whitelisted_or_valid_token!
   end
@@ -11,7 +14,11 @@ module RequiresWhitelistedMonitoringClient
   end
 
   def client_ip_whitelisted?
-    ip_whitelist.any? { |e| e.include?(Gitlab::RequestContext.client_ip) }
+    # Always allow developers to access http://localhost:3000/-/metrics for
+    # debugging purposes
+    return true if Rails.env.development? && request.local?
+
+    ip_whitelist.any? { |e| e.include?(Gitlab::RequestContext.instance.client_ip) }
   end
 
   def ip_whitelist
@@ -21,9 +28,9 @@ module RequiresWhitelistedMonitoringClient
   def valid_token?
     token = params[:token].presence || request.headers['TOKEN']
     token.present? &&
-      ActiveSupport::SecurityUtils.variable_size_secure_compare(
+      ActiveSupport::SecurityUtils.secure_compare(
         token,
-        current_application_settings.health_check_access_token
+        Gitlab::CurrentSettings.health_check_access_token
       )
   end
 

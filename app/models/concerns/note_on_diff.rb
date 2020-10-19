@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Contains functionality shared between `DiffNote` and `LegacyDiffNote`.
 module NoteOnDiff
   extend ActiveSupport::Concern
@@ -11,10 +13,6 @@ module NoteOnDiff
   end
 
   def diff_line
-    raise NotImplementedError
-  end
-
-  def for_line?(line)
     raise NotImplementedError
   end
 

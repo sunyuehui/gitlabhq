@@ -1,6 +1,10 @@
+# frozen_string_literal: true
+
 require_dependency 'declarative_policy/cache'
 require_dependency 'declarative_policy/condition'
-require_dependency 'declarative_policy/dsl'
+require_dependency 'declarative_policy/delegate_dsl'
+require_dependency 'declarative_policy/policy_dsl'
+require_dependency 'declarative_policy/rule_dsl'
 require_dependency 'declarative_policy/preferred_scope'
 require_dependency 'declarative_policy/rule'
 require_dependency 'declarative_policy/runner'
@@ -8,9 +12,9 @@ require_dependency 'declarative_policy/step'
 
 require_dependency 'declarative_policy/base'
 
-require 'thread'
-
 module DeclarativePolicy
+  extend PreferredScope
+
   CLASS_CACHE_MUTEX = Mutex.new
   CLASS_CACHE_IVAR = :@__DeclarativePolicy_CLASS_CACHE
 
@@ -19,7 +23,13 @@ module DeclarativePolicy
       cache = opts[:cache] || {}
       key = Cache.policy_key(user, subject)
 
-      cache[key] ||= class_for(subject).new(user, subject, opts)
+      cache[key] ||=
+        # to avoid deadlocks in multi-threaded environment when
+        # autoloading is enabled, we allow concurrent loads,
+        # https://gitlab.com/gitlab-org/gitlab-foss/issues/48263
+        ActiveSupport::Dependencies.interlock.permit_concurrent_loads do
+          class_for(subject).new(user, subject, opts)
+        end
     end
 
     def class_for(subject)
@@ -30,6 +40,7 @@ module DeclarativePolicy
 
       policy_class = class_for_class(subject.class)
       raise "no policy for #{subject.class.name}" if policy_class.nil?
+
       policy_class
     end
 
@@ -61,11 +72,17 @@ module DeclarativePolicy
     end
 
     def compute_class_for_class(subject_class)
+      if subject_class.respond_to?(:declarative_policy_class)
+        return subject_class.declarative_policy_class.constantize
+      end
+
       subject_class.ancestors.each do |klass|
-        next unless klass.name
+        name = klass.name
+
+        next unless name
 
         begin
-          policy_class = "#{klass.name}Policy".constantize
+          policy_class = "#{name}Policy".constantize
 
           # NOTE: the < operator here tests whether policy_class
           # inherits from Base. We can't use #is_a? because that
@@ -84,6 +101,7 @@ module DeclarativePolicy
 
       while subject.respond_to?(:declarative_policy_delegate)
         raise ArgumentError, "circular delegations" if seen.include?(subject.object_id)
+
         seen << subject.object_id
         subject = subject.declarative_policy_delegate
       end

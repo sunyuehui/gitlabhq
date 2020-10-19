@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe HipchatService do
+RSpec.describe HipchatService do
   describe "Associations" do
     it { is_expected.to belong_to :project }
     it { is_expected.to have_one :service_hook }
@@ -29,7 +31,7 @@ describe HipchatService do
     let(:user)    { create(:user) }
     let(:project) { create(:project, :repository) }
     let(:api_url) { 'https://hipchat.example.com/v2/room/123456/notification?auth_token=verySecret' }
-    let(:project_name) { project.name_with_namespace.gsub(/\s/, '') }
+    let(:project_name) { project.full_name.gsub(/\s/, '') }
     let(:token) { 'verySecret' }
     let(:server_url) { 'https://hipchat.example.com'}
     let(:push_sample_data) do
@@ -96,12 +98,11 @@ describe HipchatService do
     context 'tag_push events' do
       let(:push_sample_data) do
         Gitlab::DataBuilder::Push.build(
-          project,
-          user,
-          Gitlab::Git::BLANK_SHA,
-          '1' * 40,
-          'refs/tags/test',
-          [])
+          project: project,
+          user: user,
+          oldrev: Gitlab::Git::BLANK_SHA,
+          newrev: '1' * 40,
+          ref: 'refs/tags/test')
       end
 
       it "calls Hipchat API for tag push events" do
@@ -253,6 +254,21 @@ describe HipchatService do
               "<b>#{title}</b>" \
               "<pre>issue <strong>note</strong></pre>")
         end
+
+        context 'with confidential issue' do
+          before do
+            issue.update!(confidential: true)
+          end
+
+          it 'calls Hipchat API with issue comment' do
+            data = Gitlab::DataBuilder::Note.build(issue_note, user)
+            hipchat.execute(data)
+
+            message = hipchat.send(:create_message, data)
+
+            expect(message).to include("<pre>issue <strong>note</strong></pre>")
+          end
+        end
       end
 
       context 'when snippet comment event triggered' do
@@ -285,7 +301,7 @@ describe HipchatService do
     end
 
     context 'pipeline events' do
-      let(:pipeline) { create(:ci_empty_pipeline, user: create(:user)) }
+      let(:pipeline) { create(:ci_empty_pipeline, user: project.owner) }
       let(:data) { Gitlab::DataBuilder::Pipeline.build(pipeline) }
 
       context 'for failed' do
@@ -303,7 +319,7 @@ describe HipchatService do
           message = hipchat.__send__(:create_pipeline_message, data)
 
           project_url = project.web_url
-          project_name = project.name_with_namespace.gsub(/\s/, '')
+          project_name = project.full_name.gsub(/\s/, '')
           pipeline_attributes = data[:object_attributes]
           ref = pipeline_attributes[:ref]
           ref_type = pipeline_attributes[:tag] ? 'tag' : 'branch'
@@ -311,8 +327,8 @@ describe HipchatService do
           user_name = data[:user][:name]
 
           expect(message).to eq("<a href=\"#{project_url}\">#{project_name}</a>: " \
-            "Pipeline <a href=\"#{project_url}/pipelines/#{pipeline.id}\">##{pipeline.id}</a> " \
-            "of <a href=\"#{project_url}/commits/#{ref}\">#{ref}</a> #{ref_type} " \
+            "Pipeline <a href=\"#{project_url}/-/pipelines/#{pipeline.id}\">##{pipeline.id}</a> " \
+            "of <a href=\"#{project_url}/-/commits/#{ref}\">#{ref}</a> #{ref_type} " \
             "by #{user_name} failed in #{duration} second(s)")
         end
       end
@@ -336,7 +352,7 @@ describe HipchatService do
       end
     end
 
-    context "#message_options" do
+    describe "#message_options" do
       it "is set to the defaults" do
         expect(hipchat.__send__(:message_options)).to eq({ notify: false, color: 'yellow' })
       end
@@ -369,6 +385,24 @@ describe HipchatService do
 
           expect(hipchat.__send__(:message_options, data)).to eq({ notify: false, color: 'red' })
         end
+      end
+    end
+  end
+
+  context 'with UrlBlocker' do
+    let(:user)    { create(:user) }
+    let(:project) { create(:project, :repository) }
+    let(:hipchat) { create(:hipchat_service, project: project, properties: { room: 'test' }) }
+    let(:push_sample_data) { Gitlab::DataBuilder::Push.build_sample(project, user) }
+
+    describe '#execute' do
+      before do
+        hipchat.server = 'http://localhost:9123'
+      end
+
+      it 'raises UrlBlocker for localhost' do
+        expect(Gitlab::UrlBlocker).to receive(:validate!).and_call_original
+        expect { hipchat.execute(push_sample_data) }.to raise_error(Gitlab::HTTP::BlockedUrlError)
       end
     end
   end

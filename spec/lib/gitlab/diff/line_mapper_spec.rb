@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Diff::LineMapper do
+RSpec.describe Gitlab::Diff::LineMapper do
   include RepoHelpers
 
   let(:project) { create(:project, :repository) }
@@ -9,6 +11,7 @@ describe Gitlab::Diff::LineMapper do
   let(:diffs) { commit.raw_diffs }
   let(:diff) { diffs.first }
   let(:diff_file) { Gitlab::Diff::File.new(diff, diff_refs: commit.diff_refs, repository: repository) }
+
   subject { described_class.new(diff_file) }
 
   describe '#old_to_new' do

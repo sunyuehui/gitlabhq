@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Controller for viewing a repository's file structure
 class Projects::FindFileController < Projects::ApplicationController
   include ExtractsPath
@@ -7,6 +9,8 @@ class Projects::FindFileController < Projects::ApplicationController
   before_action :require_non_empty_project
   before_action :assign_ref_vars
   before_action :authorize_download_code!
+
+  feature_category :source_code_management
 
   def show
     return render_404 unless @repository.commit(@ref)

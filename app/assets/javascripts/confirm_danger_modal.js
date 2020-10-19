@@ -1,30 +1,62 @@
-/* eslint-disable func-names, space-before-function-paren, wrap-iife, one-var, no-var, camelcase, one-var-declaration-per-line, no-else-return, max-len */
+import $ from 'jquery';
+import { Rails } from '~/lib/utils/rails_ujs';
+import { rstrip } from './lib/utils/common_utils';
 
-window.ConfirmDangerModal = (function() {
-  function ConfirmDangerModal(form, text) {
-    var project_path, submit;
-    this.form = form;
-    $('.js-confirm-text').text(text || '');
-    $('.js-confirm-danger-input').val('');
-    $('#modal-confirm-danger').modal('show');
-    project_path = $('.js-confirm-danger-match').text();
-    submit = $('.js-confirm-danger-submit');
-    submit.disable();
-    $('.js-confirm-danger-input').off('input');
-    $('.js-confirm-danger-input').on('input', function() {
-      if (gl.utils.rstrip($(this).val()) === project_path) {
-        return submit.enable();
+function openConfirmDangerModal($form, $modal, text) {
+  const $input = $('.js-confirm-danger-input', $modal);
+  $input.val('');
+
+  $('.js-confirm-text', $modal).text(text || '');
+  $modal.modal('show');
+
+  const confirmTextMatch = $('.js-confirm-danger-match', $modal).text();
+  const $submit = $('.js-confirm-danger-submit', $modal);
+  $submit.disable();
+  $input.focus();
+
+  $input.off('input').on('input', function handleInput() {
+    const confirmText = rstrip($(this).val());
+    if (confirmText === confirmTextMatch) {
+      $submit.enable();
+    } else {
+      $submit.disable();
+    }
+  });
+
+  $('.js-confirm-danger-submit', $modal)
+    .off('click')
+    .on('click', () => {
+      if ($form.data('remote')) {
+        Rails.fire($form[0], 'submit');
       } else {
-        return submit.disable();
+        $form.submit();
       }
     });
-    $('.js-confirm-danger-submit').off('click');
-    $('.js-confirm-danger-submit').on('click', (function(_this) {
-      return function() {
-        return _this.form.submit();
-      };
-    })(this));
+}
+
+function getModal($btn) {
+  const $modal = $btn.prev('.modal');
+
+  if ($modal.length) {
+    return $modal;
   }
 
-  return ConfirmDangerModal;
-})();
+  return $('#modal-confirm-danger');
+}
+
+export default function initConfirmDangerModal() {
+  $(document).on('click', '.js-confirm-danger', e => {
+    const $btn = $(e.target);
+    const checkFieldName = $btn.data('checkFieldName');
+    const checkFieldCompareValue = $btn.data('checkCompareValue');
+    const checkFieldVal = parseInt($(`[name="${checkFieldName}"]`).val(), 10);
+
+    if (!checkFieldName || checkFieldVal < checkFieldCompareValue) {
+      e.preventDefault();
+      const $form = $btn.closest('form');
+      const $modal = getModal($btn);
+      const text = $btn.data('confirmDangerMessage');
+      openConfirmDangerModal($form, $modal, text);
+    }
+  });
+}

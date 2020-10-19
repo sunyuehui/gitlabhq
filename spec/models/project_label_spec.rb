@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ProjectLabel do
+RSpec.describe ProjectLabel do
   describe 'relationships' do
     it { is_expected.to belong_to(:project) }
   end

@@ -1,4 +1,6 @@
-describe JSONWebToken::Token do
+# frozen_string_literal: true
+
+RSpec.describe JSONWebToken::Token do
   let(:token) { described_class.new }
 
   context 'custom parameters' do
@@ -14,6 +16,7 @@ describe JSONWebToken::Token do
 
   context 'embeds default payload' do
     subject { token.payload }
+
     let(:default) { token.send(:default_payload) }
 
     it { is_expected.to include(default) }

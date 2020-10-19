@@ -1,6 +1,10 @@
+# frozen_string_literal: true
+
 class Profiles::ChatNamesController < Profiles::ApplicationController
   before_action :chat_name_token, only: [:new]
   before_action :chat_name_params, only: [:new, :create, :deny]
+
+  feature_category :users
 
   def index
     @chat_names = current_user.chat_names
@@ -13,9 +17,9 @@ class Profiles::ChatNamesController < Profiles::ApplicationController
     new_chat_name = current_user.chat_names.new(chat_name_params)
 
     if new_chat_name.save
-      flash[:notice] = "Authorized #{new_chat_name.chat_name}"
+      flash[:notice] = _("Authorized %{new_chat_name}") % { new_chat_name: new_chat_name.chat_name }
     else
-      flash[:alert] = "Could not authorize chat nickname. Try again!"
+      flash[:alert] = _("Could not authorize chat nickname. Try again!")
     end
 
     delete_chat_name_token
@@ -25,7 +29,7 @@ class Profiles::ChatNamesController < Profiles::ApplicationController
   def deny
     delete_chat_name_token
 
-    flash[:notice] = "Denied authorization of chat nickname #{chat_name_params[:user_name]}."
+    flash[:notice] = _("Denied authorization of chat nickname %{user_name}.") % { user_name: chat_name_params[:user_name] }
 
     redirect_to profile_chat_names_path
   end
@@ -34,12 +38,12 @@ class Profiles::ChatNamesController < Profiles::ApplicationController
     @chat_name = chat_names.find(params[:id])
 
     if @chat_name.destroy
-      flash[:notice] = "Deleted chat nickname: #{@chat_name.chat_name}!"
+      flash[:notice] = _("Deleted chat nickname: %{chat_name}!") % { chat_name: @chat_name.chat_name }
     else
-      flash[:alert] = "Could not delete chat nickname #{@chat_name.chat_name}."
+      flash[:alert] = _("Could not delete chat nickname %{chat_name}.") % { chat_name: @chat_name.chat_name }
     end
 
-    redirect_to profile_chat_names_path, status: 302
+    redirect_to profile_chat_names_path, status: :found
   end
 
   private

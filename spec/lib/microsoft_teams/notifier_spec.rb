@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe MicrosoftTeams::Notifier do
+RSpec.describe MicrosoftTeams::Notifier do
   subject { described_class.new(webhook_url) }
 
   let(:webhook_url) { 'https://example.gitlab.com/'}
@@ -8,14 +10,14 @@ describe MicrosoftTeams::Notifier do
   let(:options) do
     {
       title: 'JohnDoe4/project2',
-      pretext: '[[JohnDoe4/project2](http://localhost/namespace2/gitlabhq)] Issue [#1 Awesome issue](http://localhost/namespace2/gitlabhq/issues/1) opened by user6',
+      summary: '[[JohnDoe4/project2](http://localhost/namespace2/gitlabhq)] Issue [#1 Awesome issue](http://localhost/namespace2/gitlabhq/issues/1) opened by user6',
       activity: {
         title: 'Issue opened by user6',
         subtitle: 'in [JohnDoe4/project2](http://localhost/namespace2/gitlabhq)',
         text: '[#1 Awesome issue](http://localhost/namespace2/gitlabhq/issues/1)',
         image: 'http://someimage.com'
       },
-      attachments: 'please fix'
+      attachments: "[GitLab](https://gitlab.com)\n\n- _Ruby_\n- **Go**\n"
     }
   end
 
@@ -29,13 +31,7 @@ describe MicrosoftTeams::Notifier do
           'activityImage' => 'http://someimage.com'
         },
         {
-          'title' => 'Details',
-          'facts' => [
-            {
-              'name' => 'Attachments',
-              'value' => 'please fix'
-            }
-          ]
+          text: "[GitLab](https://gitlab.com)\n\n- _Ruby_\n- **Go**\n"
         }
       ],
       'title' => 'JohnDoe4/project2',
@@ -48,8 +44,18 @@ describe MicrosoftTeams::Notifier do
       stub_request(:post, webhook_url).with(body: JSON(body), headers: { 'Content-Type' => 'application/json' }).to_return(status: 200, body: "", headers: {})
     end
 
-    it 'expects to receive successfull answer' do
+    it 'expects to receive successful answer' do
       expect(subject.ping(options)).to be true
+    end
+  end
+
+  describe '#body' do
+    it 'returns Markdown-based body when HTML was passed' do
+      expect(subject.send(:body, options)).to eq(body.to_json)
+    end
+
+    it 'fails when empty Hash was passed' do
+      expect { subject.send(:body, {}) }.to raise_error(ArgumentError)
     end
   end
 end

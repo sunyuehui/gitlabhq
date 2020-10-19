@@ -1,8 +1,10 @@
+# frozen_string_literal: true
+
 module Bitbucket
   module Representation
     class PullRequest < Representation::Base
       def author
-        raw.fetch('author', {}).fetch('username', nil)
+        raw.fetch('author', {}).fetch('nickname', nil)
       end
 
       def description
@@ -14,9 +16,10 @@ module Bitbucket
       end
 
       def state
-        if raw['state'] == 'MERGED'
+        case raw['state']
+        when 'MERGED'
           'merged'
-        elsif raw['state'] == 'DECLINED'
+        when 'DECLINED', 'SUPERSEDED'
           'closed'
         else
           'opened'

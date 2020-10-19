@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Import::GitlabController do
+RSpec.describe Import::GitlabController do
   include ImportSpecHelper
 
   let(:user) { create(:user) }
@@ -18,8 +20,9 @@ describe Import::GitlabController do
 
   describe "GET callback" do
     it "updates access token" do
-      allow_any_instance_of(Gitlab::GitlabImport::Client)
-        .to receive(:get_token).and_return(token)
+      allow_next_instance_of(Gitlab::GitlabImport::Client) do |instance|
+        allow(instance).to receive(:get_token).and_return(token)
+      end
       stub_omniauth_provider('gitlab')
 
       get :callback
@@ -31,36 +34,26 @@ describe Import::GitlabController do
 
   describe "GET status" do
     before do
-      @repo = OpenStruct.new(path: 'vim', path_with_namespace: 'asd/vim')
+      @repo = OpenStruct.new(id: 1, path: 'vim', path_with_namespace: 'asd/vim', web_url: 'https://gitlab.com/asd/vim')
       assign_session_token
     end
 
-    it "assigns variables" do
-      @project = create(:project, import_type: 'gitlab', creator_id: user.id)
-      stub_client(projects: [@repo])
-
-      get :status
-
-      expect(assigns(:already_added_projects)).to eq([@project])
-      expect(assigns(:repos)).to eq([@repo])
-    end
-
-    it "does not show already added project" do
-      @project = create(:project, import_type: 'gitlab', creator_id: user.id, import_source: 'asd/vim')
-      stub_client(projects: [@repo])
-
-      get :status
-
-      expect(assigns(:already_added_projects)).to eq([@project])
-      expect(assigns(:repos)).to eq([])
+    it_behaves_like 'import controller status' do
+      let(:repo) { @repo }
+      let(:repo_id) { @repo.id }
+      let(:import_source) { @repo.path_with_namespace }
+      let(:provider_name) { 'gitlab' }
+      let(:client_repos_field) { :projects }
     end
   end
 
   describe "POST create" do
+    let(:project) { create(:project) }
     let(:gitlab_username) { user.username }
     let(:gitlab_user) do
       { username: gitlab_username }.with_indifferent_access
     end
+
     let(:gitlab_repo) do
       {
         path: 'vim',
@@ -75,14 +68,34 @@ describe Import::GitlabController do
       assign_session_token
     end
 
+    it 'returns 200 response when the project is imported successfully' do
+      allow(Gitlab::GitlabImport::ProjectCreator)
+        .to receive(:new).with(gitlab_repo, user.namespace, user, access_params)
+        .and_return(double(execute: project))
+
+      post :create, format: :json
+
+      expect(response).to have_gitlab_http_status(:ok)
+    end
+
+    it 'returns 422 response when the project could not be imported' do
+      allow(Gitlab::GitlabImport::ProjectCreator)
+        .to receive(:new).with(gitlab_repo, user.namespace, user, access_params)
+        .and_return(double(execute: build(:project)))
+
+      post :create, format: :json
+
+      expect(response).to have_gitlab_http_status(:unprocessable_entity)
+    end
+
     context "when the repository owner is the GitLab.com user" do
       context "when the GitLab.com user and GitLab server user's usernames match" do
         it "takes the current user's namespace" do
           expect(Gitlab::GitlabImport::ProjectCreator)
             .to receive(:new).with(gitlab_repo, user.namespace, user, access_params)
-            .and_return(double(execute: true))
+            .and_return(double(execute: project))
 
-          post :create, format: :js
+          post :create, format: :json
         end
       end
 
@@ -92,9 +105,9 @@ describe Import::GitlabController do
         it "takes the current user's namespace" do
           expect(Gitlab::GitlabImport::ProjectCreator)
             .to receive(:new).with(gitlab_repo, user.namespace, user, access_params)
-            .and_return(double(execute: true))
+            .and_return(double(execute: project))
 
-          post :create, format: :js
+          post :create, format: :json
         end
       end
     end
@@ -118,9 +131,9 @@ describe Import::GitlabController do
           it "takes the existing namespace" do
             expect(Gitlab::GitlabImport::ProjectCreator)
               .to receive(:new).with(gitlab_repo, existing_namespace, user, access_params)
-              .and_return(double(execute: true))
+              .and_return(double(execute: project))
 
-            post :create, format: :js
+            post :create, format: :json
           end
         end
 
@@ -129,7 +142,7 @@ describe Import::GitlabController do
             expect(Gitlab::GitlabImport::ProjectCreator)
               .not_to receive(:new)
 
-            post :create, format: :js
+            post :create, format: :json
           end
         end
       end
@@ -138,17 +151,17 @@ describe Import::GitlabController do
         context "when current user can create namespaces" do
           it "creates the namespace" do
             expect(Gitlab::GitlabImport::ProjectCreator)
-              .to receive(:new).and_return(double(execute: true))
+              .to receive(:new).and_return(double(execute: project))
 
-            expect { post :create, format: :js }.to change(Namespace, :count).by(1)
+            expect { post :create, format: :json }.to change(Namespace, :count).by(1)
           end
 
           it "takes the new namespace" do
             expect(Gitlab::GitlabImport::ProjectCreator)
               .to receive(:new).with(gitlab_repo, an_instance_of(Group), user, access_params)
-              .and_return(double(execute: true))
+              .and_return(double(execute: project))
 
-            post :create, format: :js
+            post :create, format: :json
           end
         end
 
@@ -159,35 +172,36 @@ describe Import::GitlabController do
 
           it "doesn't create the namespace" do
             expect(Gitlab::GitlabImport::ProjectCreator)
-              .to receive(:new).and_return(double(execute: true))
+              .to receive(:new).and_return(double(execute: project))
 
-            expect { post :create, format: :js }.not_to change(Namespace, :count)
+            expect { post :create, format: :json }.not_to change(Namespace, :count)
           end
 
           it "takes the current user's namespace" do
             expect(Gitlab::GitlabImport::ProjectCreator)
               .to receive(:new).with(gitlab_repo, user.namespace, user, access_params)
-              .and_return(double(execute: true))
+              .and_return(double(execute: project))
 
-            post :create, format: :js
+            post :create, format: :json
           end
         end
       end
 
       context 'user has chosen an existing nested namespace for the project' do
-        let(:parent_namespace) { create(:group, name: 'foo', owner: user) }
+        let(:parent_namespace) { create(:group, name: 'foo') }
         let(:nested_namespace) { create(:group, name: 'bar', parent: parent_namespace) }
 
         before do
+          parent_namespace.add_owner(user)
           nested_namespace.add_owner(user)
         end
 
         it 'takes the selected namespace and name' do
           expect(Gitlab::GitlabImport::ProjectCreator)
             .to receive(:new).with(gitlab_repo, nested_namespace, user, access_params)
-              .and_return(double(execute: true))
+              .and_return(double(execute: project))
 
-          post :create, { target_namespace: nested_namespace.full_path, format: :js }
+          post :create, params: { target_namespace: nested_namespace.full_path }, format: :json
         end
       end
 
@@ -197,26 +211,26 @@ describe Import::GitlabController do
         it 'takes the selected namespace and name' do
           expect(Gitlab::GitlabImport::ProjectCreator)
             .to receive(:new).with(gitlab_repo, kind_of(Namespace), user, access_params)
-              .and_return(double(execute: true))
+              .and_return(double(execute: project))
 
-          post :create, { target_namespace: 'foo/bar', format: :js }
+          post :create, params: { target_namespace: 'foo/bar' }, format: :json
         end
 
         it 'creates the namespaces' do
           allow(Gitlab::GitlabImport::ProjectCreator)
             .to receive(:new).with(gitlab_repo, kind_of(Namespace), user, access_params)
-              .and_return(double(execute: true))
+              .and_return(double(execute: project))
 
-          expect { post :create, { target_namespace: 'foo/bar', format: :js } }
+          expect { post :create, params: { target_namespace: 'foo/bar' }, format: :json }
             .to change { Namespace.count }.by(2)
         end
 
         it 'new namespace has the right parent' do
           allow(Gitlab::GitlabImport::ProjectCreator)
             .to receive(:new).with(gitlab_repo, kind_of(Namespace), user, access_params)
-              .and_return(double(execute: true))
+              .and_return(double(execute: project))
 
-          post :create, { target_namespace: 'foo/bar', format: :js }
+          post :create, params: { target_namespace: 'foo/bar' }, format: :json
 
           expect(Namespace.find_by_path_or_name('bar').parent.path).to eq('foo')
         end
@@ -224,25 +238,41 @@ describe Import::GitlabController do
 
       context 'user has chosen existent and non-existent nested namespaces and name for the project' do
         let(:test_name) { 'test_name' }
-        let!(:parent_namespace) { create(:group, name: 'foo', owner: user) }
+        let!(:parent_namespace) { create(:group, name: 'foo') }
+
+        before do
+          parent_namespace.add_owner(user)
+        end
 
         it 'takes the selected namespace and name' do
           expect(Gitlab::GitlabImport::ProjectCreator)
             .to receive(:new).with(gitlab_repo, kind_of(Namespace), user, access_params)
-              .and_return(double(execute: true))
+              .and_return(double(execute: project))
 
-          post :create, { target_namespace: 'foo/foobar/bar', format: :js }
+          post :create, params: { target_namespace: 'foo/foobar/bar' }, format: :json
         end
 
         it 'creates the namespaces' do
           allow(Gitlab::GitlabImport::ProjectCreator)
             .to receive(:new).with(gitlab_repo, kind_of(Namespace), user, access_params)
-              .and_return(double(execute: true))
+              .and_return(double(execute: project))
 
-          expect { post :create, { target_namespace: 'foo/foobar/bar', format: :js } }
+          expect { post :create, params: { target_namespace: 'foo/foobar/bar' }, format: :json }
             .to change { Namespace.count }.by(2)
         end
       end
+
+      context 'when user can not create projects in the chosen namespace' do
+        it 'returns 422 response' do
+          other_namespace = create(:group, name: 'other_namespace')
+
+          post :create, params: { target_namespace: other_namespace.name }, format: :json
+
+          expect(response).to have_gitlab_http_status(:unprocessable_entity)
+        end
+      end
+
+      it_behaves_like 'project import rate limiter'
     end
   end
 end

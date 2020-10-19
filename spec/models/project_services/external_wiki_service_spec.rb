@@ -1,7 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ExternalWikiService do
-  include ExternalWikiHelper
+RSpec.describe ExternalWikiService do
   describe "Associations" do
     it { is_expected.to belong_to :project }
     it { is_expected.to have_one :service_hook }
@@ -26,22 +27,32 @@ describe ExternalWikiService do
     end
   end
 
-  describe 'External wiki' do
-    let(:project) { create(:project) }
+  describe 'test' do
+    before do
+      subject.properties['external_wiki_url'] = url
+    end
 
-    context 'when it is active' do
+    let(:url) { 'http://foo' }
+    let(:data) { nil }
+    let(:result) { subject.test(data) }
+
+    context 'the URL is not reachable' do
       before do
-        properties = { 'external_wiki_url' => 'https://gitlab.com' }
-        @service = project.create_external_wiki_service(active: true, properties: properties)
+        WebMock.stub_request(:get, url).to_return(status: 404, body: 'not a page')
       end
 
-      after do
-        @service.destroy!
+      it 'is not successful' do
+        expect(result[:success]).to be_falsey
+      end
+    end
+
+    context 'the URL is reachable' do
+      before do
+        WebMock.stub_request(:get, url).to_return(status: 200, body: 'foo')
       end
 
-      it 'replaces the wiki url' do
-        wiki_path = get_project_wiki_path(project)
-        expect(wiki_path).to match('https://gitlab.com')
+      it 'is successful' do
+        expect(result[:success]).to be_truthy
       end
     end
   end

@@ -1,3 +1,7 @@
+---
+type: howto
+---
+
 # Migrate GitLab CI to GitLab CE or EE
 
 Beginning with version 8.0 of GitLab Community Edition (CE) and Enterprise
@@ -28,9 +32,9 @@ upgrade to 8.0 until you finish the migration procedure.
 
 ## Before upgrading
 
-If you have GitLab CI installed using omnibus-gitlab packages but **you don't want to migrate your existing data**:
+If you have GitLab CI installed using Omnibus GitLab packages but **you don't want to migrate your existing data**:
 
-```bash
+```shell
 mv /var/opt/gitlab/gitlab-ci/builds /var/opt/gitlab/gitlab-ci/builds.$(date +%s)
 ```
 
@@ -47,7 +51,7 @@ Otherwise it's pretty likely that you will encounter problems described in the [
 
 Make sure that the backup script on both servers can connect to the database.
 
-```
+```shell
 # On your CI server:
 # Omnibus
 sudo chown gitlab-ci:gitlab-ci /var/opt/gitlab/gitlab-ci/builds
@@ -60,10 +64,10 @@ sudo -u gitlab_ci -H bundle exec rake backup:create RAILS_ENV=production
 
 Also check on your GitLab server.
 
-```
+```shell
 # On your GitLab server:
 # Omnibus
-sudo gitlab-rake gitlab:backup:create SKIP=repositories,uploads
+sudo gitlab-backup create SKIP=repositories,uploads
 
 # Source
 cd /home/git/gitlab
@@ -71,7 +75,10 @@ sudo -u git -H bundle exec rake gitlab:backup:create RAILS_ENV=production SKIP=r
 ```
 
 If this fails you need to fix it before upgrading to 8.0. Also see
-https://about.gitlab.com/getting-help/
+<https://about.gitlab.com/get-help/>
+
+NOTE: **Note:**
+For GitLab 12.1 and earlier, use `gitlab-rake gitlab:backup:create`.
 
 ### 2. Check source and target database types
 
@@ -82,7 +89,7 @@ MySQL and your GitLab server uses PostgreSQL you need to pass a special option
 during the 'Moving data' part. **If your CI server uses PostgreSQL and your
 GitLab server uses MySQL you cannot migrate your CI data to GitLab 8.0.**
 
-```
+```shell
 # On your CI server:
 # Omnibus
 sudo gitlab-ci-rake env:info
@@ -92,7 +99,7 @@ cd /home/gitlab_ci/gitlab-ci
 sudo -u gitlab_ci -H bundle exec rake env:info RAILS_ENV=production
 ```
 
-```
+```shell
 # On your GitLab server:
 # Omnibus
 sudo gitlab-rake gitlab:env:info
@@ -118,14 +125,14 @@ From this point on, GitLab CI will be unavailable for your end users.
 ### 1. Upgrade GitLab to 8.0
 
 First upgrade your GitLab server to version 8.0:
-https://about.gitlab.com/update/
+<https://about.gitlab.com/update/>
 
 ### 2. Disable CI on the GitLab server during the migration
 
-After you update, go to the admin panel and temporarily disable CI.  As
+After you update, go to the admin panel and temporarily disable CI. As
   an administrator, go to **Admin Area** -> **Settings**, and under
-**Continuous Integration** uncheck **Disable to prevent CI usage until rake
-ci:migrate is run (8.0 only)**.
+**Continuous Integration** uncheck **Disable to prevent CI usage until `rake
+ci:migrate` is run (8.0 only)**.
 
 ### 3. CI settings are now in GitLab
 
@@ -142,7 +149,7 @@ Now upgrade GitLab CI to version 8.0. If you are using Omnibus packages,
 
 Disable GitLab CI after upgrading to 8.0.
 
-```
+```shell
 # On your CI server:
 # Omnibus
 sudo gitlab-ctl stop ci-unicorn
@@ -164,7 +171,7 @@ GitLab server. On Omnibus GitLab servers you will have to add a line to
 `/etc/gitlab/gitlab.rb`. On GitLab servers installed from source you will have
 to replace the contents of `/home/git/gitlab/config/secrets.yml`.
 
-```
+```shell
 # On your CI server:
 # Omnibus
 sudo gitlab-ci-rake backup:show_secrets
@@ -177,11 +184,11 @@ sudo -u gitlab_ci -H bundle exec rake backup:show_secrets RAILS_ENV=production
 ### 2. SQL data and build traces
 
 Create your final CI data export. If you are converting from MySQL to
-  PostgreSQL, add ` MYSQL_TO_POSTGRESQL=1` to the end of the rake command. When
+PostgreSQL, add `MYSQL_TO_POSTGRESQL=1` to the end of the Rake command. When
 the command finishes it will print the path to your data export archive; you
 will need this file later.
 
-```
+```shell
 # On your CI server:
 # Omnibus
 sudo chown gitlab-ci:gitlab-ci /var/opt/gitlab/gitlab-ci/builds
@@ -198,11 +205,11 @@ If you were running GitLab and GitLab CI on the same server you can skip this
 step.
 
 Copy your CI data archive to your GitLab server. There are many ways to do
-this, below we use SSH agent forwarding and 'scp', which will be easy and fast
+this, below we use SSH agent forwarding and `scp`, which will be easy and fast
 for most setups. You can also copy the data archive first from the CI server to
 your laptop and then from your laptop to the GitLab server.
 
-```
+```shell
 # Start from your laptop
 ssh -A ci_admin@ci_server.example
 # Now on the CI server
@@ -214,7 +221,7 @@ scp /path/to/12345_gitlab_ci_backup.tar gitlab_admin@gitlab_server.example:~
 Make the CI data archive discoverable for GitLab. We assume below that you
 store backups in the default path, adjust the command if necessary.
 
-```
+```shell
 # On your GitLab server:
 # Omnibus
 sudo mv /path/to/12345_gitlab_ci_backup.tar /var/opt/gitlab/backups/
@@ -223,12 +230,12 @@ sudo mv /path/to/12345_gitlab_ci_backup.tar /var/opt/gitlab/backups/
 sudo mv /path/to/12345_gitlab_ci_backup.tar /home/git/gitlab/tmp/backups/
 ```
 
-### 5. Import the CI data into GitLab.
+### 5. Import the CI data into GitLab
 
 This step will delete any existing CI data on your GitLab server. There should
 be no CI data yet because you turned CI on the GitLab server off earlier.
 
-```
+```shell
 # On your GitLab server:
 # Omnibus
 sudo chown git:git /var/opt/gitlab/gitlab-ci/builds
@@ -241,7 +248,7 @@ sudo -u git -H bundle exec rake ci:migrate RAILS_ENV=production
 
 ### 6. Restart GitLab
 
-```
+```shell
 # On your GitLab server:
 # Omnibus
 sudo gitlab-ctl hup unicorn
@@ -261,11 +268,11 @@ If you installed GitLab CI from source we now need to configure a redirect in
 NGINX so that existing CI runners can keep using the old CI server address, and
 so that existing links to your CI server keep working.
 
-### 1. Update Nginx configuration
+### 1. Update NGINX configuration
 
 To ensure that your existing CI runners are able to communicate with the
 migrated installation, and that existing build triggers still work, you'll need
-to update your Nginx configuration to redirect requests for the old locations to
+to update your NGINX configuration to redirect requests for the old locations to
 the new ones.
 
 Edit `/etc/nginx/sites-available/gitlab_ci` and paste:
@@ -317,13 +324,17 @@ You should also make sure that you can:
 1. `curl https://YOUR_GITLAB_SERVER_FQDN/` from your previous GitLab CI server.
 1. `curl https://YOUR_CI_SERVER_FQDN/` from your GitLab CE (or EE) server.
 
-### 2. Check Nginx configuration
+### 2. Check NGINX configuration
 
-    sudo nginx -t
+```shell
+sudo nginx -t
+```
 
-### 3. Restart Nginx
+### 3. Restart NGINX
 
-    sudo /etc/init.d/nginx restart
+```shell
+sudo /etc/init.d/nginx restart
+```
 
 ### Restore from backup
 
@@ -333,8 +344,10 @@ restoration](../raketasks/backup_restore.md) guide.
 ## Troubleshooting
 
 ### show:secrets problem (Omnibus-only)
+
 If you see errors like this:
-```
+
+```plaintext
 Missing `secret_key_base` or `db_key_base` for 'production' environment. The secrets will be generated and stored in `config/secrets.yml`
 rake aborted!
 Errno::EACCES: Permission denied @ rb_sysopen - config/secrets.yml
@@ -343,20 +356,25 @@ Errno::EACCES: Permission denied @ rb_sysopen - config/secrets.yml
 This can happen if you are updating from versions prior to 7.13 straight to 8.0.
 The fix for this is to update to Omnibus 7.14 first and then update it to 8.0.
 
-### Permission denied when accessing /var/opt/gitlab/gitlab-ci/builds
+### Permission denied when accessing `/var/opt/gitlab/gitlab-ci/builds`
+
 To fix that issue you have to change builds/ folder permission before doing final backup:
-```
+
+```shell
 sudo chown -R gitlab-ci:gitlab-ci /var/opt/gitlab/gitlab-ci/builds
 ```
 
 Then before executing `ci:migrate` you need to fix builds folder permission:
-```
+
+```shell
 sudo chown git:git /var/opt/gitlab/gitlab-ci/builds
 ```
 
 ### Problems when importing CI database to GitLab
+
 If you were migrating CI database from MySQL to PostgreSQL manually you can see errors during import about missing sequences:
-```
+
+```sql
 ALTER SEQUENCE
 ERROR:  relation "ci_builds_id_seq" does not exist
 ERROR:  relation "ci_commits_id_seq" does not exist
@@ -372,8 +390,10 @@ CREATE TABLE
 ```
 
 To fix that you need to apply this SQL statement before doing final backup:
-```
-# Omnibus
+
+Omnibus GitLab installations:
+
+```sql
 gitlab-ci-rails dbconsole <<EOF
 -- ALTER TABLES - DROP DEFAULTS
 ALTER TABLE ONLY ci_application_settings ALTER COLUMN id DROP DEFAULT;
@@ -426,8 +446,11 @@ ALTER TABLE ONLY ci_triggers ALTER COLUMN id SET DEFAULT nextval('ci_triggers_id
 ALTER TABLE ONLY ci_variables ALTER COLUMN id SET DEFAULT nextval('ci_variables_id_seq'::regclass);
 ALTER TABLE ONLY ci_web_hooks ALTER COLUMN id SET DEFAULT nextval('ci_web_hooks_id_seq'::regclass);
 EOF
+```
 
-# Source
+Source installations:
+
+```shell
 cd /home/gitlab_ci/gitlab-ci
 sudo -u gitlab_ci -H bundle exec rails dbconsole production <<EOF
 ... COPY SQL STATEMENTS FROM ABOVE ...

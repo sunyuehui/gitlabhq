@@ -1,9 +1,18 @@
+# frozen_string_literal: true
+
 module Ci
   class PipelineTriggerService < BaseService
+    include Gitlab::Utils::StrongMemoize
+
     def execute
       if trigger_from_token
         create_pipeline_from_trigger(trigger_from_token)
+      elsif job_from_token
+        create_pipeline_from_job(job_from_token)
       end
+
+    rescue Ci::AuthJobFinder::AuthError => e
+      error(e.message, 401)
     end
 
     private
@@ -14,8 +23,8 @@ module Ci
 
       pipeline = Ci::CreatePipelineService.new(project, trigger.owner, ref: params[:ref])
         .execute(:trigger, ignore_skip_ci: true) do |pipeline|
-          trigger.trigger_requests.create!(pipeline: pipeline)
-          create_pipeline_variables!(pipeline)
+          pipeline.trigger_requests.build(trigger: trigger)
+          pipeline.variables.build(variables)
         end
 
       if pipeline.persisted?
@@ -26,19 +35,44 @@ module Ci
     end
 
     def trigger_from_token
-      return @trigger if defined?(@trigger)
-
-      @trigger = Ci::Trigger.find_by_token(params[:token].to_s)
+      strong_memoize(:trigger) do
+        Ci::Trigger.find_by_token(params[:token].to_s)
+      end
     end
 
-    def create_pipeline_variables!(pipeline)
-      return unless params[:variables]
+    def create_pipeline_from_job(job)
+      # this check is to not leak the presence of the project if user cannot read it
+      return unless can?(job.user, :read_project, project)
 
-      variables = params[:variables].map do |key, value|
+      pipeline = Ci::CreatePipelineService.new(project, job.user, ref: params[:ref])
+        .execute(:pipeline, ignore_skip_ci: true) do |pipeline|
+          source = job.sourced_pipelines.build(
+            source_pipeline: job.pipeline,
+            source_project: job.project,
+            pipeline: pipeline,
+            project: project)
+
+          pipeline.source_pipeline = source
+          pipeline.variables.build(variables)
+        end
+
+      if pipeline.persisted?
+        success(pipeline: pipeline)
+      else
+        error(pipeline.errors.messages, 400)
+      end
+    end
+
+    def job_from_token
+      strong_memoize(:job) do
+        Ci::AuthJobFinder.new(token: params[:token].to_s).execute!
+      end
+    end
+
+    def variables
+      params[:variables].to_h.map do |key, value|
         { key: key, value: value }
       end
-
-      pipeline.variables.create!(variables)
     end
   end
 end

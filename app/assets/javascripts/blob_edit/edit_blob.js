@@ -1,35 +1,64 @@
-/* global ace */
-
+import $ from 'jquery';
+import axios from '~/lib/utils/axios_utils';
+import { deprecatedCreateFlash as createFlash } from '~/flash';
+import { BLOB_EDITOR_ERROR, BLOB_PREVIEW_ERROR } from './constants';
 import TemplateSelectorMediator from '../blob/file_template_mediator';
+import { addEditorMarkdownListeners } from '~/lib/utils/text_markdown';
+import EditorLite from '~/editor/editor_lite';
+import FileTemplateExtension from '~/editor/editor_file_template_ext';
 
 export default class EditBlob {
-  constructor(assetsPath, aceMode, currentAction) {
-    this.configureAceEditor(aceMode, assetsPath);
-    this.initModePanesAndLinks();
-    this.initSoftWrap();
-    this.initFileSelectors(currentAction);
-  }
+  // The options object has:
+  // assetsPath, filePath, currentAction, projectId, isMarkdown
+  constructor(options) {
+    this.options = options;
+    this.configureMonacoEditor();
 
-  configureAceEditor(aceMode, assetsPath) {
-    ace.config.set('modePath', `${assetsPath}/ace`);
-    ace.config.loadModule('ace/ext/searchbox');
-
-    this.editor = ace.edit('editor');
-
-    // This prevents warnings re: automatic scrolling being logged
-    this.editor.$blockScrolling = Infinity;
-
-    this.editor.focus();
-
-    if (aceMode) {
-      this.editor.getSession().setMode(`ace/mode/${aceMode}`);
+    if (this.options.isMarkdown) {
+      import('~/editor/editor_markdown_ext')
+        .then(MarkdownExtension => {
+          this.editor.use(MarkdownExtension.default);
+          addEditorMarkdownListeners(this.editor);
+        })
+        .catch(() => createFlash(BLOB_EDITOR_ERROR));
     }
+
+    this.initModePanesAndLinks();
+    this.initFileSelectors();
+    this.initSoftWrap();
+    this.editor.focus();
   }
 
-  initFileSelectors(currentAction) {
+  configureMonacoEditor() {
+    const editorEl = document.getElementById('editor');
+    const fileNameEl = document.getElementById('file_path') || document.getElementById('file_name');
+    const fileContentEl = document.getElementById('file-content');
+    const form = document.querySelector('.js-edit-blob-form');
+
+    const rootEditor = new EditorLite();
+
+    this.editor = rootEditor.createInstance({
+      el: editorEl,
+      blobPath: fileNameEl.value,
+      blobContent: editorEl.innerText,
+    });
+    this.editor.use(FileTemplateExtension);
+
+    fileNameEl.addEventListener('change', () => {
+      this.editor.updateModelLanguage(fileNameEl.value);
+    });
+
+    form.addEventListener('submit', () => {
+      fileContentEl.value = this.editor.getValue();
+    });
+  }
+
+  initFileSelectors() {
+    const { currentAction, projectId } = this.options;
     this.fileTemplateMediator = new TemplateSelectorMediator({
       currentAction,
       editor: this.editor,
+      projectId,
     });
   }
 
@@ -56,12 +85,15 @@ export default class EditBlob {
 
     if (paneId === '#preview') {
       this.$toggleButton.hide();
-      return $.post(currentLink.data('preview-url'), {
-        content: this.editor.getValue(),
-      }, (response) => {
-        currentPane.empty().append(response);
-        return currentPane.renderGFM();
-      });
+      axios
+        .post(currentLink.data('previewUrl'), {
+          content: this.editor.getValue(),
+        })
+        .then(({ data }) => {
+          currentPane.empty().append(data);
+          currentPane.renderGFM();
+        })
+        .catch(() => createFlash(BLOB_PREVIEW_ERROR));
     }
 
     this.$toggleButton.show();
@@ -70,14 +102,15 @@ export default class EditBlob {
   }
 
   initSoftWrap() {
-    this.isSoftWrapped = false;
+    this.isSoftWrapped = true;
     this.$toggleButton = $('.soft-wrap-toggle');
+    this.$toggleButton.toggleClass('soft-wrap-active', this.isSoftWrapped);
     this.$toggleButton.on('click', () => this.toggleSoftWrap());
   }
 
   toggleSoftWrap() {
     this.isSoftWrapped = !this.isSoftWrapped;
     this.$toggleButton.toggleClass('soft-wrap-active', this.isSoftWrapped);
-    this.editor.getSession().setUseWrapMode(this.isSoftWrapped);
+    this.editor.updateOptions({ wordWrap: this.isSoftWrapped ? 'on' : 'off' });
   }
 }

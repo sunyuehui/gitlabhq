@@ -1,8 +1,12 @@
+# frozen_string_literal: true
+
 module CreatesCommit
   extend ActiveSupport::Concern
+  include Gitlab::Utils::StrongMemoize
 
+  # rubocop:disable Gitlab/ModuleWithInstanceVariables
   def create_commit(service, success_path:, failure_path:, failure_view: nil, success_notice: nil)
-    if can?(current_user, :push_code, @project)
+    if user_access(@project).can_push_to_branch?(branch_name_or_ref)
       @project_to_commit_into = @project
       @branch_name ||= @ref
     else
@@ -27,7 +31,7 @@ module CreatesCommit
 
       respond_to do |format|
         format.html { redirect_to success_path }
-        format.json { render json: { message: "success", filePath: success_path } }
+        format.json { render json: { message: _("success"), filePath: success_path } }
       end
     else
       flash[:alert] = result[:message]
@@ -41,13 +45,14 @@ module CreatesCommit
             redirect_to failure_path
           end
         end
-        format.json { render json: { message: "failed", filePath: failure_path } }
+        format.json { render json: { message: _("failed"), filePath: failure_path } }
       end
     end
   end
+  # rubocop:enable Gitlab/ModuleWithInstanceVariables
 
   def authorize_edit_tree!
-    return if can_collaborate_with_project?
+    return if can_collaborate_with_project?(project, ref: branch_name_or_ref)
 
     access_denied!
   end
@@ -55,15 +60,22 @@ module CreatesCommit
   private
 
   def update_flash_notice(success_notice)
-    flash[:notice] = success_notice || "Your changes have been successfully committed."
+    flash[:notice] = success_notice || _("Your changes have been successfully committed.")
 
     if create_merge_request?
-      if merge_request_exists?
-        flash[:notice] = nil
-      else
-        target = different_project? ? "project" : "branch"
-        flash[:notice] << " You can now submit a merge request to get this change into the original #{target}."
-      end
+      flash[:notice] =
+        if merge_request_exists?
+          nil
+        else
+          mr_message =
+            if different_project?
+              _("You can now submit a merge request to get this change into the original project.")
+            else
+              _("You can now submit a merge request to get this change into the original branch.")
+            end
+
+          flash[:notice] += " " + mr_message
+        end
     end
   end
 
@@ -77,6 +89,7 @@ module CreatesCommit
     end
   end
 
+  # rubocop:disable Gitlab/ModuleWithInstanceVariables
   def new_merge_request_path
     project_new_merge_request_path(
       @project_to_commit_into,
@@ -88,20 +101,30 @@ module CreatesCommit
       }
     )
   end
+  # rubocop:enable Gitlab/ModuleWithInstanceVariables
 
   def existing_merge_request_path
-    project_merge_request_path(@project, @merge_request)
+    project_merge_request_path(@project, @merge_request) # rubocop:disable Gitlab/ModuleWithInstanceVariables
   end
 
+  # rubocop:disable Gitlab/ModuleWithInstanceVariables
+  # rubocop: disable CodeReuse/ActiveRecord
   def merge_request_exists?
-    return @merge_request if defined?(@merge_request)
-
-    @merge_request = MergeRequestsFinder.new(current_user, project_id: @project.id).execute.opened
-      .find_by(source_project_id: @project_to_commit_into, source_branch: @branch_name, target_branch: @start_branch)
+    strong_memoize(:merge_request) do
+      MergeRequestsFinder.new(current_user, project_id: @project.id)
+        .execute
+        .opened
+        .find_by(
+          source_project_id: @project_to_commit_into,
+          source_branch: @branch_name,
+          target_branch: @start_branch)
+    end
   end
+  # rubocop: enable CodeReuse/ActiveRecord
+  # rubocop:enable Gitlab/ModuleWithInstanceVariables
 
   def different_project?
-    @project_to_commit_into != @project
+    @project_to_commit_into != @project # rubocop:disable Gitlab/ModuleWithInstanceVariables
   end
 
   def create_merge_request?
@@ -109,6 +132,10 @@ module CreatesCommit
     # as the target branch in the same project,
     # we don't want to create a merge request.
     params[:create_merge_request].present? &&
-      (different_project? || @start_branch != @branch_name)
+      (different_project? || @start_branch != @branch_name) # rubocop:disable Gitlab/ModuleWithInstanceVariables
+  end
+
+  def branch_name_or_ref
+    @branch_name || @ref # rubocop:disable Gitlab/ModuleWithInstanceVariables
   end
 end

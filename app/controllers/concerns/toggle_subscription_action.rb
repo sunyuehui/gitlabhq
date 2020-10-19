@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ToggleSubscriptionAction
   extend ActiveSupport::Concern
 
@@ -12,7 +14,7 @@ module ToggleSubscriptionAction
   private
 
   def subscribable_project
-    @project || raise(NotImplementedError)
+    @project ||= raise(NotImplementedError)
   end
 
   def subscribable_resource

@@ -1,45 +1,47 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'list of badges' do
-  background do
+RSpec.describe 'list of badges' do
+  before do
     user = create(:user)
     project = create(:project, :repository)
-    project.team << [user, :master]
+    project.add_maintainer(user)
     sign_in(user)
-    visit project_pipelines_settings_path(project)
+    visit project_settings_ci_cd_path(project)
   end
 
-  scenario 'user wants to see build status badge' do
+  it 'user wants to see build status badge' do
     page.within('.pipeline-status') do
       expect(page).to have_content 'pipeline status'
       expect(page).to have_content 'Markdown'
       expect(page).to have_content 'HTML'
       expect(page).to have_content 'AsciiDoc'
-      expect(page).to have_css('.highlight', count: 3)
+      expect(page).to have_css('.js-syntax-highlight', count: 3)
       expect(page).to have_xpath("//img[@alt='pipeline status']")
 
-      page.within('.highlight', match: :first) do
+      page.within('.js-syntax-highlight', match: :first) do
         expect(page).to have_content 'badges/master/pipeline.svg'
       end
     end
   end
 
-  scenario 'user wants to see coverage report badge' do
+  it 'user wants to see coverage report badge' do
     page.within('.coverage-report') do
       expect(page).to have_content 'coverage report'
       expect(page).to have_content 'Markdown'
       expect(page).to have_content 'HTML'
       expect(page).to have_content 'AsciiDoc'
-      expect(page).to have_css('.highlight', count: 3)
+      expect(page).to have_css('.js-syntax-highlight', count: 3)
       expect(page).to have_xpath("//img[@alt='coverage report']")
 
-      page.within('.highlight', match: :first) do
+      page.within('.js-syntax-highlight', match: :first) do
         expect(page).to have_content 'badges/master/coverage.svg'
       end
     end
   end
 
-  scenario 'user changes current ref of build status badge', js: true do
+  it 'user changes current ref of build status badge', :js do
     page.within('.pipeline-status') do
       first('.js-project-refs-dropdown').click
 

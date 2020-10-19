@@ -1,5 +1,10 @@
+# frozen_string_literal: true
+
 class GroupMember < Member
-  SOURCE_TYPE = 'Namespace'.freeze
+  include FromUnion
+  include CreatedAtFilterable
+
+  SOURCE_TYPE = 'Namespace'
 
   belongs_to :group, foreign_key: 'source_id'
 
@@ -8,7 +13,14 @@ class GroupMember < Member
   # Make sure group member points only to group as it source
   default_value_for :source_type, SOURCE_TYPE
   validates :source_type, format: { with: /\ANamespace\z/ }
-  default_scope { where(source_type: SOURCE_TYPE) }
+  validates :access_level, presence: true
+  validate :access_level_inclusion
+
+  default_scope { where(source_type: SOURCE_TYPE) } # rubocop:disable Cop/DefaultScope
+
+  scope :of_groups, ->(groups) { where(source_id: groups.select(:id)) }
+  scope :of_ldap_type, -> { where(ldap: true) }
+  scope :count_users_by_group_id, -> { group(:source_id).count }
 
   after_create :update_two_factor_requirement, unless: :invite?
   after_destroy :update_two_factor_requirement, unless: :invite?
@@ -36,21 +48,27 @@ class GroupMember < Member
 
   private
 
+  def access_level_inclusion
+    return if access_level.in?(Gitlab::Access.all_values)
+
+    errors.add(:access_level, "is not included in the list")
+  end
+
   def send_invite
-    notification_service.invite_group_member(self, @raw_invite_token)
+    run_after_commit_or_now { notification_service.invite_group_member(self, @raw_invite_token) }
 
     super
   end
 
   def post_create_hook
-    notification_service.new_group_member(self)
+    run_after_commit_or_now { notification_service.new_group_member(self) }
 
     super
   end
 
   def post_update_hook
-    if access_level_changed?
-      notification_service.update_group_member(self)
+    if saved_change_to_access_level?
+      run_after_commit { notification_service.update_group_member(self) }
     end
 
     super
@@ -58,6 +76,7 @@ class GroupMember < Member
 
   def after_accept_invite
     notification_service.accept_group_invite(self)
+    update_two_factor_requirement
 
     super
   end
@@ -68,3 +87,5 @@ class GroupMember < Member
     super
   end
 end
+
+GroupMember.prepend_if_ee('EE::GroupMember')

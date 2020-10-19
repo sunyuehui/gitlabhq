@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Artifact file', :js do
+RSpec.describe 'Artifact file', :js do
   let(:project) { create(:project, :public) }
   let(:pipeline) { create(:ci_empty_pipeline, project: project) }
   let(:build) { create(:ci_build, :artifacts, pipeline: pipeline) }
@@ -39,7 +41,6 @@ feature 'Artifact file', :js do
 
   context 'JPG file' do
     before do
-      page.driver.browser.url_blacklist = []
       visit_file('rails_sample.jpg')
 
       wait_for_requests

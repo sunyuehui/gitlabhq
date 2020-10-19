@@ -1,15 +1,19 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Groups > Members > Leave group' do
+RSpec.describe 'Groups > Members > Leave group' do
   let(:user) { create(:user) }
   let(:other_user) { create(:user) }
   let(:group) { create(:group) }
 
-  background do
+  before do
+    stub_feature_flags(vue_group_members_list: false)
+
     gitlab_sign_in(user)
   end
 
-  scenario 'guest leaves the group' do
+  it 'guest leaves the group' do
     group.add_guest(user)
     group.add_owner(other_user)
 
@@ -21,7 +25,20 @@ feature 'Groups > Members > Leave group' do
     expect(group.users).not_to include(user)
   end
 
-  scenario 'guest leaves the group as last member' do
+  it 'guest leaves the group by url param', :js do
+    group.add_guest(user)
+    group.add_owner(other_user)
+
+    visit group_path(group, leave: 1)
+
+    page.accept_confirm
+
+    wait_for_all_requests
+    expect(current_path).to eq(dashboard_groups_path)
+    expect(group.users).not_to include(user)
+  end
+
+  it 'guest leaves the group as last member' do
     group.add_guest(user)
 
     visit group_path(group)
@@ -32,7 +49,7 @@ feature 'Groups > Members > Leave group' do
     expect(group.users).not_to include(user)
   end
 
-  scenario 'owner leaves the group if they is not the last owner' do
+  it 'owner leaves the group if they are not the last owner' do
     group.add_owner(user)
     group.add_owner(other_user)
 
@@ -44,7 +61,7 @@ feature 'Groups > Members > Leave group' do
     expect(group.users).not_to include(user)
   end
 
-  scenario 'owner can not leave the group if they is a last owner' do
+  it 'owner can not leave the group if they are the last owner' do
     group.add_owner(user)
 
     visit group_path(group)
@@ -53,7 +70,15 @@ feature 'Groups > Members > Leave group' do
 
     visit group_group_members_path(group)
 
-    expect(find(:css, '.project-members-page li', text: user.name)).not_to have_selector(:css, 'a.btn-remove')
+    expect(find(:css, '.project-members-page li', text: user.name)).to have_no_selector(:css, 'a.btn-danger')
+  end
+
+  it 'owner can not leave the group by url param if they are the last owner', :js do
+    group.add_owner(user)
+
+    visit group_path(group, leave: 1)
+
+    expect(find('.flash-alert')).to have_content 'You do not have permission to leave this group'
   end
 
   def left_group_message(group)

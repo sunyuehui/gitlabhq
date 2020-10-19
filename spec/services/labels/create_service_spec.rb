@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Labels::CreateService do
+RSpec.describe Labels::CreateService do
   describe '#execute' do
     let(:project) { create(:project) }
     let(:group)   { create(:group) }

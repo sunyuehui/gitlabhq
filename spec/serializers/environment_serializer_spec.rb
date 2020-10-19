@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe EnvironmentSerializer do
+RSpec.describe EnvironmentSerializer do
   let(:user) { create(:user) }
   let(:project) { create(:project) }
 
@@ -10,15 +12,21 @@ describe EnvironmentSerializer do
       .represent(resource)
   end
 
+  before do
+    project.add_developer(user)
+  end
+
   context 'when there is a single object provided' do
     let(:project) { create(:project, :repository) }
     let(:deployable) { create(:ci_build) }
     let(:deployment) do
-      create(:deployment, deployable: deployable,
+      create(:deployment, :success,
+                          deployable: deployable,
                           user: user,
                           project: project,
                           sha: project.commit.id)
     end
+
     let(:resource) { deployment.environment }
 
     before do
@@ -54,7 +62,9 @@ describe EnvironmentSerializer do
 
   context 'when representing environments within folders' do
     let(:serializer) do
-      described_class.new(project: project).within_folders
+      described_class
+        .new(current_user: user, project: project)
+        .within_folders
     end
 
     let(:resource) { Environment.all }
@@ -117,19 +127,15 @@ describe EnvironmentSerializer do
   end
 
   context 'when used with pagination' do
-    let(:request) { spy('request') }
+    let(:request) { double(url: "#{Gitlab.config.gitlab.url}:8080/api/v4/projects?#{query.to_query}", query_parameters: query) }
     let(:response) { spy('response') }
     let(:resource) { Environment.all }
-    let(:pagination) { { page: 1, per_page: 2 } }
+    let(:query) { { page: 1, per_page: 2 } }
 
     let(:serializer) do
-      described_class.new(project: project)
+      described_class
+        .new(current_user: user, project: project)
         .with_pagination(request, response)
-    end
-
-    before do
-      allow(request).to receive(:query_parameters)
-        .and_return(pagination)
     end
 
     subject { serializer.represent(resource) }
@@ -169,7 +175,8 @@ describe EnvironmentSerializer do
 
       context 'when grouping environments within folders' do
         let(:serializer) do
-          described_class.new(project: project)
+          described_class
+            .new(current_user: user, project: project)
             .with_pagination(request, response)
             .within_folders
         end

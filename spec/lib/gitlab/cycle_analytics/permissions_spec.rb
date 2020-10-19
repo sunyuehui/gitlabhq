@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::CycleAnalytics::Permissions do
+RSpec.describe Gitlab::CycleAnalytics::Permissions do
   let(:project) { create(:project, public_builds: false) }
   let(:user) { create(:user) }
 
@@ -19,10 +21,6 @@ describe Gitlab::CycleAnalytics::Permissions do
       expect(subject[:staging]).to eq(false)
     end
 
-    it 'has no permissions to production stage' do
-      expect(subject[:production]).to eq(false)
-    end
-
     it 'has no permissions to code stage' do
       expect(subject[:code]).to eq(false)
     end
@@ -36,9 +34,9 @@ describe Gitlab::CycleAnalytics::Permissions do
     end
   end
 
-  context 'user is master' do
+  context 'user is maintainer' do
     before do
-      project.team << [user, :master]
+      project.add_maintainer(user)
     end
 
     it 'has permissions to issue stage' do
@@ -51,10 +49,6 @@ describe Gitlab::CycleAnalytics::Permissions do
 
     it 'has permissions to staging stage' do
       expect(subject[:staging]).to eq(true)
-    end
-
-    it 'has permissions to production stage' do
-      expect(subject[:production]).to eq(true)
     end
 
     it 'has permissions to code stage' do
@@ -72,7 +66,7 @@ describe Gitlab::CycleAnalytics::Permissions do
 
   context 'user has no build permissions' do
     before do
-      project.team << [user, :guest]
+      project.add_guest(user)
     end
 
     it 'has permissions to issue stage' do
@@ -90,7 +84,7 @@ describe Gitlab::CycleAnalytics::Permissions do
 
   context 'user has no merge request permissions' do
     before do
-      project.team << [user, :guest]
+      project.add_guest(user)
     end
 
     it 'has permissions to issue stage' do
@@ -108,7 +102,7 @@ describe Gitlab::CycleAnalytics::Permissions do
 
   context 'user has no issue permissions' do
     before do
-      project.team << [user, :developer]
+      project.add_developer(user)
       project.project_feature.update_attribute(:issues_access_level, ProjectFeature::DISABLED)
     end
 
@@ -118,10 +112,6 @@ describe Gitlab::CycleAnalytics::Permissions do
 
     it 'has no permissions to issue stage' do
       expect(subject[:issue]).to eq(false)
-    end
-
-    it 'has no permissions to production stage' do
-      expect(subject[:production]).to eq(false)
     end
   end
 end

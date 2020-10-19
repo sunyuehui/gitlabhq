@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module SQL
     # Class for building SQL UNION statements.
@@ -7,25 +9,13 @@ module Gitlab
     #
     # Example usage:
     #
-    #     union = Gitlab::SQL::Union.new(user.personal_projects, user.projects)
+    #     union = Gitlab::SQL::Union.new([user.personal_projects, user.projects])
     #     sql   = union.to_sql
     #
     #     Project.where("id IN (#{sql})")
-    class Union
-      def initialize(relations)
-        @relations = relations
-      end
-
-      def to_sql
-        # Some relations may include placeholders for prepared statements, these
-        # aren't incremented properly when joining relations together this way.
-        # By using "unprepared_statements" we remove the usage of placeholders
-        # (thus fixing this problem), at a slight performance cost.
-        fragments = ActiveRecord::Base.connection.unprepared_statement do
-          @relations.map { |rel| rel.reorder(nil).to_sql }.reject(&:blank?)
-        end
-
-        fragments.join("\nUNION\n")
+    class Union < SetOperator
+      def self.operator_keyword
+        'UNION'
       end
     end
   end

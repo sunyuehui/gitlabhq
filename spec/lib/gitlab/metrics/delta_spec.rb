@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Metrics::Delta do
+RSpec.describe Gitlab::Metrics::Delta do
   let(:delta) { described_class.new }
 
   describe '#compared_with' do

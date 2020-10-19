@@ -1,66 +1,79 @@
-# Usage statistics
+---
+type: reference
+---
+
+# Usage statistics **(CORE ONLY)**
 
 GitLab Inc. will periodically collect information about your instance in order
 to perform various actions.
 
-All statistics are opt-out, you can enable/disable them from the admin panel
-under **Admin area > Settings > Usage statistics**.
+All statistics are opt-out. You can enable/disable them in the
+**Admin Area > Settings > Metrics and profiling** section **Usage statistics**.
 
-## Version check
+## Network configuration
 
-GitLab can inform you when an update is available and the importance of it.
+Allow network traffic from your GitLab instance to IP address `104.196.17.203:443`, to send
+usage statistics to GitLab Inc.
 
-No information other than the GitLab version and the instance's hostname (through the HTTP referer)
-are collected.
+If your GitLab instance is behind a proxy, set the appropriate [proxy configuration variables](https://docs.gitlab.com/omnibus/settings/environment-variables.html).
 
-In the **Overview** tab you can see if your GitLab version is up to date. There
-are three cases: 1) you are up to date (green), 2) there is an update available
-(yellow) and 3) your version is vulnerable and a security fix is released (red).
+## Version Check **(CORE ONLY)**
 
-In any case, you will see a message informing you of the state and the
-importance of the update.
+If enabled, version check will inform you if a new version is available and the
+importance of it through a status. This is shown on the help page (i.e. `/help`)
+for all signed in users, and on the admin pages. The statuses are:
 
-If enabled, the version status will also be shown in the help page (`/help`)
-for all signed in users.
+- Green: You are running the latest version of GitLab.
+- Orange: An updated version of GitLab is available.
+- Red: The version of GitLab you are running is vulnerable. You should install
+  the latest version with security fixes as soon as possible.
 
-## Usage ping
+![Orange version check example](img/update-available.png)
 
-> [Introduced][ee-557] in GitLab Enterprise Edition 8.10. More statistics
-[were added][ee-735] in GitLab Enterprise Edition
-8.12. [Moved to GitLab Community Edition][ce-23361] in 9.1.
+GitLab Inc. collects your instance's version and hostname (through the HTTP
+referer) as part of the version check. No other information is collected.
 
-GitLab sends a weekly payload containing usage data to GitLab Inc. The usage
-ping uses high-level data to help our product, support, and sales teams. It does
-not send any project names, usernames, or any other specific data. The
-information from the usage ping is not anonymous, it is linked to the hostname
-of the instance.
+This information is used, among other things, to identify to which versions
+patches will need to be backported, making sure active GitLab instances remain
+secure.
 
-You can view the exact JSON payload in the administration panel.
+If you disable version check, this information will not be collected. Enable or
+disable the version check in **Admin Area > Settings > Metrics and profiling > Usage statistics**.
 
-### Deactivate the usage ping
+### Request flow example
 
-The usage ping is opt-out. If you want to deactivate this feature, go to
-the Settings page of your administration panel and uncheck the Usage ping
-checkbox.
+The following example shows a basic request/response flow between the self-managed GitLab instance
+and the GitLab Version Application:
 
-To disable the usage ping and prevent it from being configured in future through
-the administration panel, Omnibus installs can set the following in
-[`gitlab.rb`](https://docs.gitlab.com/omnibus/settings/configuration.html#configuration-options):
-
-```ruby
-gitlab_rails['usage_ping_enabled'] = false
+```mermaid
+sequenceDiagram
+    participant GitLab instance
+    participant Version Application
+    GitLab instance->>Version Application: Is there a version update?
+    loop Version Check
+        Version Application->>Version Application: Record version info
+    end
+    Version Application->>GitLab instance: Response (PNG/SVG)
 ```
 
-And source installs can set the following in `gitlab.yml`:
+## Usage Ping **(CORE ONLY)**
 
-```yaml
-production: &base
-  # ...
-  gitlab:
-    # ...
-    usage_ping_enabled: false
-```
+See [Usage Ping guide](../../../development/product_analytics/usage_ping.md).
 
-[ee-557]: https://gitlab.com/gitlab-org/gitlab-ee/merge_requests/557
-[ee-735]: https://gitlab.com/gitlab-org/gitlab-ee/merge_requests/735
-[ce-23361]: https://gitlab.com/gitlab-org/gitlab-ce/issues/23361
+## Instance-level statistics **(CORE ONLY)**
+
+Once usage ping is enabled, GitLab will gather data from other instances and
+will be able to show [usage statistics](../analytics/index.md)
+of your instance to your admins in **Admin Area > Analytics**.
+
+<!-- ## Troubleshooting
+
+Include any troubleshooting steps that you can foresee. If you know beforehand what issues
+one might have when setting this up, or when something is changed, or on upgrading, it's
+important to describe those, too. Think of things that may go wrong and include them here.
+This is important to minimize requests for support, and to avoid doc comments with
+questions that you know someone might ask.
+
+Each scenario can be a third-level heading, e.g. `### Getting error message X`.
+If you have none to add when creating a doc, leave this section in place
+but commented out to help encourage others to add to it in the future. -->

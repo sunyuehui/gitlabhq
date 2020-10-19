@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Redis::Cache do
+RSpec.describe Gitlab::Redis::Cache do
   let(:config_file_name) { "config/redis.cache.yml" }
   let(:environment_config_file_name) { "GITLAB_REDIS_CACHE_CONFIG_FILE" }
   let(:config_old_format_socket) { "spec/fixtures/config/redis_cache_old_format_socket.yml" }

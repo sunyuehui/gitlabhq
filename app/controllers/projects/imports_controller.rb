@@ -1,20 +1,24 @@
+# frozen_string_literal: true
+
 class Projects::ImportsController < Projects::ApplicationController
   include ContinueParams
+  include ImportUrlParams
 
   # Authorize
-  before_action :authorize_admin_project!
-  before_action :require_no_repo, only: [:new, :create]
-  before_action :redirect_if_progress, only: [:new, :create]
+  before_action :authorize_admin_project!, except: :show
+  before_action :require_namespace_project_creation_permission, only: :show
+  before_action :require_no_repo, except: :show
+  before_action :redirect_if_progress, except: :show
   before_action :redirect_if_no_import, only: :show
+
+  feature_category :importers
 
   def new
   end
 
   def create
-    @project.import_url = params[:project][:import_url]
-
-    if @project.save
-      @project.reload.import_schedule
+    if @project.update(import_params)
+      @project.import_state.reset.schedule
     end
 
     redirect_to project_import_path(@project)
@@ -22,7 +26,7 @@ class Projects::ImportsController < Projects::ApplicationController
 
   def show
     if @project.import_finished?
-      if continue_params
+      if continue_params[:to]
         redirect_to continue_params[:to], notice: continue_params[:notice]
       else
         redirect_to project_path(@project), notice: finished_notice
@@ -30,11 +34,7 @@ class Projects::ImportsController < Projects::ApplicationController
     elsif @project.import_failed?
       redirect_to new_project_import_path(@project)
     else
-      if continue_params && continue_params[:notice_now]
-        flash.now[:notice] = continue_params[:notice_now]
-      end
-
-      # Render
+      flash.now[:notice] = continue_params[:notice_now]
     end
   end
 
@@ -42,9 +42,9 @@ class Projects::ImportsController < Projects::ApplicationController
 
   def finished_notice
     if @project.forked?
-      'The project was successfully forked.'
+      _('The project was successfully forked.')
     else
-      'The project was successfully imported.'
+      _('The project was successfully imported.')
     end
   end
 
@@ -52,6 +52,10 @@ class Projects::ImportsController < Projects::ApplicationController
     if @project.repository_exists?
       redirect_to project_path(@project)
     end
+  end
+
+  def require_namespace_project_creation_permission
+    render_404 unless current_user.can?(:admin_project, @project) || current_user.can?(:create_projects, @project.namespace)
   end
 
   def redirect_if_progress
@@ -65,4 +69,16 @@ class Projects::ImportsController < Projects::ApplicationController
       redirect_to project_path(@project)
     end
   end
+
+  def import_params_attributes
+    []
+  end
+
+  def import_params
+    params.require(:project)
+      .permit(import_params_attributes)
+      .merge(import_url_params)
+  end
 end
+
+Projects::ImportsController.prepend_if_ee('EE::Projects::ImportsController')

@@ -1,11 +1,13 @@
 /* eslint-disable class-methods-use-this, no-new */
-/* global LabelsSelect */
-/* global MilestoneSelect */
-/* global IssueStatusSelect */
-/* global SubscriptionSelect */
 
+import $ from 'jquery';
+import { property } from 'lodash';
 import IssuableBulkUpdateActions from './issuable_bulk_update_actions';
-import SidebarHeightManager from './sidebar_height_manager';
+import MilestoneSelect from './milestone_select';
+import issueStatusSelect from './issue_status_select';
+import subscriptionSelect from './subscription_select';
+import LabelsSelect from './labels_select';
+import issueableEventHub from './issues_list/eventhub';
 
 const HIDDEN_CLASS = 'hidden';
 const DISABLED_CONTENT_CLASS = 'disabled-content';
@@ -14,6 +16,8 @@ const SIDEBAR_COLLAPSED_CLASS = 'right-sidebar-collapsed issuable-bulk-update-si
 
 export default class IssuableBulkUpdateSidebar {
   constructor() {
+    this.vueIssuablesListFeature = property(['gon', 'features', 'vueIssuablesList'])(window);
+
     this.initDomElements();
     this.bindEvents();
     this.initDropdowns();
@@ -21,7 +25,7 @@ export default class IssuableBulkUpdateSidebar {
   }
 
   initDomElements() {
-    this.$page = $('.page-with-sidebar');
+    this.$page = $('.layout-page');
     this.$sidebar = $('.right-sidebar');
     this.$sidebarInnerContainer = this.$sidebar.find('.issuable-sidebar');
     this.$bulkEditCancelBtn = $('.js-bulk-update-menu-hide');
@@ -30,7 +34,7 @@ export default class IssuableBulkUpdateSidebar {
     this.$otherFilters = $('.issues-other-filters');
     this.$checkAllContainer = $('.check-all-holder');
     this.$issueChecks = $('.issue-check');
-    this.$issuesList = $('.selected_issue');
+    this.$issuesList = $('.selected-issuable');
     this.$issuableIdsInput = $('#update_issuable_ids');
   }
 
@@ -41,20 +45,40 @@ export default class IssuableBulkUpdateSidebar {
     this.$issuesList.on('change', () => this.updateFormState());
     this.$bulkEditSubmitBtn.on('click', () => this.prepForSubmit());
     this.$checkAllContainer.on('click', () => this.updateFormState());
+
+    if (this.vueIssuablesListFeature) {
+      issueableEventHub.$on('issuables:updateBulkEdit', () => {
+        // Danger! Strong coupling ahead!
+        // The bulk update sidebar and its dropdowns look for .selected-issuable checkboxes, and get data on which issue
+        // is selected by inspecting the DOM. Ideally, we would pass the selected issuable IDs and their properties
+        // explicitly, but this component is used in too many places right now to refactor straight away.
+
+        this.updateFormState();
+      });
+    }
   }
 
   initDropdowns() {
     new LabelsSelect();
     new MilestoneSelect();
-    new IssueStatusSelect();
-    new SubscriptionSelect();
-  }
+    issueStatusSelect();
+    subscriptionSelect();
 
-  getNavHeight() {
-    const navbarHeight = $('.navbar-gitlab').outerHeight();
-    const layoutNavHeight = $('.layout-nav').outerHeight();
-    const subNavScroll = $('.sub-nav-scroll').outerHeight();
-    return navbarHeight + layoutNavHeight + subNavScroll;
+    if (IS_EE) {
+      import('ee/vue_shared/components/sidebar/health_status_select/health_status_bundle')
+        .then(({ default: HealthStatusSelect }) => {
+          HealthStatusSelect();
+        })
+        .catch(() => {});
+    }
+
+    if (IS_EE) {
+      import('ee/vue_shared/components/sidebar/epics_select/epics_select_bundle')
+        .then(({ default: EpicSelect }) => {
+          EpicSelect();
+        })
+        .catch(() => {});
+    }
   }
 
   setupBulkUpdateActions() {
@@ -62,7 +86,7 @@ export default class IssuableBulkUpdateSidebar {
   }
 
   updateFormState() {
-    const noCheckedIssues = !$('.selected_issue:checked').length;
+    const noCheckedIssues = !$('.selected-issuable:checked').length;
 
     this.toggleSubmitButtonDisabled(noCheckedIssues);
     this.updateSelectedIssuableIds();
@@ -80,27 +104,12 @@ export default class IssuableBulkUpdateSidebar {
   toggleBulkEdit(e, enable) {
     e.preventDefault();
 
+    issueableEventHub.$emit('issuables:toggleBulkEdit', enable);
+
     this.toggleSidebarDisplay(enable);
     this.toggleBulkEditButtonDisabled(enable);
     this.toggleOtherFiltersDisabled(enable);
     this.toggleCheckboxDisplay(enable);
-
-    if (enable) {
-      this.initAffix();
-      SidebarHeightManager.init();
-    }
-  }
-
-  initAffix() {
-    if (!this.$sidebar.hasClass('affix-top')) {
-      const offsetTop = $('.scrolling-tabs-container').outerHeight() + $('.sub-nav-scroll').outerHeight();
-
-      this.$sidebar.affix({
-        offset: {
-          top: offsetTop,
-        },
-      });
-    }
   }
 
   updateSelectedIssuableIds() {
@@ -130,7 +139,7 @@ export default class IssuableBulkUpdateSidebar {
   }
 
   toggleCheckboxDisplay(show) {
-    this.$checkAllContainer.toggleClass(HIDDEN_CLASS, !show);
+    this.$checkAllContainer.toggleClass(HIDDEN_CLASS, !show || this.vueIssuablesListFeature);
     this.$issueChecks.toggleClass(HIDDEN_CLASS, !show);
   }
 
@@ -147,7 +156,7 @@ export default class IssuableBulkUpdateSidebar {
   }
 
   static getCheckedIssueIds() {
-    const $checkedIssues = $('.selected_issue:checked');
+    const $checkedIssues = $('.selected-issuable:checked');
 
     if ($checkedIssues.length > 0) {
       return $.map($checkedIssues, value => $(value).data('id'));

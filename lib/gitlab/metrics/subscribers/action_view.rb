@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Metrics
     module Subscribers
@@ -5,7 +7,7 @@ module Gitlab
       class ActionView < ActiveSupport::Subscriber
         attach_to :action_view
 
-        SERIES = 'views'.freeze
+        SERIES = 'views'
 
         def render_template(event)
           track(event) if current_transaction
@@ -16,19 +18,19 @@ module Gitlab
         private
 
         def track(event)
-          values = values_for(event)
-          tags   = tags_for(event)
+          tags = tags_for(event)
+          current_transaction.observe(:gitlab_view_rendering_duration_seconds, event.duration, tags) do
+            docstring 'View rendering time'
+            label_keys %i(view)
+            buckets [0.001, 0.01, 0.1, 1, 10.0]
+            with_feature :prometheus_metrics_view_instrumentation
+          end
 
-          current_transaction.increment(:view_duration, event.duration)
-          current_transaction.add_metric(SERIES, values, tags)
+          current_transaction.increment(:gitlab_transaction_view_duration_total, event.duration)
         end
 
         def relative_path(path)
-          path.gsub(/^#{Rails.root.to_s}\/?/, '')
-        end
-
-        def values_for(event)
-          { duration: event.duration }
+          path.gsub(%r{^#{Rails.root}/?}, '')
         end
 
         def tags_for(event)

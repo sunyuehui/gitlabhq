@@ -1,13 +1,17 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'projects/commit/_commit_box.html.haml' do
+RSpec.describe 'projects/commit/_commit_box.html.haml' do
   let(:user) { create(:user) }
   let(:project) { create(:project, :repository) }
 
   before do
     assign(:project, project)
     assign(:commit, project.commit)
+    allow(view).to receive(:current_user).and_return(user)
     allow(view).to receive(:can_collaborate_with_project?).and_return(false)
+    project.add_developer(user)
   end
 
   it 'shows the commit SHA' do
@@ -47,7 +51,7 @@ describe 'projects/commit/_commit_box.html.haml' do
   context 'viewing a commit' do
     context 'as a developer' do
       before do
-        expect(view).to receive(:can_collaborate_with_project?).and_return(true)
+        allow(view).to receive(:can_collaborate_with_project?).and_return(true)
       end
 
       it 'has a link to create a new tag' do
@@ -59,7 +63,7 @@ describe 'projects/commit/_commit_box.html.haml' do
 
     context 'as a non-developer' do
       before do
-        expect(view).to receive(:can_collaborate_with_project?).and_return(false)
+        project.add_guest(user)
       end
 
       it 'does not have a link to create a new tag' do

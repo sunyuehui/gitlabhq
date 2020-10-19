@@ -1,8 +1,16 @@
+# frozen_string_literal: true
+
 module Users
   class BuildService < BaseService
+    delegate :user_default_internal_regex_enabled?,
+             :user_default_internal_regex_instance,
+             to: :'Gitlab::CurrentSettings.current_application_settings'
+    attr_reader :identity_params
+
     def initialize(current_user, params = {})
       @current_user = current_user
       @params = params.dup
+      @identity_params = params.slice(*identity_attributes)
     end
 
     def execute(skip_authorization: false)
@@ -15,24 +23,32 @@ module Users
         @reset_token = user.generate_reset_token if params[:reset_password]
 
         if user_params[:force_random_password]
-          random_password = Devise.friendly_token.first(Devise.password_length.min)
+          random_password = User.random_password
           user.password = user.password_confirmation = random_password
         end
       end
 
-      identity_attrs = params.slice(:extern_uid, :provider)
+      build_identity(user)
 
-      if identity_attrs.any?
-        user.identities.build(identity_attrs)
-      end
+      Users::UpdateCanonicalEmailService.new(user: user).execute
 
       user
     end
 
     private
 
+    def identity_attributes
+      [:extern_uid, :provider]
+    end
+
+    def build_identity(user)
+      return if identity_params.empty?
+
+      user.identities.build(identity_params)
+    end
+
     def can_create_user?
-      (current_user.nil? && current_application_settings.signup_enabled?) || current_user&.admin?
+      (current_user.nil? && Gitlab::CurrentSettings.allow_signup?) || current_user&.admin?
     end
 
     # Allowed params for creating a user (admins only)
@@ -49,7 +65,6 @@ module Users
         :force_random_password,
         :hide_no_password,
         :hide_no_ssh_key,
-        :key_id,
         :linkedin,
         :name,
         :password,
@@ -62,7 +77,13 @@ module Users
         :theme_id,
         :twitter,
         :username,
-        :website_url
+        :website_url,
+        :private_profile,
+        :organization,
+        :location,
+        :public_email,
+        :user_type,
+        :note
       ]
     end
 
@@ -70,18 +91,19 @@ module Users
     def signup_params
       [
         :email,
-        :email_confirmation,
         :password_automatically_set,
         :name,
+        :first_name,
+        :last_name,
         :password,
-        :username
+        :username,
+        :user_type
       ]
     end
 
     def build_user_params(skip_authorization:)
       if current_user&.admin?
         user_params = params.slice(*admin_create_params)
-        user_params[:created_by_id] = current_user&.id
 
         if params[:reset_password]
           user_params.merge!(force_random_password: true, password_expires_at: nil)
@@ -94,13 +116,37 @@ module Users
         if user_params[:skip_confirmation].nil?
           user_params[:skip_confirmation] = skip_user_confirmation_email_from_setting
         end
+
+        fallback_name = "#{user_params[:first_name]} #{user_params[:last_name]}"
+
+        if user_params[:name].blank? && fallback_name.present?
+          user_params = user_params.merge(name: fallback_name)
+        end
       end
+
+      user_params[:created_by_id] = current_user&.id
+
+      if user_default_internal_regex_enabled? && !user_params.key?(:external)
+        user_params[:external] = user_external?
+      end
+
+      user_params.delete(:user_type) unless project_bot?(user_params[:user_type])
 
       user_params
     end
 
     def skip_user_confirmation_email_from_setting
-      !current_application_settings.send_user_confirmation_email
+      !Gitlab::CurrentSettings.send_user_confirmation_email
+    end
+
+    def user_external?
+      user_default_internal_regex_instance.match(params[:email]).nil?
+    end
+
+    def project_bot?(user_type)
+      user_type&.to_sym == :project_bot
     end
   end
 end
+
+Users::BuildService.prepend_if_ee('EE::Users::BuildService')

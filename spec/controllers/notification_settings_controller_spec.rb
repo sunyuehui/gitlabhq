@@ -1,30 +1,35 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe NotificationSettingsController do
+RSpec.describe NotificationSettingsController do
   let(:project) { create(:project) }
   let(:group) { create(:group, :internal) }
   let(:user) { create(:user) }
 
   before do
-    project.team << [user, :developer]
+    project.add_developer(user)
   end
 
   describe '#create' do
     context 'when not authorized' do
       it 'redirects to sign in page' do
         post :create,
-             project_id: project.id,
-             notification_setting: { level: :participating }
+             params: {
+               project_id: project.id,
+               notification_setting: { level: :participating }
+             }
 
         expect(response).to redirect_to(new_user_session_path)
       end
     end
 
     context 'when authorized' do
+      let(:notification_setting) { user.notification_settings_for(source) }
       let(:custom_events) do
         events = {}
 
-        NotificationSetting::EMAIL_EVENTS.each do |event|
+        NotificationSetting.email_events(source).each do |event|
           events[event.to_s] = true
         end
 
@@ -36,14 +41,16 @@ describe NotificationSettingsController do
       end
 
       context 'for projects' do
-        let(:notification_setting) { user.notification_settings_for(project) }
+        let(:source) { project }
 
         it 'creates notification setting' do
           post :create,
-               project_id: project.id,
-               notification_setting: { level: :participating }
+               params: {
+                 project_id: project.id,
+                 notification_setting: { level: :participating }
+               }
 
-          expect(response.status).to eq 200
+          expect(response).to have_gitlab_http_status(:ok)
           expect(notification_setting.level).to eq("participating")
           expect(notification_setting.user_id).to eq(user.id)
           expect(notification_setting.source_id).to eq(project.id)
@@ -53,10 +60,12 @@ describe NotificationSettingsController do
         context 'with custom settings' do
           it 'creates notification setting' do
             post :create,
-                 project_id: project.id,
-                 notification_setting: { level: :custom }.merge(custom_events)
+                 params: {
+                   project_id: project.id,
+                   notification_setting: { level: :custom }.merge(custom_events)
+                 }
 
-            expect(response.status).to eq 200
+            expect(response).to have_gitlab_http_status(:ok)
             expect(notification_setting.level).to eq("custom")
 
             custom_events.each do |event, value|
@@ -67,14 +76,16 @@ describe NotificationSettingsController do
       end
 
       context 'for groups' do
-        let(:notification_setting) { user.notification_settings_for(group) }
+        let(:source) { group }
 
         it 'creates notification setting' do
           post :create,
-               namespace_id: group.id,
-               notification_setting: { level: :watch }
+               params: {
+                 namespace_id: group.id,
+                 notification_setting: { level: :watch }
+               }
 
-          expect(response.status).to eq 200
+          expect(response).to have_gitlab_http_status(:ok)
           expect(notification_setting.level).to eq("watch")
           expect(notification_setting.user_id).to eq(user.id)
           expect(notification_setting.source_id).to eq(group.id)
@@ -84,10 +95,12 @@ describe NotificationSettingsController do
         context 'with custom settings' do
           it 'creates notification setting' do
             post :create,
-                 namespace_id: group.id,
-                 notification_setting: { level: :custom }.merge(custom_events)
+                 params: {
+                   namespace_id: group.id,
+                   notification_setting: { level: :custom }.merge(custom_events)
+                 }
 
-            expect(response.status).to eq 200
+            expect(response).to have_gitlab_http_status(:ok)
             expect(notification_setting.level).to eq("custom")
 
             custom_events.each do |event, value|
@@ -107,10 +120,12 @@ describe NotificationSettingsController do
 
       it 'returns 404' do
         post :create,
-             project_id: private_project.id,
-             notification_setting: { level: :participating }
+             params: {
+               project_id: private_project.id,
+               notification_setting: { level: :participating }
+             }
 
-        expect(response).to have_http_status(404)
+        expect(response).to have_gitlab_http_status(:not_found)
       end
     end
   end
@@ -121,8 +136,10 @@ describe NotificationSettingsController do
     context 'when not authorized' do
       it 'redirects to sign in page' do
         put :update,
-            id: notification_setting,
-            notification_setting: { level: :participating }
+            params: {
+              id: notification_setting,
+              notification_setting: { level: :participating }
+            }
 
         expect(response).to redirect_to(new_user_session_path)
       end
@@ -135,27 +152,31 @@ describe NotificationSettingsController do
 
       it 'returns success' do
         put :update,
-            id: notification_setting,
-            notification_setting: { level: :participating }
+            params: {
+              id: notification_setting,
+              notification_setting: { level: :participating }
+            }
 
-        expect(response.status).to eq 200
+        expect(response).to have_gitlab_http_status(:ok)
       end
 
       context 'and setting custom notification setting' do
         let(:custom_events) do
           events = {}
 
-          NotificationSetting::EMAIL_EVENTS.each do |event|
+          notification_setting.email_events.each do |event|
             events[event] = "true"
           end
         end
 
         it 'returns success' do
           put :update,
-              id: notification_setting,
-              notification_setting: { level: :participating, events: custom_events }
+              params: {
+                id: notification_setting,
+                notification_setting: { level: :participating, events: custom_events }
+              }
 
-          expect(response.status).to eq 200
+          expect(response).to have_gitlab_http_status(:ok)
         end
       end
     end
@@ -169,10 +190,12 @@ describe NotificationSettingsController do
 
       it 'returns 404' do
         put :update,
-            id: notification_setting,
-            notification_setting: { level: :participating }
+            params: {
+              id: notification_setting,
+              notification_setting: { level: :participating }
+            }
 
-        expect(response).to have_http_status(404)
+        expect(response).to have_gitlab_http_status(:not_found)
       end
     end
   end

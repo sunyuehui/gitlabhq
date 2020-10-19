@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::CycleAnalytics::Updater do
+RSpec.describe Gitlab::CycleAnalytics::Updater do
   describe 'updates authors' do
     let(:user) { create(:user) }
     let(:events) { [{ 'author_id' => user.id }] }

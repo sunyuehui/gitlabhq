@@ -1,10 +1,17 @@
-.commit-description {
+%commit-description-base {
+  padding: $gl-padding-8 0 $gl-padding-8 $gl-padding-8;
+  margin-top: $gl-padding-8;
+  border: 0;
+  border-radius: unset;
   background: none;
-  border: none;
-  padding: 0;
-  margin-top: 10px;
   word-break: normal;
-  white-space: pre-wrap;
+  overflow-x: auto;
+  border-left: 3px solid $white-dark;
+  color: $gl-text-color-secondary;
+}
+
+.commit-description {
+  @extend %commit-description-base;
 }
 
 .js-details-expand {
@@ -21,14 +28,10 @@
     margin: 0;
     color: $gl-text-color;
   }
-
-  .commit-description {
-    margin-top: 15px;
-  }
 }
 
 .commit-hash-full {
-  @media (max-width: $screen-sm-max) {
+  @include media-breakpoint-down(sm) {
     width: 80px;
     white-space: nowrap;
     overflow: hidden;
@@ -54,11 +57,6 @@
   .mr-widget-pipeline-graph {
     display: inline-block;
     vertical-align: middle;
-    margin-right: 4px;
-
-    .stage-cell .stage-container {
-      margin: 3px 3px 3px 0;
-    }
 
     .dropdown-menu {
       margin-top: 11px;
@@ -67,7 +65,7 @@
 }
 
 .branch-info .commit-icon {
-  margin-right: 3px;
+  margin-right: 8px;
 
   svg {
     top: 3px;
@@ -81,16 +79,16 @@
 .commit-message-container {
   background-color: $body-bg;
   position: relative;
-  font-family: $monospace_font;
+  font-family: $monospace-font;
   $left: 12px;
-  overflow: hidden; // See https://gitlab.com/gitlab-org/gitlab-ce/issues/13987
+  overflow: hidden; // See https://gitlab.com/gitlab-org/gitlab-foss/issues/13987
   .max-width-marker {
     width: 72ch;
     color: $commit-max-width-marker-color;
     font-family: inherit;
     left: $left;
     height: 100%;
-    border-right: 1px solid mix($input-border, $white-light);
+    border-right: 1px solid mix($input-border, $white);
     position: absolute;
     z-index: 1;
   }
@@ -103,7 +101,6 @@
     z-index: 2;
   }
 }
-
 
 .commits-compare-switch {
   float: left;
@@ -123,35 +120,26 @@
 }
 
 .commit-row-title {
-  .notes_count {
-    float: right;
-    margin-right: 10px;
-  }
-
   .str-truncated {
     max-width: 70%;
-  }
-
-  .commit-row-message {
-    color: $gl-text-color;
   }
 }
 
 .text-expander {
-  display: inline-block;
-  background: $white-light;
+  display: inline-flex;
+  background: $white;
   color: $gl-text-color-secondary;
-  padding: 0 5px;
+  padding: 1px $gl-padding-4;
   cursor: pointer;
-  border: 1px solid $border-gray-dark;
+  border: 1px solid $border-white-normal;
   border-radius: $border-radius-default;
   margin-left: 5px;
-  font-size: $gl-font-size;
+  font-size: 12px;
   line-height: $gl-font-size;
   outline: none;
 
   &.open {
-    background: $gray-light;
+    background-color: darken($gray-light, 10%);
     box-shadow: inset 0 0 2px rgba($black, 0.2);
   }
 
@@ -166,8 +154,6 @@
 }
 
 .avatar-cell {
-  width: 46px;
-
   img {
     margin-right: 0;
   }
@@ -176,93 +162,134 @@
 .commit-detail {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: start;
   flex-grow: 1;
+  min-width: 0;
 
-  .merge-request-branches & {
-    flex-direction: column;
+  .project-namespace {
+    color: $gl-text-color-tertiary;
   }
 }
 
 .commit-content {
   padding-right: 10px;
+  white-space: normal;
+  overflow: hidden;
+
+  .commit-title {
+    display: flex;
+    align-items: center;
+  }
+
+  .committer {
+    color: $gl-text-color-tertiary;
+
+    .commit-author-link {
+      color: $gl-text-color;
+    }
+  }
 }
 
 .commit-actions {
-  @media (min-width: $screen-sm-min) {
-    font-size: 0;
-  }
-
-  .ci-status-link {
-    display: inline-block;
-    position: relative;
-    top: 1px;
-  }
-
-  .btn-clipboard,
-  .btn-transparent {
-    padding-left: 0;
-    padding-right: 0;
-  }
-
-  .btn {
-    &:not(:first-child) {
-      margin-left: $gl-padding;
+  @include media-breakpoint-up(sm) {
+    .fa-spinner {
+      font-size: 12px;
     }
   }
 
-  .commit-sha {
-    font-size: 14px;
-    font-weight: 600;
+  .ci-status-icon svg {
+    vertical-align: text-bottom;
+  }
+
+  > .ci-status-link,
+  > .btn,
+  > .commit-sha-group {
+    margin-left: $gl-padding;
+  }
+}
+
+.commit-nav-buttons {
+  a.btn,
+  button {
+    // See: https://gitlab.com/gitlab-org/gitlab-ui/-/issues/730
+    &:last-child > svg {
+      margin-left: 0.25rem;
+      margin-right: 0;
+    }
+  }
+}
+
+
+.clipboard-group,
+.commit-sha-group {
+  display: inline-flex;
+
+  .label,
+  .btn {
+    padding: $gl-vert-padding $gl-btn-padding;
+    border: 1px $border-color solid;
+    font-size: $gl-font-size;
+    line-height: $line-height-base;
+    border-radius: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  .label-monospace {
+    user-select: text;
+    color: $gl-text-color;
+    background-color: $gray-light;
+  }
+
+  .btn svg {
+    top: auto;
+    fill: $gl-text-color-secondary;
+  }
+
+  :first-child {
+    border-bottom-left-radius: $border-radius-default;
+    border-top-left-radius: $border-radius-default;
+  }
+
+  :not(:first-child) {
+    border-left: 0;
+  }
+
+  :last-child {
+    border-bottom-right-radius: $border-radius-default;
+    border-top-right-radius: $border-radius-default;
   }
 }
 
 .commit,
-.generic_commit_status {
-
+.generic-commit-status {
   a,
   button {
-    color: $gl-text-color;
     vertical-align: baseline;
   }
 
+  a {
+    color: $gl-text-color;
+
+    &.autodevops-badge {
+      color: $white;
+    }
+  }
+
   .commit-row-description {
-    font-size: 14px;
-    padding: 10px 15px;
-    margin: 10px 0;
-    background: $gray-light;
+    @extend %commit-description-base;
     display: none;
-    white-space: pre-wrap;
-    word-break: normal;
-
-    pre {
-      border: none;
-      background: inherit;
-      padding: 0;
-      margin: 0;
-      white-space: pre-wrap;
-    }
-
-    a {
-      color: $gl-text-color;
-    }
+    flex: 1;
   }
 
   &.inline-commit {
     .commit-row-title {
       font-size: 13px;
     }
-
-    .committed_ago {
-      @extend .cgray;
-      float: right;
-    }
   }
 }
 
 .branch-commit {
-  color: $gl-text-color;
-
   .commit-icon {
     text-align: center;
     display: inline-block;
@@ -274,18 +301,19 @@
       fill: $gl-text-color-secondary;
     }
   }
+}
 
+.commit,
+.generic-commit-status,
+.branch-commit {
   .commit-sha {
-    color: $gl-link-color;
-  }
-
-  .commit-row-message {
-    color: $gl-text-color;
+    color: $blue-600;
   }
 }
 
-
 .gpg-status-box {
+  padding: 2px 10px;
+
   &:empty {
     display: none;
   }
@@ -295,15 +323,29 @@
   }
 
   &.invalid {
-    @include status-color($gray-dark, $gray, $common-gray-dark);
-    border-color: $common-gray-light;
+    @include status-color($gray-dark, color('gray'), $gray-darkest);
+    border-color: $gray-darkest;
+
+    &:not(span):hover {
+      color: color('gray');
+    }
+  }
+}
+
+.gpg-popover-certificate-details {
+  ul {
+    padding-left: $gl-padding;
+  }
+
+  li.unstyled {
+    list-style-type: none;
   }
 }
 
 .gpg-popover-status {
   display: flex;
   align-items: center;
-  font-weight: normal;
+  font-weight: $gl-font-weight-normal;
   line-height: 1.5;
 }
 
@@ -314,16 +356,14 @@
   &.valid {
     svg {
       border: 1px solid $brand-success;
-
       fill: $brand-success;
     }
   }
 
   &.invalid {
     svg {
-      border: 1px solid $common-gray-light;
-
-      fill: $common-gray-light;
+      border: 1px solid $gray-darkest;
+      fill: $gray-darkest;
     }
   }
 
@@ -346,4 +386,10 @@
 .commit .gpg-popover-help-link {
   display: block;
   color: $link-color;
+}
+
+.add-review-item {
+  .gl-tab-nav-item {
+    height: 100%;
+  }
 }

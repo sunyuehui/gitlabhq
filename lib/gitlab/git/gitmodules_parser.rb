@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Gitaly note: JV: no RPC's here.
 
 module Gitlab
@@ -46,6 +48,8 @@ module Gitlab
         iterator = State.new
 
         @content.split("\n").each_with_object(iterator) do |text, iterator|
+          text.chomp!
+
           next if text =~ /^\s*#/
 
           if text =~ /\A\[submodule "(?<name>[^"]+)"\]\z/
@@ -55,7 +59,7 @@ module Gitlab
 
             next unless text =~ /\A\s*(?<key>\w+)\s*=\s*(?<value>.*)\z/
 
-            value = $~[:value].chomp
+            value = $~[:value]
             iterator.set_attribute($~[:key], value)
           end
         end
@@ -67,7 +71,7 @@ module Gitlab
         # Convert from an indexed by name to an array indexed by path
         # If a submodule doesn't have a path, it is considered bogus
         # and is ignored
-        submodules_by_name.each_with_object({}) do |(name, data), results|
+        submodules_by_name.each_with_object({}) do |(_name, data), results|
           path = data.delete 'path'
           next unless path
 

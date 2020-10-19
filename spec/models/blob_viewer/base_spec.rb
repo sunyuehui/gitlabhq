@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe BlobViewer::Base do
+RSpec.describe BlobViewer::Base do
   include FakeBlobHelpers
 
   let(:project) { build(:project) }

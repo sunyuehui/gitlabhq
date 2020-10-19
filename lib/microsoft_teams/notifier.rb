@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module MicrosoftTeams
   class Notifier
     def initialize(webhook)
@@ -9,15 +11,15 @@ module MicrosoftTeams
       result = false
 
       begin
-        response = HTTParty.post(
+        response = Gitlab::HTTP.post(
           @webhook.to_str,
           headers: @header,
           body: body(options)
         )
 
         result = true if response
-      rescue HTTParty::Error, StandardError => error
-        Rails.logger.info("#{self.class.name}: Error while connecting to #{@webhook}: #{error.message}")
+      rescue Gitlab::HTTP::Error, StandardError => error
+        Gitlab::AppLogger.info("#{self.class.name}: Error while connecting to #{@webhook}: #{error.message}")
       end
 
       result
@@ -29,15 +31,12 @@ module MicrosoftTeams
       result = { 'sections' => [] }
 
       result['title'] = options[:title]
-      result['summary'] = options[:pretext]
+      result['summary'] = options[:summary]
       result['sections'] << MicrosoftTeams::Activity.new(options[:activity]).prepare
 
       attachments = options[:attachments]
       unless attachments.blank?
-        result['sections'] << {
-          'title' => 'Details',
-          'facts' => [{ 'name' => 'Attachments', 'value' => attachments }]
-        }
+        result['sections'] << { text: attachments }
       end
 
       result.to_json

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module FogbugzImport
     class Importer
@@ -18,6 +20,7 @@ module Gitlab
 
       def execute
         return true unless repo.valid?
+
         client = Gitlab::FogbugzImport::Client.new(token: fb_session[:token], uri: fb_session[:uri])
 
         @cases = client.cases(@repo.id.to_i)
@@ -36,7 +39,7 @@ module Gitlab
 
       def user_map
         @user_map ||= begin
-          user_map = Hash.new
+          user_map = {}
           import_data = project.import_data.try(:data)
           stored_user_map = import_data['user_map'] if import_data
           user_map.update(stored_user_map) if stored_user_map
@@ -78,6 +81,7 @@ module Gitlab
         ::Labels::FindOrCreateService.new(nil, project, params).execute(skip_authorization: true)
       end
 
+      # rubocop: disable CodeReuse/ActiveRecord
       def user_info(person_id)
         user_hash = user_map[person_id.to_s]
 
@@ -94,7 +98,9 @@ module Gitlab
 
         { name: user_name, gitlab_id: gitlab_id }
       end
+      # rubocop: enable CodeReuse/ActiveRecord
 
+      # rubocop: disable CodeReuse/ActiveRecord
       def import_cases
         return unless @cases
 
@@ -111,6 +117,7 @@ module Gitlab
           [bug['sCategory'], bug['sPriority']].each do |label|
             unless label.blank?
               labels << label
+
               unless @known_labels.include?(label)
                 create_label(label)
                 @known_labels << label
@@ -139,6 +146,7 @@ module Gitlab
           import_issue_comments(issue, comments)
         end
       end
+      # rubocop: enable CodeReuse/ActiveRecord
 
       def opened_content(comments)
         while comment = comments.shift
@@ -189,23 +197,24 @@ module Gitlab
         end
       end
 
-      def linkify_issues(s)
-        s = s.gsub(/([Ii]ssue) ([0-9]+)/, '\1 #\2')
-        s = s.gsub(/([Cc]ase) ([0-9]+)/, '\1 #\2')
-        s
+      def linkify_issues(str)
+        str = str.gsub(/([Ii]ssue) ([0-9]+)/, '\1 #\2')
+        str = str.gsub(/([Cc]ase) ([0-9]+)/, '\1 #\2')
+        str
       end
 
-      def escape_for_markdown(s)
-        s = s.gsub(/^#/, "\\#")
-        s = s.gsub(/^-/, "\\-")
-        s = s.gsub("`", "\\~")
-        s = s.delete("\r")
-        s = s.gsub("\n", "  \n")
-        s
+      def escape_for_markdown(str)
+        str = str.gsub(/^#/, "\\#")
+        str = str.gsub(/^-/, "\\-")
+        str = str.gsub("`", "\\~")
+        str = str.delete("\r")
+        str = str.gsub("\n", "  \n")
+        str
       end
 
       def format_content(raw_content)
         return raw_content if raw_content.nil?
+
         linkify_issues(escape_for_markdown(raw_content))
       end
 
@@ -230,7 +239,7 @@ module Gitlab
 
         res = ::Projects::DownloadService.new(project, link).execute
 
-        return nil if res.nil?
+        return if res.nil?
 
         res[:markdown]
       end
@@ -263,6 +272,7 @@ module Gitlab
         if content.blank?
           content = '*(No description has been entered for this issue)*'
         end
+
         body << content
 
         body.join("\n\n")
@@ -276,6 +286,7 @@ module Gitlab
         if content.blank?
           content = "*(No comment has been entered for this change)*"
         end
+
         body << content
 
         if updates.any?

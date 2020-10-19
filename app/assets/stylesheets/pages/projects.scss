@@ -1,51 +1,7 @@
-.alert_holder {
-  margin: -16px;
-
-  .alert-link {
-    font-weight: normal;
-  }
-}
-
 .new_project,
 .edit-project,
 .import-project {
-
-  .sharing-and-permissions {
-    .header {
-      padding-top: $gl-vert-padding;
-    }
-
-    .label-light {
-      margin-bottom: 0;
-    }
-
-    .help-block {
-      margin-top: 0;
-    }
-
-    .form-group {
-      margin-bottom: 5px;
-    }
-
-    > .form-group {
-      padding-left: 0;
-    }
-
-    select option[disabled] {
-      display: none;
-    }
-  }
-
-  select {
-    transition: background 2s ease-out;
-
-    &.highlight-changes {
-      background: $highlight-changes-color;
-      transition: none;
-    }
-  }
-
-  .help-block {
+  .form-text.text-muted {
     margin-bottom: 10px;
   }
 
@@ -53,18 +9,22 @@
     border-radius: $border-radius-base;
   }
 
-  .input-group > div {
+  .input-group {
+    .select2-container {
+      display: unset;
+      max-width: unset;
+      flex-grow: 1;
+    }
 
-    &:last-child {
-      padding-right: 0;
+    > div {
+      &:last-child {
+        padding-right: 0;
+      }
     }
   }
 
-  @media (max-width: $screen-xs-max) {
+  @include media-breakpoint-down(xs) {
     .input-group > div {
-
-      margin-bottom: 14px;
-
       &:last-child {
         margin-bottom: 0;
       }
@@ -75,90 +35,114 @@
     }
   }
 
-  .input-group-addon {
+  .input-group-prepend,
+  .input-group-append {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: unset;
+    width: unset;
+    max-width: 50%;
+    text-align: left;
 
     &.static-namespace {
       height: 35px;
       border-radius: 3px;
       border: 1px solid $border-color;
+      max-width: 100%;
+      flex-grow: 1;
     }
 
-    + .select2 a {
-      border-top-left-radius: 0;
-      border-bottom-left-radius: 0;
-    }
-  }
-}
-
-.project-home-panel,
-.group-home-panel {
-  padding-top: 24px;
-  padding-bottom: 24px;
-
-  @media (min-width: $screen-sm-min) {
-    border-bottom: 1px solid $border-color;
-  }
-
-  .project-avatar,
-  .group-avatar {
-    float: none;
-    margin: 0 auto;
-
-    &.identicon {
-      border-radius: 50%;
-    }
-  }
-
-  .project-title,
-  .group-title {
-    margin-top: 10px;
-    margin-bottom: 10px;
-    font-size: 24px;
-    font-weight: 400;
-    line-height: 1;
-    word-wrap: break-word;
-
-    .fa {
-      margin-left: 2px;
-      font-size: 12px;
-      vertical-align: middle;
-    }
-  }
-
-  .project-home-desc,
-  .group-home-desc {
-    margin-left: auto;
-    margin-right: auto;
-    margin-bottom: 0;
-    max-width: 700px;
-
-    > p {
-      margin-bottom: 0;
-    }
-  }
-
-  .notifications-btn {
-    .fa-bell,
-    .fa-spinner {
-      margin-right: 6px;
-    }
-
-    .fa-angle-down {
-      margin-left: 6px;
+    + .select2 a,
+    + .btn-default {
+      border-radius: 0 $border-radius-base $border-radius-base 0;
     }
   }
 }
 
-.nav > .project-repo-buttons {
+// INFO Scoped to project_feature_setting and settings_panel components in app/assets/javascripts/pages/projects/shared/permissions/components
+.project-repo-select {
+  transition: background 2s ease-out;
+
+  &:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  .highlight-changes & {
+    background: $highlight-changes-color;
+    transition: none;
+  }
+}
+
+// INFO Scoped to project_feature_setting and settings_panel components in app/assets/javascripts/pages/projects/shared/permissions/components
+.project-feature-controls {
+  max-width: 432px;
+}
+
+// INFO Scoped to settings_panel component in app/assets/javascripts/pages/projects/shared/permissions/components
+.project-feature-setting-group {
+  .project-feature-controls {
+    max-width: 400px;
+  }
+}
+
+.project-home-panel {
+  .home-panel-avatar {
+    flex-basis: $home-panel-title-row-height;
+  }
+
+  .home-panel-title {
+    .icon {
+      vertical-align: -1px;
+    }
+
+    .home-panel-topic-list {
+      .icon {
+        top: 3px;
+      }
+    }
+  }
+
+  .home-panel-title-row {
+    @include media-breakpoint-down(sm) {
+      .home-panel-avatar {
+        width: $home-panel-avatar-mobile-size;
+        height: $home-panel-avatar-mobile-size;
+        flex-basis: $home-panel-avatar-mobile-size;
+
+        .avatar {
+          font-size: 20px;
+          line-height: 46px;
+        }
+      }
+
+      .home-panel-title {
+        margin-top: 4px;
+        margin-bottom: 2px;
+        font-size: $gl-font-size;
+        line-height: $gl-font-size-large;
+      }
+
+      .home-panel-topic-list,
+      .home-panel-metadata {
+        font-size: $gl-font-size-small;
+      }
+    }
+  }
+
+  .home-panel-description {
+    @include media-breakpoint-up(md) {
+      font-size: $gl-font-size-large;
+    }
+  }
+}
+
+.nav > .project-buttons {
   margin-top: 0;
 }
 
-.project-repo-buttons,
-.group-buttons {
+.project-repo-buttons {
   .btn {
-    @include btn-gray;
-    padding: 3px 10px;
-
     &:last-child {
       margin-left: 0;
     }
@@ -168,32 +152,52 @@
     }
 
     svg {
-
-      path {
-        fill: $layout-link-gray;
-      }
-
-      use {
-        stroke: $layout-link-gray;
-      }
+      fill: $layout-link-gray;
     }
 
     .fa-caret-down {
       margin-left: 3px;
+      line-height: 0;
+
+      &.dropdown-btn-icon {
+        margin-left: 0;
+      }
+    }
+
+    .notifications-icon {
+      top: 1px;
+      margin-right: 0;
     }
   }
 
+  .icon {
+    top: 0;
+  }
+
+  .count-badge,
+  .btn-xs {
+    height: 24px;
+  }
+
+  .dropdown-toggle,
+  .clone-dropdown-btn {
+    .fa {
+      color: unset;
+    }
+  }
+
+  .home-panel-action-button,
   .project-action-button {
-    margin: 15px 5px 0;
+    margin: $gl-padding $gl-padding-8 0 0;
     vertical-align: top;
   }
 
   .notification-dropdown .dropdown-menu {
-    @extend .dropdown-menu-align-right;
+    @extend .dropdown-menu-right;
   }
 
   .download-button {
-    @media (max-width: $screen-md-max) {
+    @include media-breakpoint-down(md) {
       margin-left: 0;
     }
   }
@@ -201,92 +205,50 @@
   .count-buttons {
     display: inline-block;
     vertical-align: top;
-    margin-top: 15px;
+    margin-top: $gl-padding;
+
+    .count-badge-count,
+    .count-badge-button {
+      border: 1px solid $border-color;
+      line-height: 1;
+    }
+
+    .count,
+    .count-badge-button {
+      color: $gl-text-color;
+    }
+
+    .count-badge-count {
+      padding: 0 12px;
+      background: $gray-light;
+      border-radius: 0 $border-radius-base $border-radius-base 0;
+    }
+
+    .count-badge-button {
+      border-right: 0;
+      border-radius: $border-radius-base 0 0 $border-radius-base;
+    }
   }
 
   .project-clone-holder {
     display: inline-block;
-    margin: 15px 5px 0 0;
+    margin: $gl-padding 0 0;
 
     input {
-      height: 28px;
+      height: $input-height;
     }
   }
 
-  .count-with-arrow {
-    display: inline-block;
-    position: relative;
-    margin-left: 4px;
+  .clone-options-dropdown {
+    min-width: 240px;
 
-    .arrow {
-      &::before {
-        content: '';
-        display: inline-block;
-        position: absolute;
-        width: 0;
-        height: 0;
-        border-color: transparent;
-        border-style: solid;
-        top: 50%;
-        left: 0;
-        margin-top: -6px;
-        border-width: 7px 5px 7px 0;
-        border-right-color: $count-arrow-border;
-        pointer-events: none;
-      }
-
-      &::after {
-        content: '';
-        position: absolute;
-        width: 0;
-        height: 0;
-        border-color: transparent;
-        border-style: solid;
-        top: 50%;
-        left: 1px;
-        margin-top: -9px;
-        border-width: 10px 7px 10px 0;
-        border-right-color: $white-light;
-        pointer-events: none;
-      }
-    }
-
-    .count {
-      @include btn-gray;
-      display: inline-block;
-      background: $white-light;
-      border-radius: 2px;
-      border-width: 1px;
-      border-style: solid;
-      font-size: 13px;
-      font-weight: 600;
-      line-height: 13px;
-      letter-spacing: .4px;
-      padding: 6px 14px;
-      text-align: center;
-      vertical-align: middle;
-      touch-action: manipulation;
-      background-image: none;
-      white-space: nowrap;
-      margin: 0 10px 0 4px;
-
-      a {
-        color: inherit;
-      }
-
-      &:hover {
-        background: $white-light;
-      }
+    .dropdown-menu-inner-content {
+      min-width: 320px;
     }
   }
-}
 
-.project-repo-buttons {
-  @include new-style-dropdown;
-
-  .project-action-button .dropdown-menu {
-    max-height: 250px;
-    overflow-y: auto;
+  .mobile-git-clone {
+    margin-top: $gl-padding-8;
   }
 }
 
@@ -299,96 +261,86 @@
   }
 }
 
-.project-visibility-level-holder {
-  .radio {
-    margin-bottom: 10px;
-
-    i {
-      margin: 2px 0;
-      font-size: 20px;
-    }
-
-    .option-title {
-      font-weight: normal;
-      display: inline-block;
-      color: $gl-text-color;
-    }
-
-    .option-descr {
-      margin-left: 29px;
-      color: $project-option-descr-color;
-    }
-  }
-}
-
 .save-project-loader {
   margin-top: 50px;
   margin-bottom: 50px;
-  color: $save-project-loader-color;
+  color: $gray-700;
 }
 
 .transfer-project .select2-container {
   min-width: 200px;
 }
 
-.deploy-key-content {
-  @media (min-width: $screen-sm-min) {
-    float: left;
+.deploy-key {
+  // Ensure that the fingerprint does not overflow on small screens
+  .fingerprint {
+    word-break: break-all;
+    white-space: normal;
+  }
 
-    &:last-child {
-      float: right;
+  .deploy-project-label,
+  .key-created-at {
+    svg {
+      vertical-align: text-top;
+    }
+  }
+
+  .btn svg {
+    vertical-align: top;
+  }
+
+  .key-created-at {
+    line-height: unset;
+  }
+}
+
+.deploy-project-list {
+  margin-bottom: -$gl-padding-4;
+
+  a.deploy-project-label {
+    margin-right: $gl-padding-4;
+    margin-bottom: $gl-padding-4;
+    color: $gl-text-color-secondary;
+    background-color: $gray-50;
+    line-height: $gl-btn-line-height;
+
+    &:hover {
+      color: $blue-600;
     }
   }
 }
 
-.deploy-key-projects {
-  @media (min-width: $screen-sm-min) {
-    line-height: 42px;
-  }
-}
-
-a.deploy-project-label {
-  padding: 5px;
-  margin-right: 5px;
-  color: $gl-text-color;
-  background-color: $row-hover;
-
-  &:hover {
-    color: $gl-link-color;
-  }
-}
-
 .vs-public {
-  color: $gl-primary;
+  color: $blue-500;
 }
 
 .vs-internal {
-  color: $gl-warning;
+  color: $orange-500;
 }
 
 .vs-private {
-  color: $gl-success;
+  color: $green-500;
 }
 
 .lfs-enabled {
-  color: $gl-success;
+  color: $green-500;
 }
 
 .lfs-disabled {
-  color: $gl-warning;
+  color: $orange-500;
 }
 
 .breadcrumb.repo-breadcrumb {
   flex: 1;
   padding: 0;
   background: transparent;
-  border: none;
+  border: 0;
   line-height: 34px;
   margin: 0;
 
   > li + li::before {
     padding: 0 3px;
-    color: $project-breadcrumb-color;
+    color: $gray-300;
   }
 
   a {
@@ -400,84 +352,129 @@ a.deploy-project-label {
   }
 }
 
-.fork-namespaces {
-  .row {
-    -webkit-flex-wrap: wrap;
-    display: -webkit-flex;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-start;
+.fork-thumbnail {
+  height: 200px;
+  width: calc((100% / 2) - #{$gl-padding * 2});
 
-    .fork-thumbnail {
-      border-radius: $border-radius-base;
-      background-color: $white-light;
-      border: 1px solid $border-white-light;
-      height: 202px;
-      margin: $gl-padding;
-      text-align: center;
-      width: 169px;
+  @include media-breakpoint-up(md) {
+    width: calc((100% / 4) - #{$gl-padding * 2});
+  }
 
-      &:hover,
-      &.forked {
-        background-color: $row-hover;
-        border-color: $row-hover-border;
-      }
+  @include media-breakpoint-up(lg) {
+    width: calc((100% / 5) - #{$gl-padding * 2});
+  }
 
-      .no-avatar {
-        width: 100px;
-        height: 100px;
-        background-color: $gray-light;
-        border: 1px solid $white-normal;
-        margin: 0 auto;
-        border-radius: 50%;
+  &:hover:not(.disabled),
+  &.forked {
+    background-color: $blue-50;
+    border-color: $blue-200;
+  }
 
-        i {
-          font-size: 100px;
-          color: $white-normal;
-        }
-      }
+  .avatar-container,
+  .identicon {
+    float: none;
+    margin-left: auto;
+    margin-right: auto;
+  }
 
-      a {
-        display: block;
-        width: 100%;
-        height: 100%;
-        padding-top: $gl-padding;
-        color: $gl-text-color;
+  a.disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+}
 
-        .caption {
-          min-height: 30px;
-          padding: $gl-padding 0;
-        }
-      }
+.fork-thumbnail-container {
+  display: flex;
+  flex-wrap: wrap;
+  margin-left: -$gl-padding;
+  margin-right: -$gl-padding;
 
+  > h5 {
+    width: 100%;
+  }
+}
+
+.project-template {
+  > .form-group {
+    margin-bottom: 0;
+  }
+
+  .tab-pane {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .template-option {
+    padding: 16px 0;
+
+    &:not(:first-child) {
+      border-top: 1px solid $border-color;
+    }
+
+    .controls {
+      margin-left: auto;
+    }
+  }
+
+  .choose-template {
+    input {
+      position: absolute;
+      clip: rect(0, 0, 0, 0);
+    }
+  }
+
+  .project-fields-form {
+    display: none;
+
+    &.selected {
+      display: block;
+      padding: $gl-padding;
+    }
+  }
+
+  .template-input-group {
+    .input-group-prepend {
+      flex: 1;
+    }
+
+    .input-group-text {
+      width: 100%;
+      background-color: $white;
+    }
+
+    .selected-icon {
       img {
-        border-radius: 50%;
-        max-width: 100px;
+        display: none;
+        height: 20px;
+        width: 20px;
       }
     }
   }
 }
 
-.project-template,
+.gitlab-tab-content {
+  .import-project-pane {
+    padding-bottom: 6px;
+  }
+}
+
 .project-import {
-  .form-group {
-    margin-bottom: 5px;
+  .import-btn-container {
+    margin-bottom: 0;
+  }
+
+  .toggle-import-form {
+    padding-bottom: 10px;
   }
 
   .import-buttons {
     padding-left: 0;
-    display: -webkit-flex;
     display: flex;
-    -webkit-flex-wrap: wrap;
     flex-wrap: wrap;
 
     .btn {
-      padding: 8px;
+      padding: $gl-padding-8;
       margin-right: 10px;
-    }
-
-    .blank-option {
-      min-width: 70px;
     }
 
     .btn-template-icon {
@@ -487,30 +484,18 @@ a.deploy-project-label {
       margin: 0 auto 4px;
       font-size: 24px;
 
-      @media (min-width: $screen-xs-max) {
+      @media (min-width: map-get($grid-breakpoints, sm)-1) {
         top: 0;
       }
     }
 
-    @media (max-width: $screen-xs-max) {
+    @include media-breakpoint-down(xs) {
       .btn-template-icon {
         display: inline-block;
         height: 14px;
         font-size: 14px;
         margin: 0;
       }
-    }
-
-    .icon-rails path {
-      fill: $rails;
-    }
-
-    .icon-node-express path {
-      fill: $node;
-    }
-
-    .icon-java-spring path {
-      fill: $java;
     }
 
     > div {
@@ -520,38 +505,34 @@ a.deploy-project-label {
   }
 }
 
-.project-templates-buttons .btn:last-child {
-  margin-right: 0;
-}
-
 .create-project-options {
   display: flex;
 
-  @media (max-width: $screen-xs-max) {
+  @include media-breakpoint-down(xs) {
     display: block;
   }
 
   .first-column {
-    @media(min-width: $screen-xs-min) {
+    @include media-breakpoint-up(xs) {
       max-width: 50%;
       padding-right: 30px;
     }
 
-    @media(max-width: $screen-xs-max) {
+    @include media-breakpoint-down(xs) {
       max-width: 100%;
       width: 100%;
     }
   }
 
   .second-column {
-    @media(min-width: $screen-xs-min) {
+    @include media-breakpoint-up(xs) {
       width: 50%;
       flex: 1;
       padding-left: 30px;
       position: relative;
     }
 
-    @media(max-width: $screen-xs-max) {
+    @include media-breakpoint-down(xs) {
       max-width: 100%;
       width: 100%;
       padding-left: 0;
@@ -559,36 +540,36 @@ a.deploy-project-label {
     }
 
     // Mobile
-    @media (max-width: $screen-xs-max) {
+    @include media-breakpoint-down(xs) {
       padding-top: 30px;
     }
 
     &::before {
-      content: "OR";
+      content: 'OR';
       position: absolute;
       left: -10px;
       top: 50%;
       z-index: 10;
-      padding: 8px 0;
+      padding: $gl-padding-8 0;
       text-align: center;
-      background-color: $white-light;
+      background-color: $white;
       color: $gl-text-color-tertiary;
       transform: translateY(-50%);
       font-size: 12px;
-      font-weight: bold;
+      font-weight: $gl-font-weight-bold;
       line-height: 20px;
 
       // Mobile
-      @media (max-width: $screen-xs-max) {
+      @include media-breakpoint-down(xs) {
         left: 50%;
         top: 0;
         transform: translateX(-50%);
-        padding: 0 8px;
+        padding: 0 $gl-padding-8;
       }
     }
 
     &::after {
-      content: "";
+      content: '';
       position: absolute;
       background-color: $border-color;
       bottom: 0;
@@ -599,7 +580,7 @@ a.deploy-project-label {
       top: 0;
 
       // Mobile
-      @media (max-width: $screen-xs-max) {
+      @include media-breakpoint-down(xs) {
         top: 10px;
         left: 10px;
         right: 10px;
@@ -610,63 +591,147 @@ a.deploy-project-label {
   }
 }
 
-
-.project-stats {
-  font-size: 0;
-  text-align: center;
-  max-width: 100%;
-  border-bottom: 1px solid $border-color;
-
-  .nav {
-    padding-top: 12px;
-    padding-bottom: 12px;
-  }
-
-  .nav > li {
-    display: inline-block;
-
-    &:not(:last-child) {
-      margin-right: $gl-padding;
+.project-stats,
+.project-buttons {
+  .scrolling-tabs-container {
+    .scrolling-tabs {
+      margin-top: $gl-padding-8;
+      margin-bottom: $gl-padding-8 - $browser-scrollbar-size;
+      padding-bottom: $browser-scrollbar-size;
+      flex-wrap: wrap;
+      border-bottom: 0;
     }
 
-    &.right {
-      vertical-align: top;
-      margin-top: 0;
+    .fade-left,
+    .fade-right {
+      top: 0;
+      height: calc(100% - #{$browser-scrollbar-size});
 
-      @media (min-width: $screen-lg-min) {
-        float: right;
+      .fa {
+        top: 50%;
+        margin-top: -$gl-padding-8;
+      }
+    }
+
+    .nav {
+      flex-basis: 100%;
+
+      + .nav {
+        margin: $gl-padding-8 0;
+      }
+    }
+
+    @include media-breakpoint-down(md) {
+      flex-direction: column;
+
+      .nav {
+        flex-wrap: nowrap;
+      }
+
+      .nav:first-child {
+        margin-right: $gl-padding-8;
       }
     }
   }
 
-  .nav > li > a {
-    padding: 0;
-    background-color: transparent;
-    font-size: 14px;
-    line-height: 29px;
-    color: $notes-light-color;
+  .nav {
+    > li {
+      display: inline-block;
 
-    &:hover,
-    &:focus {
-      color: $gl-text-color;
+      &:not(:last-child) {
+        margin-right: $gl-padding;
+      }
+
+      &.right {
+        vertical-align: top;
+        margin-top: 0;
+
+        @include media-breakpoint-up(lg) {
+          float: right;
+        }
+      }
+    }
+
+    .stat-text,
+    .stat-link {
+      padding: $gl-btn-vert-padding 0;
+      background-color: transparent;
+      font-size: $gl-font-size;
+      line-height: $gl-btn-line-height;
+      color: $gl-text-color-secondary;
+      white-space: pre-wrap;
+    }
+
+    .stat-link {
+      border-bottom: 0;
+      color: $black;
+
+      &:hover,
+      &:focus {
+        text-decoration: underline;
+        border-bottom: 0;
+      }
+
+      .project-stat-value {
+        color: $gl-text-color;
+      }
+
+      .icon {
+        color: $gl-text-color-secondary;
+      }
+
+      .add-license-link {
+        &,
+        .icon {
+          color: $blue-600;
+        }
+      }
+    }
+
+    .btn {
+      margin-bottom: $gl-padding-8;
+      padding: $gl-btn-vert-padding $gl-btn-padding;
+      line-height: $gl-btn-line-height;
+
+      .icon {
+        top: 0;
+      }
+    }
+
+    .btn-missing {
+      @extend .btn-missing;
     }
   }
+}
 
-  li.missing {
-    border: 1px dashed $border-gray-normal;
-    border-radius: $border-radius-default;
+.project-buttons {
+  .nav > li:not(:last-child) {
+    margin-right: $gl-padding-8;
+  }
+}
 
-    a {
-      padding-left: 10px;
-      padding-right: 10px;
-      color: $notes-light-color;
-      display: block;
-    }
+.repository-languages-bar {
+  height: 8px;
+  margin-bottom: $gl-padding-8;
+  background-color: $white;
+  border-radius: $border-radius-default;
 
-    &:hover {
-      background-color: $gray-normal;
+  .progress-bar {
+    margin-right: 2px;
+    padding: 0 $gl-padding-4;
+
+    &:last-child {
+      margin-right: 0;
     }
   }
+}
+
+.repository-language-bar-tooltip-language {
+  font-weight: $gl-font-weight-bold;
+}
+
+.repository-language-bar-tooltip-share {
+  color: $gray-200;
 }
 
 pre.light-well {
@@ -674,7 +739,7 @@ pre.light-well {
 }
 
 .git-empty {
-  margin: 0 7px 7px;
+  margin-bottom: 7px;
 
   h5 {
     color: $gl-text-color;
@@ -709,11 +774,16 @@ pre.light-well {
   flex-direction: column;
 
   // Disable Flexbox for admin page
-  &.admin-projects {
+  &.admin-projects,
+  &.group-settings-projects {
     display: block;
 
     .project-row {
       display: block;
+
+      .description > p {
+        margin-bottom: 0;
+      }
     }
   }
 
@@ -721,42 +791,72 @@ pre.light-well {
     @include basic-list-stats;
     display: flex;
     align-items: center;
+    padding: $gl-padding-12 0;
+
+    &.no-description {
+      @include media-breakpoint-up(sm) {
+        .avatar-container {
+          align-self: center;
+        }
+
+        .metadata-info {
+          margin-bottom: 0;
+        }
+      }
+    }
   }
 
-  h3 {
+  h2 {
     font-size: $gl-font-size;
-  }
+    font-weight: $gl-font-weight-bold;
+    margin-bottom: 0;
 
-  a {
-    color: $gl-text-color;
-  }
-
-  .avatar-container,
-  .controls {
-    flex: 0 0 auto;
+    @include media-breakpoint-up(sm) {
+      .namespace-name {
+        font-weight: $gl-font-weight-normal;
+      }
+    }
   }
 
   .avatar-container {
+    flex: 0 0 auto;
     align-self: flex-start;
-
-    > a {
-      width: 100%;
-    }
   }
 
   .project-details {
     min-width: 0;
+    line-height: $gl-line-height;
+
+    .flex-wrapper {
+      min-width: 0;
+      margin-top: -$gl-padding-8; // negative margin required for flex-wrap
+      flex: 1 1 100%;
+
+      .project-title {
+        line-height: 20px;
+      }
+    }
 
     p,
     .commit-row-message {
       @include str-truncated(100%);
       margin-bottom: 0;
     }
-  }
 
-  .controls {
-    margin-left: auto;
-    text-align: right;
+    .user-access-role {
+      margin: 0;
+    }
+
+    .description {
+      line-height: 1.5;
+      color: $gl-text-color-secondary;
+    }
+
+    @include media-breakpoint-down(md) {
+      .user-access-role {
+        line-height: $gl-line-height-14;
+      }
+    }
   }
 
   .ci-status-link {
@@ -768,22 +868,166 @@ pre.light-well {
       text-decoration: none;
     }
   }
+
+  .controls {
+    @include media-breakpoint-down(xs) {
+      margin-top: $gl-padding-8;
+    }
+
+    @include media-breakpoint-up(sm) {
+      margin-top: 0;
+    }
+
+    @include media-breakpoint-up(lg) {
+      flex: 1 1 40%;
+    }
+
+    .icon-wrapper {
+      color: inherit;
+      margin-right: $gl-padding;
+
+      @include media-breakpoint-down(md) {
+        margin-right: 0;
+        margin-left: $gl-padding-8;
+      }
+
+      @include media-breakpoint-down(xs) {
+        &:first-child {
+          margin-left: 0;
+        }
+      }
+    }
+
+    &:not(.with-pipeline-status) {
+      .icon-wrapper:first-of-type {
+        @include media-breakpoint-up(lg) {
+          margin-left: $gl-padding-32;
+        }
+      }
+    }
+
+    .ci-status-link {
+      display: inline-flex;
+    }
+  }
+
+  .star-button {
+    .icon {
+      top: 0;
+    }
+  }
+
+  .icon-container {
+    @include media-breakpoint-down(xs) {
+      margin-right: $gl-padding-8;
+    }
+  }
+
+  &.compact {
+    .project-row {
+      padding: $gl-padding 0;
+    }
+
+    h2 {
+      font-size: $gl-font-size;
+    }
+
+    .avatar-container {
+      @include avatar-size(40px, 10px);
+      min-height: 40px;
+      min-width: 40px;
+
+      .identicon.s48 {
+        font-size: 16px;
+      }
+    }
+
+    .controls {
+      @include media-breakpoint-up(sm) {
+        margin-top: 0;
+      }
+    }
+
+    .updated-note {
+      @include media-breakpoint-up(sm) {
+        margin-top: $gl-padding-8;
+      }
+    }
+
+    .icon-wrapper {
+      margin-left: $gl-padding-8;
+      margin-right: 0;
+
+      @include media-breakpoint-down(xs) {
+        &:first-child {
+          margin-left: 0;
+        }
+      }
+    }
+
+    .user-access-role {
+      line-height: $gl-line-height-14;
+    }
+  }
+
+  @include media-breakpoint-down(md) {
+    h2 {
+      font-size: $gl-font-size;
+    }
+
+    .avatar-container {
+      @include avatar-size(40px, 10px);
+      min-height: 40px;
+      min-width: 40px;
+
+      .identicon.s64 {
+        font-size: 16px;
+      }
+    }
+  }
+
+  @include media-breakpoint-down(md) {
+    .updated-note {
+      margin-top: $gl-padding-8;
+      text-align: right;
+    }
+  }
+
+  .forks,
+  .pipeline-status,
+  .updated-note {
+    display: flex;
+  }
+
+  @include media-breakpoint-down(md) {
+    &:not(.explore) {
+      .forks {
+        display: none;
+      }
+    }
+
+    &.explore {
+      .pipeline-status,
+      .updated-note {
+        display: none !important;
+      }
+    }
+  }
+
+  @include media-breakpoint-down(xs) {
+    .updated-note {
+      margin-top: 0;
+      text-align: left;
+    }
+  }
 }
 
-.panel .projects-list li {
+.card .projects-list li {
   padding: 10px 15px;
   margin: 0;
 }
 
-.commits-search-form {
-  .input-short {
-    min-width: 200px;
-  }
-}
-
 .git-clone-holder {
-  width: 380px;
-
   .btn-clipboard {
     border: 1px solid $border-color;
   }
@@ -798,70 +1042,65 @@ pre.light-well {
 
   .form-control {
     @extend .monospace;
-    background: $white-light;
+    background-color: $white;
+    border-color: $border-color;
     font-size: 14px;
     margin-left: -1px;
     cursor: auto;
-    width: 101%;
+  }
+}
+
+.git-clone-holder,
+.mobile-git-clone {
+  .btn {
+    .icon {
+      fill: $white;
+    }
   }
 }
 
 .cannot-be-merged,
 .cannot-be-merged:hover {
-  color: $error-exclamation-point;
+  color: $red-500;
   margin-top: 2px;
+  position: relative;
+  z-index: 2;
 }
 
 .private-forks-notice .private-fork-icon {
   i:nth-child(1) {
-    color: $project-private-forks-notice-odd;
+    color: $green-600;
   }
 
   i:nth-child(2) {
-    color: $white-light;
+    color: $white;
   }
 }
 
-.new_protected_branch,
+.new-protected-branch,
 .new-protected-tag {
   label {
     margin-top: 6px;
-    font-weight: normal;
+    font-weight: $gl-font-weight-normal;
   }
 }
 
-.create-new-protected-branch-button,
-.create-new-protected-tag-button {
-  @include dropdown-link;
-
-  width: 100%;
-  background-color: transparent;
-  border: 0;
-  text-align: left;
-  text-overflow: ellipsis;
+.project-tip-command {
+  > .input-group-prepend:first-child,
+  > .input-group-append:first-child {
+    width: auto;
+  }
 }
 
 .protected-branches-list,
 .protected-tags-list {
   margin-bottom: 30px;
 
-  a {
-    color: $gl-text-color;
-
-    &:hover {
-      color: $gl-link-color;
-    }
-
-    &.is-active {
-      font-weight: 600;
-    }
-  }
-
   .settings-message {
     margin: 0;
     border-radius: 0 0 1px 1px;
     padding: 20px 0;
-    border: none;
+    border: 0;
   }
 
   .table-bordered {
@@ -871,14 +1110,6 @@ pre.light-well {
     td:not(:last-child) {
       border-right: solid 1px transparent;
     }
-  }
-}
-
-.protected-tags-list,
-.protected-branches-list {
-  .dropdown-menu-toggle {
-    width: 100%;
-    max-width: 300px;
   }
 
   .flash-container {
@@ -899,7 +1130,7 @@ pre.light-well {
   margin-left: 5px;
 
   &.is-done {
-    color: $gl-text-green;
+    color: $green-600;
   }
 }
 
@@ -907,7 +1138,7 @@ pre.light-well {
 .dropdown-menu-projects {
   width: 300px;
 
-  @media (min-width: $screen-sm-min) {
+  @include media-breakpoint-up(sm) {
     width: 500px;
   }
 
@@ -921,7 +1152,7 @@ pre.light-well {
   .inline-input-group {
     width: 100%;
 
-    @media (min-width: $screen-sm-min) {
+    @include media-breakpoint-up(sm) {
       width: 300px;
     }
   }
@@ -932,8 +1163,8 @@ pre.light-well {
     text-align: center;
     margin-top: -20px;
 
-    @media (min-width: $screen-sm-min) {
-      margin-top: 0;
+    @include media-breakpoint-up(sm) {
+      margin: 0 $gl-padding-8;
       width: auto;
     }
   }
@@ -943,18 +1174,10 @@ pre.light-well {
   position: relative;
 
   .clear-icon {
-    @extend .fa-times;
     display: none;
     position: absolute;
-    right: 7px;
-    top: 7px;
-    color: $location-icon-color;
-
-    &::before {
-      font-family: FontAwesome;
-      font-weight: normal;
-      font-style: normal;
-    }
+    right: 9px;
+    top: 9px;
   }
 
   &.has-value {
@@ -968,6 +1191,12 @@ pre.light-well {
 .project-path {
   .form-control {
     min-width: 100px;
+  }
+
+  &.form-group {
+    @include media-breakpoint-up(sm) {
+      margin-bottom: 0;
+    }
   }
 
   .select2-choice {
@@ -993,21 +1222,14 @@ pre.light-well {
 .project-feature {
   padding-top: 10px;
 
-  @media (min-width: $screen-sm-min) {
+  @include media-breakpoint-up(sm) {
     padding-left: 45px;
   }
 
   &.nested {
-    @media (min-width: $screen-sm-min) {
+    @include media-breakpoint-up(sm) {
       padding-left: 90px;
     }
-  }
-}
-
-.project-repo-select {
-  &.disabled {
-    opacity: 0.5;
-    pointer-events: none;
   }
 }
 
@@ -1015,7 +1237,7 @@ pre.light-well {
   table-layout: fixed;
 
   &.table-responsive {
-    border: none;
+    border: 0;
   }
 
   .variable-key {
@@ -1047,7 +1269,7 @@ pre.light-well {
   padding: 32px;
   margin: 32px;
   border-radius: 3px;
-  background-color: $white-light;
+  background-color: $white;
 
   h3 {
     margin-top: 0;
@@ -1056,5 +1278,154 @@ pre.light-well {
   hr {
     margin: 32px 0;
     border-color: $border-color;
+  }
+}
+
+.issuable-footer {
+  padding-top: $gl-padding;
+  padding-bottom: 37px;
+}
+
+.project-ci-body {
+  .incorrect-syntax {
+    font-size: 18px;
+    color: $red-500;
+  }
+
+  .correct-syntax {
+    font-size: 18px;
+    color: $green-500;
+  }
+}
+
+.project-ci-linter {
+  .ci-editor {
+    height: 400px;
+  }
+
+  .ci-template pre {
+    white-space: pre-wrap;
+  }
+}
+
+.project-badge {
+  opacity: 0.9;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+.project-mirror-settings {
+  .btn-show-advanced {
+    min-width: 135px;
+
+    .label-show {
+      display: none;
+    }
+
+    .label-hide {
+      display: inline;
+    }
+
+    &.show-advanced {
+      .label-show {
+        display: inline;
+      }
+
+      .label-hide {
+        display: none;
+      }
+    }
+  }
+}
+
+.project-filters {
+  .btn svg {
+    color: $gray-700;
+  }
+
+  .button-filter-group {
+    .btn {
+      width: 96px;
+    }
+
+    a {
+      color: $black;
+    }
+
+    .active {
+      background: $btn-active-gray;
+    }
+  }
+
+  .filtered-search-dropdown-label {
+    min-width: 68px;
+
+    @include media-breakpoint-down(xs) {
+      min-width: 60px;
+    }
+  }
+
+  .filtered-search {
+    min-width: 30%;
+    flex-basis: 0;
+
+    .project-filter-form .project-filter-form-field {
+      padding-right: $gl-padding-8;
+    }
+
+    .filtered-search,
+    .filtered-search-nav,
+    .filtered-search-dropdown {
+      flex-basis: 0;
+    }
+
+    @include media-breakpoint-down(lg) {
+      min-width: 15%;
+
+      .project-filter-form-field {
+        min-width: 150px;
+      }
+    }
+
+    @include media-breakpoint-down(md) {
+      min-width: 30%;
+    }
+  }
+
+  .filtered-search-box {
+    border-radius: 3px 0 0 3px;
+  }
+
+  .dropdown-menu-toggle {
+    margin-left: $gl-padding-8;
+  }
+
+  @include media-breakpoint-down(md) {
+    .extended-filtered-search-box {
+      min-width: 55%;
+    }
+
+    .filtered-search-dropdown {
+      width: 50%;
+
+      .dropdown-menu-toggle {
+        width: 100%;
+      }
+    }
+  }
+
+  @include media-breakpoint-down(xs) {
+    .filtered-search-dropdown {
+      width: 100%;
+    }
+  }
+}
+
+@include media-breakpoint-down(xs) {
+  .fork-filtered-search {
+    width: 100%;
+    margin: $gl-spacing-scale-2 0;
   }
 }

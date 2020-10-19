@@ -1,4 +1,4 @@
-require 'uri'
+# frozen_string_literal: true
 
 module Banzai
   module Filter
@@ -6,13 +6,21 @@ module Banzai
     # Rewrite rules are documented in the `WikiPipeline` spec.
     #
     # Context options:
-    #   :project_wiki
+    #   :wiki
     class WikiLinkFilter < HTML::Pipeline::Filter
-      def call
-        return doc unless project_wiki?
+      include Gitlab::Utils::SanitizeNodeLink
 
-        doc.search('a:not(.gfm)').each do |el|
-          process_link_attr el.attribute('href')
+      def call
+        return doc unless wiki?
+
+        doc.search('a:not(.gfm)').each { |el| process_link(el.attribute('href'), el) }
+
+        doc.search('video, audio').each { |el| process_link(el.attribute('src'), el) }
+
+        doc.search('img').each do |el|
+          attr = el.attribute('data-src') || el.attribute('src')
+
+          process_link(attr, el)
         end
 
         doc
@@ -20,8 +28,13 @@ module Banzai
 
       protected
 
-      def project_wiki?
-        !context[:project_wiki].nil?
+      def process_link(link_attr, node)
+        process_link_attr(link_attr)
+        remove_unsafe_links({ node: node }, remove_invalid_links: false)
+      end
+
+      def wiki?
+        !context[:wiki].nil?
       end
 
       def process_link_attr(html_attr)
@@ -33,7 +46,7 @@ module Banzai
       end
 
       def apply_rewrite_rules(link_string)
-        Rewriter.new(link_string, wiki: context[:project_wiki], slug: context[:page_slug]).apply_rules
+        Rewriter.new(link_string, wiki: context[:wiki], slug: context[:page_slug]).apply_rules
       end
     end
   end

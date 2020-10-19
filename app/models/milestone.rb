@@ -1,52 +1,36 @@
-class Milestone < ActiveRecord::Base
-  # Represents a "No Milestone" state used for filtering Issues and Merge
-  # Requests that have no milestone assigned.
-  MilestoneStruct = Struct.new(:title, :name, :id)
-  None = MilestoneStruct.new('No Milestone', 'No Milestone', 0)
-  Any = MilestoneStruct.new('Any Milestone', '', -1)
-  Upcoming = MilestoneStruct.new('Upcoming', '#upcoming', -2)
-  Started = MilestoneStruct.new('Started', '#started', -3)
+# frozen_string_literal: true
 
-  include CacheMarkdownField
-  include InternalId
+class Milestone < ApplicationRecord
   include Sortable
-  include Referable
-  include StripAttribute
+  include Timebox
   include Milestoneish
+  include FromUnion
+  include Importable
 
-  cache_markdown_field :title, pipeline: :single_line
-  cache_markdown_field :description
+  prepend_if_ee('::EE::Milestone') # rubocop: disable Cop/InjectEnterpriseEditionModule
 
-  belongs_to :project
-  belongs_to :group
+  has_many :milestone_releases
+  has_many :releases, through: :milestone_releases
 
-  has_many :issues
-  has_many :labels, -> { distinct.reorder('labels.title') },  through: :issues
-  has_many :merge_requests
-  has_many :events, as: :target, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
+  has_internal_id :iid, scope: :project, track_if: -> { !importing? }, init: ->(s) { s&.project&.milestones&.maximum(:iid) }
+  has_internal_id :iid, scope: :group, track_if: -> { !importing? }, init: ->(s) { s&.group&.milestones&.maximum(:iid) }
 
-  scope :of_projects, ->(ids) { where(project_id: ids) }
-  scope :of_groups, ->(ids) { where(group_id: ids) }
+  has_many :events, as: :target, dependent: :delete_all # rubocop:disable Cop/ActiveRecordDependent
+
   scope :active, -> { with_state(:active) }
-  scope :closed, -> { with_state(:closed) }
-  scope :for_projects, -> { where(group: nil).includes(:project) }
-
-  scope :for_projects_and_groups, -> (project_ids, group_ids) do
-    conditions = []
-    conditions << arel_table[:project_id].in(project_ids) if project_ids.compact.any?
-    conditions << arel_table[:group_id].in(group_ids) if group_ids.compact.any?
-
-    where(conditions.reduce(:or))
+  scope :started, -> { active.where('milestones.start_date <= CURRENT_DATE') }
+  scope :not_started, -> { active.where('milestones.start_date > CURRENT_DATE') }
+  scope :not_upcoming, -> do
+    active
+        .where('milestones.due_date <= CURRENT_DATE')
+        .order(:project_id, :group_id, :due_date)
   end
 
-  validates :group, presence: true, unless: :project
-  validates :project, presence: true, unless: :group
+  scope :order_by_name_asc, -> { order(Arel::Nodes::Ascending.new(arel_table[:title].lower)) }
+  scope :reorder_by_due_date_asc, -> { reorder(Gitlab::Database.nulls_last_order('due_date', 'ASC')) }
+  scope :with_api_entity_associations, -> { preload(project: [:project_feature, :route, namespace: :route]) }
 
-  validate :uniqueness_of_title, if: :title_changed?
-  validate :milestone_type_check
-  validate :start_date_should_be_less_than_due_date, if: proc { |m| m.start_date.present? && m.due_date.present? }
-
-  strip_attributes :title
+  validates_associated :milestone_releases, message: -> (_, obj) { obj[:value].map(&:errors).map(&:full_messages).join(",") }
 
   state_machine :state, initial: :active do
     event :close do
@@ -62,30 +46,8 @@ class Milestone < ActiveRecord::Base
     state :active
   end
 
-  alias_attribute :name, :title
-
-  class << self
-    # Searches for milestones matching the given query.
-    #
-    # This method uses ILIKE on PostgreSQL and LIKE on MySQL.
-    #
-    # query - The search query as a String
-    #
-    # Returns an ActiveRecord::Relation.
-    def search(query)
-      t = arel_table
-      pattern = "%#{query}%"
-
-      where(t[:title].matches(pattern).or(t[:description].matches(pattern)))
-    end
-
-    def filter_by_state(milestones, state)
-      case state
-      when 'closed' then milestones.closed
-      when 'all' then milestones
-      else milestones.active
-      end
-    end
+  def self.min_chars_for_partial_matching
+    2
   end
 
   def self.reference_prefix
@@ -115,72 +77,53 @@ class Milestone < ActiveRecord::Base
     @link_reference_pattern ||= super("milestones", /(?<milestone>\d+)/)
   end
 
-  def self.upcoming_ids_by_projects(projects)
-    rel = unscoped.of_projects(projects).active.where('due_date > ?', Time.now)
-
-    if Gitlab::Database.postgresql?
-      rel.order(:project_id, :due_date).select('DISTINCT ON (project_id) id')
-    else
-      rel
-        .group(:project_id)
-        .having('due_date = MIN(due_date)')
-        .pluck(:id, :project_id, :due_date)
-        .map(&:first)
-    end
+  def self.upcoming_ids(projects, groups)
+    unscoped
+      .for_projects_and_groups(projects, groups)
+      .active.where('milestones.due_date > CURRENT_DATE')
+      .order(:project_id, :group_id, :due_date).select('DISTINCT ON (project_id, group_id) id')
   end
 
   def participants
-    User.joins(assigned_issues: :milestone).where("milestones.id = ?", id).uniq
+    User.joins(assigned_issues: :milestone).where("milestones.id = ?", id).distinct
   end
 
-  def self.sort(method)
-    case method.to_s
-    when 'due_date_asc'
-      reorder(Gitlab::Database.nulls_last_order('due_date', 'ASC'))
-    when 'due_date_desc'
-      reorder(Gitlab::Database.nulls_last_order('due_date', 'DESC'))
-    when 'start_date_asc'
-      reorder(Gitlab::Database.nulls_last_order('start_date', 'ASC'))
-    when 'start_date_desc'
-      reorder(Gitlab::Database.nulls_last_order('start_date', 'DESC'))
-    else
-      order_by(method)
-    end
+  def self.sort_by_attribute(method)
+    sorted =
+      case method.to_s
+      when 'due_date_asc'
+        reorder_by_due_date_asc
+      when 'due_date_desc'
+        reorder(Gitlab::Database.nulls_last_order('due_date', 'DESC'))
+      when 'name_asc'
+        reorder(Arel::Nodes::Ascending.new(arel_table[:title].lower))
+      when 'name_desc'
+        reorder(Arel::Nodes::Descending.new(arel_table[:title].lower))
+      when 'start_date_asc'
+        reorder(Gitlab::Database.nulls_last_order('start_date', 'ASC'))
+      when 'start_date_desc'
+        reorder(Gitlab::Database.nulls_last_order('start_date', 'DESC'))
+      else
+        order_by(method)
+      end
+
+    sorted.with_order_id_desc
   end
 
-  ##
-  # Returns the String necessary to reference this Milestone in Markdown. Group
-  # milestones only support name references, and do not support cross-project
-  # references.
-  #
-  # format - Symbol format to use (default: :iid, optional: :name)
-  #
-  # Examples:
-  #
-  #   Milestone.first.to_reference                           # => "%1"
-  #   Milestone.first.to_reference(format: :name)            # => "%\"goal\""
-  #   Milestone.first.to_reference(cross_namespace_project)  # => "gitlab-org/gitlab-ce%1"
-  #   Milestone.first.to_reference(same_namespace_project)   # => "gitlab-ce%1"
-  #
-  def to_reference(from_project = nil, format: :iid, full: false)
-    return if is_group_milestone? && format != :name
+  def self.states_count(projects, groups = nil)
+    return STATE_COUNT_HASH unless projects || groups
 
-    format_reference = milestone_format_reference(format)
-    reference = "#{self.class.reference_prefix}#{format_reference}"
+    counts = Milestone
+               .for_projects_and_groups(projects, groups)
+               .reorder(nil)
+               .group(:state)
+               .count
 
-    if project
-      "#{project.to_reference(from_project, full: full)}#{reference}"
-    else
-      reference
-    end
-  end
-
-  def reference_link_text(from_project = nil)
-    self.title
-  end
-
-  def milestoneish_ids
-    id
+    {
+        opened: counts['active'] || 0,
+        closed: counts['closed'] || 0,
+        all: counts.values.sum
+    }
   end
 
   def for_display
@@ -188,77 +131,36 @@ class Milestone < ActiveRecord::Base
   end
 
   def can_be_closed?
-    active? && issues.opened.count.zero?
+    active? && issues.opened.count == 0
   end
 
   def author_id
     nil
   end
 
-  def title=(value)
-    write_attribute(:title, sanitize_title(value)) if value.present?
-  end
-
-  def safe_title
-    title.to_slug.normalize.to_s
-  end
+  # TODO: remove after all code paths use `timebox_id`
+  # https://gitlab.com/gitlab-org/gitlab/-/issues/215688
+  alias_method :milestoneish_id, :timebox_id
+  # TODO: remove after all code paths use (group|project)_timebox?
+  # https://gitlab.com/gitlab-org/gitlab/-/issues/215690
+  alias_method :group_milestone?, :group_timebox?
+  alias_method :project_milestone?, :project_timebox?
 
   def parent
-    group || project
+    if group_milestone?
+      group
+    else
+      project
+    end
   end
 
-  def is_group_milestone?
-    group_id.present?
-  end
-
-  def is_project_milestone?
-    project_id.present?
+  def subgroup_milestone?
+    group_milestone? && parent.subgroup?
   end
 
   private
 
-  # Milestone titles must be unique across project milestones and group milestones
-  def uniqueness_of_title
-    if project
-      relation = Milestone.for_projects_and_groups([project_id], [project.group&.id])
-    elsif group
-      project_ids = group.projects.map(&:id)
-      relation = Milestone.for_projects_and_groups(project_ids, [group.id])
-    end
-
-    title_exists = relation.find_by_title(title)
-    errors.add(:title, "already being used for another group or project milestone.") if title_exists
-  end
-
-  # Milestone should be either a project milestone or a group milestone
-  def milestone_type_check
-    if group_id && project_id
-      field = project_id_changed? ? :project_id : :group_id
-      errors.add(field, "milestone should belong either to a project or a group.")
-    end
-  end
-
-  def milestone_format_reference(format = :iid)
-    raise ArgumentError, 'Unknown format' unless [:iid, :name].include?(format)
-
-    if format == :name && !name.include?('"')
-      %("#{name}")
-    else
-      iid
-    end
-  end
-
-  def sanitize_title(value)
-    CGI.unescape_html(Sanitize.clean(value.to_s))
-  end
-
-  def start_date_should_be_less_than_due_date
-    if due_date <= start_date
-      errors.add(:start_date, "Can't be greater than due date")
-    end
-  end
-
   def issues_finder_params
-    { project_id: project_id }
+    { project_id: project_id, group_id: group_id, include_subgroups: group_id.present? }.compact
   end
 end

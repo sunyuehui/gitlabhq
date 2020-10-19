@@ -1,5 +1,28 @@
 namespace :gemojione do
   desc 'Generates Emoji SHA256 digests'
+
+  task aliases: ['yarn:check', 'environment'] do
+    require 'json'
+
+    aliases = {}
+
+    index_file = File.join(Rails.root, 'fixtures', 'emojis', 'index.json')
+    index = Gitlab::Json.parse(File.read(index_file))
+
+    index.each_pair do |key, data|
+      data['aliases'].each do |a|
+        a.tr!(':', '')
+
+        aliases[a] = key
+      end
+    end
+
+    out = File.join(Rails.root, 'fixtures', 'emojis', 'aliases.json')
+    File.open(out, 'w') do |handle|
+      handle.write(Gitlab::Json.pretty_generate(aliases, indent: '   ', space: '', space_before: ''))
+    end
+  end
+
   task digests: ['yarn:check', 'environment'] do
     require 'digest/sha2'
     require 'json'
@@ -9,6 +32,7 @@ namespace :gemojione do
 
     dir = Gemojione.images_path
     resultant_emoji_map = {}
+    resultant_emoji_map_new = {}
 
     Gitlab::Emoji.emojis.each do |name, emoji_hash|
       # Ignore aliases
@@ -16,8 +40,13 @@ namespace :gemojione do
         fpath = File.join(dir, "#{emoji_hash['unicode']}.png")
         hash_digest = Digest::SHA256.file(fpath).hexdigest
 
+        category = emoji_hash['category']
+        if name == 'gay_pride_flag'
+          category = 'flags'
+        end
+
         entry = {
-          category: emoji_hash['category'],
+          category: category,
           moji: emoji_hash['moji'],
           description: emoji_hash['description'],
           unicodeVersion: Gitlab::Emoji.emoji_unicode_version(name),
@@ -25,13 +54,27 @@ namespace :gemojione do
         }
 
         resultant_emoji_map[name] = entry
+
+        # Our new map is only characters to make the json substantially smaller
+        new_entry = {
+          c: category,
+          e: emoji_hash['moji'],
+          d: emoji_hash['description'],
+          u: Gitlab::Emoji.emoji_unicode_version(name)
+        }
+
+        resultant_emoji_map_new[name] = new_entry
       end
     end
 
     out = File.join(Rails.root, 'fixtures', 'emojis', 'digests.json')
-
     File.open(out, 'w') do |handle|
-      handle.write(JSON.pretty_generate(resultant_emoji_map))
+      handle.write(Gitlab::Json.pretty_generate(resultant_emoji_map))
+    end
+
+    out_new = File.join(Rails.root, 'public', '-', 'emojis', '1', 'emojis.json')
+    File.open(out_new, 'w') do |handle|
+      handle.write(Gitlab::Json.pretty_generate(resultant_emoji_map_new))
     end
   end
 
@@ -59,7 +102,7 @@ namespace :gemojione do
     SPRITESHEET_WIDTH = 860
     SPRITESHEET_HEIGHT = 840
 
-    # Setup a map to rename image files
+    # Set up a map to rename image files
     emoji_unicode_string_to_name_map = {}
     Gitlab::Emoji.emojis.each do |name, emoji_hash|
       # Ignore aliases
@@ -88,7 +131,7 @@ namespace :gemojione do
         end
       end
 
-      style_path = Rails.root.join(*%w(app assets stylesheets framework emoji-sprites.scss))
+      style_path = Rails.root.join(*%w(app assets stylesheets framework emoji_sprites.scss))
 
       # Combine the resized assets into a packed sprite and re-generate the SCSS
       SpriteFactory.cssurl = "image-url('$IMAGE')"
@@ -182,7 +225,7 @@ namespace :gemojione do
     image.destroy!
   end
 
-  EMOJI_IMAGE_PATH_RE = /(.*?)(([0-9a-f]-?)+)\.png$/i
+  EMOJI_IMAGE_PATH_RE = /(.*?)(([0-9a-f]-?)+)\.png$/i.freeze
   def rename_to_named_emoji_image!(emoji_unicode_string_to_name_map, image_path)
     # Rename file from unicode to emoji name
     matches = EMOJI_IMAGE_PATH_RE.match(image_path)

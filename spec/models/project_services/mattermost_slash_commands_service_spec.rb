@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe MattermostSlashCommandsService do
+RSpec.describe MattermostSlashCommandsService do
   it_behaves_like "chat slash commands service"
 
   context 'Mattermost API' do
@@ -9,10 +11,11 @@ describe MattermostSlashCommandsService do
     let(:user) { create(:user) }
 
     before do
-      Mattermost::Session.base_uri("http://mattermost.example.com")
+      session = Mattermost::Session.new(nil)
+      session.base_uri = 'http://mattermost.example.com'
 
       allow_any_instance_of(Mattermost::Client).to receive(:with_session)
-        .and_yield(Mattermost::Session.new(nil))
+        .and_yield(session)
     end
 
     describe '#configure' do
@@ -24,17 +27,17 @@ describe MattermostSlashCommandsService do
 
       context 'the requests succeeds' do
         before do
-          stub_request(:post, 'http://mattermost.example.com/api/v3/teams/abc/commands/create')
+          stub_request(:post, 'http://mattermost.example.com/api/v4/commands')
             .with(body: {
               team_id: 'abc',
               trigger: 'gitlab',
               url: 'http://trigger.url',
               icon_url: 'http://icon.url/icon.png',
               auto_complete: true,
-              auto_complete_desc: "Perform common operations on: #{project.name_with_namespace}",
+              auto_complete_desc: "Perform common operations on: #{project.full_name}",
               auto_complete_hint: '[help]',
-              description: "Perform common operations on: #{project.name_with_namespace}",
-              display_name: "GitLab / #{project.name_with_namespace}",
+              description: "Perform common operations on: #{project.full_name}",
+              display_name: "GitLab / #{project.full_name}",
               method: 'P',
               username: 'GitLab'
             }.to_json)
@@ -58,7 +61,7 @@ describe MattermostSlashCommandsService do
 
       context 'an error is received' do
         before do
-          stub_request(:post, 'http://mattermost.example.com/api/v3/teams/abc/commands/create')
+          stub_request(:post, 'http://mattermost.example.com/api/v4/commands')
             .to_return(
               status: 500,
               headers: { 'Content-Type' => 'application/json' },
@@ -88,11 +91,11 @@ describe MattermostSlashCommandsService do
 
       context 'the requests succeeds' do
         before do
-          stub_request(:get, 'http://mattermost.example.com/api/v3/teams/all')
+          stub_request(:get, 'http://mattermost.example.com/api/v4/users/me/teams')
             .to_return(
               status: 200,
               headers: { 'Content-Type' => 'application/json' },
-              body: { 'list' => true }.to_json
+              body: [{ id: 'test_team_id' }].to_json
             )
         end
 
@@ -103,7 +106,7 @@ describe MattermostSlashCommandsService do
 
       context 'an error is received' do
         before do
-          stub_request(:get, 'http://mattermost.example.com/api/v3/teams/all')
+          stub_request(:get, 'http://mattermost.example.com/api/v4/users/me/teams')
             .to_return(
               status: 500,
               headers: { 'Content-Type' => 'application/json' },
@@ -116,6 +119,13 @@ describe MattermostSlashCommandsService do
         it 'shows error messages' do
           expect(subject).to eq([[], "Failed to get team list."])
         end
+      end
+    end
+
+    describe '#chat_responder' do
+      it 'returns the responder to use for Mattermost' do
+        expect(described_class.new.chat_responder)
+          .to eq(Gitlab::Chat::Responder::Mattermost)
       end
     end
   end

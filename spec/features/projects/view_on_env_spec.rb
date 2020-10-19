@@ -1,13 +1,15 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'View on environment', js: true do
+RSpec.describe 'View on environment', :js do
   let(:branch_name) { 'feature' }
   let(:file_path) { 'files/ruby/feature.rb' }
   let(:project) { create(:project, :repository) }
   let(:user) { project.creator }
 
   before do
-    project.add_master(user)
+    project.add_maintainer(user)
   end
 
   context 'when the branch has a route map' do
@@ -24,7 +26,7 @@ describe 'View on environment', js: true do
         user,
         start_branch: branch_name,
         branch_name: branch_name,
-        commit_message: "Add .gitlab/route-map.yml",
+        commit_message: 'Add .gitlab/route-map.yml',
         file_path: '.gitlab/route-map.yml',
         file_content: route_map
       ).execute
@@ -35,16 +37,16 @@ describe 'View on environment', js: true do
         user,
         start_branch: branch_name,
         branch_name: branch_name,
-        commit_message: "Update feature",
+        commit_message: 'Update feature',
         file_path: file_path,
-        file_content: "# Noop"
+        file_content: '# Noop'
       ).execute
     end
 
     context 'and an active deployment' do
       let(:sha) { project.commit(branch_name).sha }
       let(:environment) { create(:environment, project: project, name: 'review/feature', external_url: 'http://feature.review.example.com') }
-      let!(:deployment) { create(:deployment, environment: environment, ref: branch_name, sha: sha) }
+      let!(:deployment) { create(:deployment, :success, environment: environment, ref: branch_name, sha: sha) }
 
       context 'when visiting the diff of a merge request for the branch' do
         let(:merge_request) { create(:merge_request, :simple, source_project: project, source_branch: branch_name) }
@@ -59,7 +61,9 @@ describe 'View on environment', js: true do
 
         it 'has a "View on env" button' do
           within '.diffs' do
-            expect(page).to have_link('View on feature.review.example.com', href: 'http://feature.review.example.com/ruby/feature')
+            text = 'View on feature.review.example.com'
+            url = 'http://feature.review.example.com/ruby/feature'
+            expect(page).to have_selector("a[title='#{text}'][href='#{url}']")
           end
         end
       end

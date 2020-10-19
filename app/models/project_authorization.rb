@@ -1,4 +1,8 @@
-class ProjectAuthorization < ActiveRecord::Base
+# frozen_string_literal: true
+
+class ProjectAuthorization < ApplicationRecord
+  include FromUnion
+
   belongs_to :user
   belongs_to :project
 
@@ -6,9 +10,9 @@ class ProjectAuthorization < ActiveRecord::Base
   validates :access_level, inclusion: { in: Gitlab::Access.all_values }, presence: true
   validates :user, uniqueness: { scope: [:project, :access_level] }, presence: true
 
-  def self.select_from_union(union)
-    select(['project_id', 'MAX(access_level) AS access_level'])
-      .from("(#{union.to_sql}) #{ProjectAuthorization.table_name}")
+  def self.select_from_union(relations)
+    from_union(relations)
+      .select(['project_id', 'MAX(access_level) AS access_level'])
       .group(:project_id)
   end
 
@@ -25,3 +29,5 @@ class ProjectAuthorization < ActiveRecord::Base
     end
   end
 end
+
+ProjectAuthorization.prepend_if_ee('::EE::ProjectAuthorization')

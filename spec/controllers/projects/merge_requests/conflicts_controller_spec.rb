@@ -1,11 +1,13 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Projects::MergeRequests::ConflictsController do
+RSpec.describe Projects::MergeRequests::ConflictsController do
   let(:project) { create(:project, :repository) }
   let(:user)    { project.owner }
   let(:merge_request) { create(:merge_request_with_diffs, target_project: project, source_project: project) }
   let(:merge_request_with_conflicts) do
-    create(:merge_request, source_branch: 'conflict-resolvable', target_branch: 'conflict-start', source_project: project) do |mr|
+    create(:merge_request, source_branch: 'conflict-resolvable', target_branch: 'conflict-start', source_project: project, merge_status: :unchecked) do |mr|
       mr.mark_as_unmergeable
     end
   end
@@ -17,18 +19,20 @@ describe Projects::MergeRequests::ConflictsController do
   describe 'GET show' do
     context 'when the conflicts cannot be resolved in the UI' do
       before do
-        allow_any_instance_of(Gitlab::Conflict::Parser)
-          .to receive(:parse).and_raise(Gitlab::Conflict::Parser::UnmergeableFile)
+        allow(Gitlab::Git::Conflict::Parser).to receive(:parse)
+          .and_raise(Gitlab::Git::Conflict::Parser::UnmergeableFile)
 
         get :show,
-            namespace_id: merge_request_with_conflicts.project.namespace.to_param,
-            project_id: merge_request_with_conflicts.project,
-            id: merge_request_with_conflicts.iid,
+            params: {
+              namespace_id: merge_request_with_conflicts.project.namespace.to_param,
+              project_id: merge_request_with_conflicts.project,
+              id: merge_request_with_conflicts.iid
+            },
             format: 'json'
       end
 
       it 'returns a 200 status code' do
-        expect(response).to have_http_status(:ok)
+        expect(response).to have_gitlab_http_status(:ok)
       end
 
       it 'returns JSON with a message' do
@@ -39,9 +43,11 @@ describe Projects::MergeRequests::ConflictsController do
     context 'with valid conflicts' do
       before do
         get :show,
-            namespace_id: merge_request_with_conflicts.project.namespace.to_param,
-            project_id: merge_request_with_conflicts.project,
-            id: merge_request_with_conflicts.iid,
+            params: {
+              namespace_id: merge_request_with_conflicts.project.namespace.to_param,
+              project_id: merge_request_with_conflicts.project,
+              id: merge_request_with_conflicts.iid
+            },
             format: 'json'
       end
 
@@ -99,24 +105,26 @@ describe Projects::MergeRequests::ConflictsController do
   describe 'GET conflict_for_path' do
     def conflict_for_path(path)
       get :conflict_for_path,
-          namespace_id: merge_request_with_conflicts.project.namespace.to_param,
-          project_id: merge_request_with_conflicts.project,
-          id: merge_request_with_conflicts.iid,
-          old_path: path,
-          new_path: path,
+          params: {
+            namespace_id: merge_request_with_conflicts.project.namespace.to_param,
+            project_id: merge_request_with_conflicts.project,
+            id: merge_request_with_conflicts.iid,
+            old_path: path,
+            new_path: path
+          },
           format: 'json'
     end
 
     context 'when the conflicts cannot be resolved in the UI' do
       before do
-        allow_any_instance_of(Gitlab::Conflict::Parser)
-          .to receive(:parse).and_raise(Gitlab::Conflict::Parser::UnmergeableFile)
+        allow(Gitlab::Git::Conflict::Parser).to receive(:parse)
+          .and_raise(Gitlab::Git::Conflict::Parser::UnmergeableFile)
 
         conflict_for_path('files/ruby/regex.rb')
       end
 
       it 'returns a 404 status code' do
-        expect(response).to have_http_status(:not_found)
+        expect(response).to have_gitlab_http_status(:not_found)
       end
     end
 
@@ -126,7 +134,7 @@ describe Projects::MergeRequests::ConflictsController do
       end
 
       it 'returns a 404 status code' do
-        expect(response).to have_http_status(:not_found)
+        expect(response).to have_gitlab_http_status(:not_found)
       end
     end
 
@@ -138,7 +146,7 @@ describe Projects::MergeRequests::ConflictsController do
       end
 
       it 'returns a 200 status code' do
-        expect(response).to have_http_status(:ok)
+        expect(response).to have_gitlab_http_status(:ok)
       end
 
       it 'returns the file in JSON format' do
@@ -148,9 +156,8 @@ describe Projects::MergeRequests::ConflictsController do
 
         expect(json_response).to include('old_path' => path,
                                          'new_path' => path,
-                                         'blob_icon' => 'file-text-o',
+                                         'blob_icon' => 'doc-text',
                                          'blob_path' => a_string_ending_with(path),
-                                         'blob_ace_mode' => 'ruby',
                                          'content' => content)
       end
     end
@@ -161,12 +168,14 @@ describe Projects::MergeRequests::ConflictsController do
 
     def resolve_conflicts(files)
       post :resolve_conflicts,
-           namespace_id: merge_request_with_conflicts.project.namespace.to_param,
-           project_id: merge_request_with_conflicts.project,
-           id: merge_request_with_conflicts.iid,
-           format: 'json',
-           files: files,
-           commit_message: 'Commit message'
+           params: {
+             namespace_id: merge_request_with_conflicts.project.namespace.to_param,
+             project_id: merge_request_with_conflicts.project,
+             id: merge_request_with_conflicts.iid,
+             files: files,
+             commit_message: 'Commit message'
+           },
+           format: 'json'
     end
 
     context 'with valid params' do
@@ -198,7 +207,7 @@ describe Projects::MergeRequests::ConflictsController do
       end
 
       it 'returns an OK response' do
-        expect(response).to have_http_status(:ok)
+        expect(response).to have_gitlab_http_status(:ok)
       end
     end
 
@@ -224,7 +233,7 @@ describe Projects::MergeRequests::ConflictsController do
       end
 
       it 'returns a 400 error' do
-        expect(response).to have_http_status(:bad_request)
+        expect(response).to have_gitlab_http_status(:bad_request)
       end
 
       it 'has a message with the name of the first missing section' do
@@ -254,7 +263,7 @@ describe Projects::MergeRequests::ConflictsController do
       end
 
       it 'returns a 400 error' do
-        expect(response).to have_http_status(:bad_request)
+        expect(response).to have_gitlab_http_status(:bad_request)
       end
 
       it 'has a message with the name of the missing file' do
@@ -292,7 +301,7 @@ describe Projects::MergeRequests::ConflictsController do
       end
 
       it 'returns a 400 error' do
-        expect(response).to have_http_status(:bad_request)
+        expect(response).to have_gitlab_http_status(:bad_request)
       end
 
       it 'has a message with the path of the problem file' do

@@ -1,10 +1,15 @@
-class GroupDestroyWorker
-  include Sidekiq::Worker
-  include DedicatedSidekiqQueue
+# frozen_string_literal: true
+
+class GroupDestroyWorker # rubocop:disable Scalability/IdempotentWorker
+  include ApplicationWorker
+  include ExceptionBacktrace
+
+  feature_category :subgroups
+  tags :requires_disk_io
 
   def perform(group_id, user_id)
     begin
-      group = Group.with_deleted.find(group_id)
+      group = Group.find(group_id)
     rescue ActiveRecord::RecordNotFound
       return
     end

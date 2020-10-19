@@ -1,13 +1,22 @@
+# frozen_string_literal: true
+
 class Oauth::ApplicationsController < Doorkeeper::ApplicationsController
-  include Gitlab::CurrentSettings
   include Gitlab::GonHelper
   include PageLayoutHelper
   include OauthApplications
+  include Gitlab::Experimentation::ControllerConcern
+  include InitializesCurrentUserMode
 
-  before_action :verify_user_oauth_applications_enabled
-  before_action :authenticate_user!
+  # Defined by the `Doorkeeper::ApplicationsController` and is redundant as we call `authenticate_user!` below. Not
+  # defining or skipping this will result in a `403` response to all requests.
+  skip_before_action :authenticate_admin!
+
+  prepend_before_action :verify_user_oauth_applications_enabled, except: :index
+  prepend_before_action :authenticate_user!
   before_action :add_gon_variables
-  before_action :load_scopes, only: [:index, :create, :edit]
+  before_action :load_scopes, only: [:index, :create, :edit, :update]
+
+  around_action :set_locale
 
   layout 'profile'
 
@@ -16,12 +25,11 @@ class Oauth::ApplicationsController < Doorkeeper::ApplicationsController
   end
 
   def create
-    @application = Doorkeeper::Application.new(application_params)
+    @application = Applications::CreateService.new(current_user, create_application_params).execute(request)
 
-    @application.owner = current_user
-
-    if @application.save
+    if @application.persisted?
       flash[:notice] = I18n.t(:notice, scope: [:doorkeeper, :flash, :applications, :create])
+
       redirect_to oauth_application_url(@application)
     else
       set_index_vars
@@ -32,7 +40,7 @@ class Oauth::ApplicationsController < Doorkeeper::ApplicationsController
   private
 
   def verify_user_oauth_applications_enabled
-    return if current_application_settings.user_oauth_applications?
+    return if Gitlab::CurrentSettings.user_oauth_applications?
 
     redirect_to profile_path
   end
@@ -53,6 +61,16 @@ class Oauth::ApplicationsController < Doorkeeper::ApplicationsController
   end
 
   rescue_from ActiveRecord::RecordNotFound do |exception|
-    render "errors/not_found", layout: "errors", status: 404
+    render "errors/not_found", layout: "errors", status: :not_found
+  end
+
+  def create_application_params
+    application_params.tap do |params|
+      params[:owner] = current_user
+    end
+  end
+
+  def set_locale(&block)
+    Gitlab::I18n.with_user_locale(current_user, &block)
   end
 end

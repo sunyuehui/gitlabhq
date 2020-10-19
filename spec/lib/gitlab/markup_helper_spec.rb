@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::MarkupHelper do
+RSpec.describe Gitlab::MarkupHelper do
   describe '#markup?' do
     %w(textile rdoc org creole wiki
        mediawiki rst adoc ad asciidoc mdown md markdown).each do |type|

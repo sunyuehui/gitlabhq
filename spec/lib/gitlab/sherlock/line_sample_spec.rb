@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Sherlock::LineSample do
+RSpec.describe Gitlab::Sherlock::LineSample do
   let(:sample) { described_class.new(150.0, 4) }
 
   describe '#duration' do

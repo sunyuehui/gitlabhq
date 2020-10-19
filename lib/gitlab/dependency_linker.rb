@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module DependencyLinker
     LINKERS = [
@@ -10,7 +12,10 @@ module Gitlab
       PodspecJsonLinker,
       CartfileLinker,
       GodepsJsonLinker,
-      RequirementsTxtLinker
+      RequirementsTxtLinker,
+      CargoTomlLinker,
+      GoModLinker,
+      GoSumLinker
     ].freeze
 
     def self.linker(blob_name)

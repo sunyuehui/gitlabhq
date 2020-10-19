@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class Admin::HookLogsController < Admin::ApplicationController
   include HooksExecution
 
@@ -5,6 +7,8 @@ class Admin::HookLogsController < Admin::ApplicationController
   before_action :hook_log, only: [:show, :retry]
 
   respond_to :html
+
+  feature_category :integrations
 
   def show
   end

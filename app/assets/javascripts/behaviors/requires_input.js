@@ -1,4 +1,5 @@
-import _ from 'underscore';
+import $ from 'jquery';
+import { isEmpty } from 'lodash';
 import '../commons/bootstrap';
 
 // Requires Input behavior
@@ -17,14 +18,15 @@ import '../commons/bootstrap';
 $.fn.requiresInput = function requiresInput() {
   const $form = $(this);
   const $button = $('button[type=submit], input[type=submit]', $form);
-  const fieldSelector = 'input[required=required], select[required=required], textarea[required=required]';
+  const fieldSelector =
+    'input[required=required], select[required=required], textarea[required=required]';
 
   function requireInput() {
     // Collect the input values of *all* required fields
-    const values = _.map($(fieldSelector, $form), field => field.value);
+    const values = Array.from($(fieldSelector, $form)).map(field => field.value);
 
     // Disable the button if any required fields are empty
-    if (values.length && _.any(values, _.isEmpty)) {
+    if (values.length && values.some(isEmpty)) {
       $button.disable();
     } else {
       $button.enable();
@@ -40,18 +42,19 @@ $.fn.requiresInput = function requiresInput() {
 // based on the option selected
 function hideOrShowHelpBlock(form) {
   const selected = $('.js-select-namespace option:selected');
-  if (selected.length && selected.data('options-parent') === 'groups') {
-    form.find('.help-block').hide();
+  if (selected.length && selected.data('optionsParent') === 'groups') {
+    form.find('.form-text.text-muted').hide();
   } else if (selected.length) {
-    form.find('.help-block').show();
+    form.find('.form-text.text-muted').show();
   }
 }
 
 $(() => {
-  const $form = $('form.js-requires-input');
-  if ($form) {
+  $('form.js-requires-input').each((i, el) => {
+    const $form = $(el);
+
     $form.requiresInput();
     hideOrShowHelpBlock($form);
     $('.select2.js-select-namespace').change(() => hideOrShowHelpBlock($form));
-  }
+  });
 });

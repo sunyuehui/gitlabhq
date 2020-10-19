@@ -1,9 +1,11 @@
 <script>
-import ciIconBadge from './ci_badge_link.vue';
-import loadingIcon from './loading_icon.vue';
-import timeagoTooltip from './time_ago_tooltip.vue';
-import tooltip from '../directives/tooltip';
-import userAvatarImage from './user_avatar/user_avatar_image.vue';
+/* eslint-disable vue/no-v-html */
+import { GlTooltipDirective, GlLink, GlButton, GlTooltip } from '@gitlab/ui';
+import CiIconBadge from './ci_badge_link.vue';
+import TimeagoTooltip from './time_ago_tooltip.vue';
+import UserAvatarImage from './user_avatar/user_avatar_image.vue';
+import { glEmojiTag } from '../../emoji';
+import { __, sprintf } from '../../locale';
 
 /**
  * Renders header component for job and pipeline page based on UI mockups
@@ -13,6 +15,18 @@ import userAvatarImage from './user_avatar/user_avatar_image.vue';
  * - pipeline show page
  */
 export default {
+  components: {
+    CiIconBadge,
+    TimeagoTooltip,
+    UserAvatarImage,
+    GlLink,
+    GlButton,
+    GlTooltip,
+  },
+  directives: {
+    GlTooltip: GlTooltipDirective,
+  },
+  EMOJI_REF: 'EMOJI_REF',
   props: {
     status: {
       type: Object,
@@ -35,125 +49,108 @@ export default {
       required: false,
       default: () => ({}),
     },
-    actions: {
-      type: Array,
-      required: false,
-      default: () => [],
-    },
     hasSidebarButton: {
       type: Boolean,
       required: false,
       default: false,
     },
-  },
-
-  directives: {
-    tooltip,
-  },
-
-  components: {
-    ciIconBadge,
-    loadingIcon,
-    timeagoTooltip,
-    userAvatarImage,
+    shouldRenderTriggeredLabel: {
+      type: Boolean,
+      required: false,
+      default: true,
+    },
   },
 
   computed: {
     userAvatarAltText() {
-      return `${this.user.name}'s avatar`;
+      return sprintf(__(`%{username}'s avatar`), { username: this.user.name });
+    },
+    userPath() {
+      // GraphQL returns `webPath` and Rest `path`
+      return this.user?.webPath || this.user?.path;
+    },
+    avatarUrl() {
+      // GraphQL returns `avatarUrl` and Rest `avatar_url`
+      return this.user?.avatarUrl || this.user?.avatar_url;
+    },
+    statusTooltipHTML() {
+      // Rest `status_tooltip_html` which is a ready to work
+      // html for the emoji and the status text inside a tooltip.
+      // GraphQL returns `status.emoji` and `status.message` which
+      // needs to be combined to make the html we want.
+      const { emoji } = this.user?.status || {};
+      const emojiHtml = emoji ? glEmojiTag(emoji) : '';
+
+      return emojiHtml || this.user?.status_tooltip_html;
+    },
+    message() {
+      return this.user?.status?.message;
     },
   },
 
   methods: {
-    onClickAction(action) {
-      this.$emit('actionClicked', action);
+    onClickSidebarButton() {
+      this.$emit('clickedSidebarButton');
     },
   },
 };
 </script>
 
 <template>
-  <header class="page-content-header ci-header-container">
+  <header
+    class="page-content-header gl-display-flex gl-min-h-7"
+    data-qa-selector="pipeline_header"
+    data-testid="ci-header-content"
+  >
     <section class="header-main-content">
-
       <ci-icon-badge :status="status" />
 
-      <strong>
-        {{itemName}} #{{itemId}}
-      </strong>
+      <strong> {{ itemName }} #{{ itemId }} </strong>
 
-      triggered
+      <template v-if="shouldRenderTriggeredLabel">{{ __('triggered') }}</template>
+      <template v-else>{{ __('created') }}</template>
 
       <timeago-tooltip :time="time" />
 
-      by
+      {{ __('by') }}
 
       <template v-if="user">
-        <a
-          v-tooltip
-          :href="user.path"
+        <gl-link
+          v-gl-tooltip
+          :href="userPath"
           :title="user.email"
-          class="js-user-link commit-committer-link">
-
+          class="js-user-link commit-committer-link"
+        >
           <user-avatar-image
-            :img-src="user.avatar_url"
+            :img-src="avatarUrl"
             :img-alt="userAvatarAltText"
             :tooltip-text="user.name"
             :img-size="24"
-            />
+          />
 
-          {{user.name}}
-        </a>
+          {{ user.name }}
+        </gl-link>
+        <gl-tooltip v-if="message" :target="() => $refs[$options.EMOJI_REF]">
+          {{ message }}
+        </gl-tooltip>
+        <span
+          v-if="statusTooltipHTML"
+          :ref="$options.EMOJI_REF"
+          :data-testid="message"
+          v-html="statusTooltipHTML"
+        ></span>
       </template>
     </section>
 
-    <section
-      class="header-action-buttons"
-      v-if="actions.length">
-      <template
-        v-for="action in actions">
-        <a
-          v-if="action.type === 'link'"
-          :href="action.path"
-          :class="action.cssClass">
-          {{action.label}}
-        </a>
-
-        <a
-          v-else-if="action.type === 'ujs-link'"
-          :href="action.path"
-          data-method="post"
-          rel="nofollow"
-          :class="action.cssClass">
-          {{action.label}}
-        </a>
-
-        <button
-          v-else-if="action.type === 'button'"
-          @click="onClickAction(action)"
-          :disabled="action.isLoading"
-          :class="action.cssClass"
-          type="button">
-          {{action.label}}
-          <i
-            v-show="action.isLoading"
-            class="fa fa-spin fa-spinner"
-            aria-hidden="true">
-          </i>
-        </button>
-      </template>
-      <button
-        v-if="hasSidebarButton"
-        type="button"
-        class="btn btn-default visible-xs-block visible-sm-block sidebar-toggle-btn js-sidebar-build-toggle js-sidebar-build-toggle-header"
-        aria-label="Toggle Sidebar"
-        id="toggleSidebar">
-        <i
-          class="fa fa-angle-double-left"
-          aria-hidden="true"
-          aria-labelledby="toggleSidebar">
-        </i>
-      </button>
+    <section v-if="$slots.default" data-testid="headerButtons" class="gl-display-flex">
+      <slot></slot>
     </section>
+    <gl-button
+      v-if="hasSidebarButton"
+      class="d-sm-none js-sidebar-build-toggle gl-ml-auto"
+      icon="angle-double-left"
+      :aria-label="__('Toggle sidebar')"
+      @click="onClickSidebarButton"
+    />
   </header>
 </template>

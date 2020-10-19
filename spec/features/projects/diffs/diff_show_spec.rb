@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Diff file viewer', :js do
+RSpec.describe 'Diff file viewer', :js do
   let(:project) { create(:project, :public, :repository) }
 
   def visit_commit(sha, anchor: nil)
@@ -24,7 +26,7 @@ feature 'Diff file viewer', :js do
 
   context 'Ruby file (stored in LFS)' do
     before do
-      project.add_master(project.creator)
+      project.add_maintainer(project.creator)
 
       @commit_id = Files::CreateService.new(
         project,
@@ -62,13 +64,43 @@ feature 'Diff file viewer', :js do
   end
 
   context 'Image file' do
-    before do
-      visit_commit('2f63565e7aac07bcdadb654e253078b727143ec4')
+    context 'Replaced' do
+      before do
+        visit_commit('2f63565e7aac07bcdadb654e253078b727143ec4')
+      end
+
+      it 'shows a rendered image' do
+        within('.diff-file[id="e986451b8f7397b617dbb6fffcb5539328c56921"]') do
+          expect(page).to have_css('img[alt="files/images/6049019_460s.jpg"]')
+        end
+      end
+
+      it 'shows view replaced and view file links' do
+        expect(page.all('.file-actions a').length).to eq 2
+        expect(page.all('.file-actions a')[0]).to have_content 'View replaced file @'
+        expect(page.all('.file-actions a')[1]).to have_content 'View file @'
+      end
     end
 
-    it 'shows a rendered image' do
-      within('.diff-file[id="e986451b8f7397b617dbb6fffcb5539328c56921"]') do
-        expect(page).to have_css('img[alt="files/images/6049019_460s.jpg"]')
+    context 'Added' do
+      before do
+        visit_commit('33f3729a45c02fc67d00adb1b8bca394b0e761d9')
+      end
+
+      it 'shows view file link' do
+        expect(page.all('.file-actions a').length).to eq 1
+        expect(page.all('.file-actions a')[0]).to have_content 'View file @'
+      end
+    end
+
+    context 'Deleted' do
+      before do
+        visit_commit('7fd7a459706ee87be6f855fd98ce8c552b15529a')
+      end
+
+      it 'shows view file link' do
+        expect(page.all('.file-actions a').length).to eq 1
+        expect(page.all('.file-actions a')[0]).to have_content 'View file @'
       end
     end
   end
@@ -108,6 +140,19 @@ feature 'Diff file viewer', :js do
     end
   end
 
+  context 'renamed file' do
+    before do
+      visit_commit('6907208d755b60ebeacb2e9dfea74c92c3449a1f')
+    end
+
+    it 'shows the filename with diff highlight' do
+      within('.file-header-content') do
+        expect(page).to have_css('.idiff.left.right.deletion')
+        expect(page).to have_content('files/js/commit.coffee')
+      end
+    end
+  end
+
   context 'binary file that appears to be text in the first 1024 bytes' do
     before do
       # The file we're visiting is smaller than 10 KB and we want it collapsed
@@ -123,8 +168,7 @@ feature 'Diff file viewer', :js do
 
     context 'expanding the diff' do
       before do
-        # We can't use `click_link` because the "link" doesn't have an `href`.
-        find('a.click-to-expand').click
+        click_button 'Click to expand it.'
 
         wait_for_requests
       end

@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe RedirectRoute do
+require 'spec_helper'
+
+RSpec.describe RedirectRoute do
   let(:group) { create(:group) }
   let!(:redirect_route) { group.redirect_routes.create(path: 'gitlabb') }
 

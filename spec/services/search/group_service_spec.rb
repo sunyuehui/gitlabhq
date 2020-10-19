@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Search::GroupService do
+RSpec.describe Search::GroupService do
   shared_examples_for 'group search' do
     context 'finding projects by name' do
       let(:user) { create(:user) }
@@ -18,6 +20,7 @@ describe Search::GroupService do
       let!(:project3) { create(:project, :internal, namespace: nested_group.parent, name: "Outer #{term}") }
 
       let(:results) { described_class.new(user, search_group, search: term).execute }
+
       subject { results.objects('projects') }
 
       context 'in parent group' do
@@ -36,5 +39,37 @@ describe Search::GroupService do
 
   describe 'basic search' do
     include_examples 'group search'
+  end
+
+  context 'issues' do
+    let(:scope) { 'issues' }
+
+    context 'sort by created_at' do
+      let!(:group) { create(:group) }
+      let!(:project) { create(:project, :public, group: group) }
+      let!(:old_result) { create(:issue, project: project, title: 'sorted old', created_at: 1.month.ago) }
+      let!(:new_result) { create(:issue, project: project, title: 'sorted recent', created_at: 1.day.ago) }
+      let!(:very_old_result) { create(:issue, project: project, title: 'sorted very old', created_at: 1.year.ago) }
+
+      include_examples 'search results sorted' do
+        let(:results) { described_class.new(nil, group, search: 'sorted', sort: sort).execute }
+      end
+    end
+  end
+
+  context 'merge requests' do
+    let(:scope) { 'merge_requests' }
+
+    context 'sort by created_at' do
+      let!(:group) { create(:group) }
+      let!(:project) { create(:project, :public, group: group) }
+      let!(:old_result) { create(:merge_request, :opened, source_project: project, source_branch: 'old-1', title: 'sorted old', created_at: 1.month.ago) }
+      let!(:new_result) { create(:merge_request, :opened, source_project: project, source_branch: 'new-1', title: 'sorted recent', created_at: 1.day.ago) }
+      let!(:very_old_result) { create(:merge_request, :opened, source_project: project, source_branch: 'very-old-1', title: 'sorted very old', created_at: 1.year.ago) }
+
+      include_examples 'search results sorted' do
+        let(:results) { described_class.new(nil, group, search: 'sorted', sort: sort).execute }
+      end
+    end
   end
 end

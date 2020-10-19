@@ -1,32 +1,38 @@
-class Event < ActiveRecord::Base
-  include Sortable
-  default_scope { reorder(nil).where.not(author_id: nil) }
+# frozen_string_literal: true
 
-  CREATED   = 1
-  UPDATED   = 2
-  CLOSED    = 3
-  REOPENED  = 4
-  PUSHED    = 5
-  COMMENTED = 6
-  MERGED    = 7
-  JOINED    = 8 # User joined project
-  LEFT      = 9 # User left project
-  DESTROYED = 10
-  EXPIRED   = 11 # User left project due to expiry
+class Event < ApplicationRecord
+  include Sortable
+  include FromUnion
+  include Presentable
+  include DeleteWithLimit
+  include CreatedAtFilterable
+  include Gitlab::Utils::StrongMemoize
+  include UsageStatistics
+  include ShaAttribute
+
+  default_scope { reorder(nil) } # rubocop:disable Cop/DefaultScope
 
   ACTIONS = HashWithIndifferentAccess.new(
-    created:    CREATED,
-    updated:    UPDATED,
-    closed:     CLOSED,
-    reopened:   REOPENED,
-    pushed:     PUSHED,
-    commented:  COMMENTED,
-    merged:     MERGED,
-    joined:     JOINED,
-    left:       LEFT,
-    destroyed:  DESTROYED,
-    expired:    EXPIRED
+    created:    1,
+    updated:    2,
+    closed:     3,
+    reopened:   4,
+    pushed:     5,
+    commented:  6,
+    merged:     7,
+    joined:     8, # User joined project
+    left:       9, # User left project
+    destroyed:  10,
+    expired:    11, # User left project due to expiry
+    approved:   12,
+    archived:   13 # Recoverable deletion
   ).freeze
+
+  private_constant :ACTIONS
+
+  WIKI_ACTIONS = [:created, :updated, :destroyed].freeze
+
+  DESIGN_ACTIONS = [:created, :updated, :destroyed, :archived].freeze
 
   TARGET_TYPES = HashWithIndifferentAccess.new(
     issue:          Issue,
@@ -35,86 +41,104 @@ class Event < ActiveRecord::Base
     note:           Note,
     project:        Project,
     snippet:        Snippet,
-    user:           User
+    user:           User,
+    wiki:           WikiPage::Meta,
+    design:         DesignManagement::Design
   ).freeze
 
   RESET_PROJECT_ACTIVITY_INTERVAL = 1.hour
+  REPOSITORY_UPDATED_AT_INTERVAL = 5.minutes
+
+  sha_attribute :fingerprint
+
+  enum action: ACTIONS, _suffix: true
 
   delegate :name, :email, :public_email, :username, to: :author, prefix: true, allow_nil: true
   delegate :title, to: :issue, prefix: true, allow_nil: true
   delegate :title, to: :merge_request, prefix: true, allow_nil: true
   delegate :title, to: :note, prefix: true, allow_nil: true
+  delegate :title, to: :design, prefix: true, allow_nil: true
 
   belongs_to :author, class_name: "User"
   belongs_to :project
-  belongs_to :target, polymorphic: true # rubocop:disable Cop/PolymorphicAssociations
-  has_one :push_event_payload, foreign_key: :event_id
+  belongs_to :group
 
-  # For Hash only
-  serialize :data # rubocop:disable Cop/ActiveRecordSerialize
+  belongs_to :target, -> {
+    # If the association for "target" defines an "author" association we want to
+    # eager-load this so Banzai & friends don't end up performing N+1 queries to
+    # get the authors of notes, issues, etc. (likewise for "noteable").
+    incs = %i(author noteable).select do |a|
+      reflections['events'].active_record.reflect_on_association(a)
+    end
+
+    incs.reduce(self) { |obj, a| obj.includes(a) }
+  }, polymorphic: true # rubocop:disable Cop/PolymorphicAssociations
+
+  has_one :push_event_payload
 
   # Callbacks
   after_create :reset_project_activity
-  after_create :set_last_repository_updated_at, if: :push?
-  after_create :replicate_event_for_push_events_migration
+  after_create :set_last_repository_updated_at, if: :push_action?
+  after_create ->(event) { UserInteractedProject.track(event) }
 
   # Scopes
   scope :recent, -> { reorder(id: :desc) }
-  scope :code_push, -> { where(action: PUSHED) }
-
-  scope :in_projects, -> (projects) do
-    sub_query = projects
-      .except(:order)
-      .select(1)
-      .where('projects.id = events.project_id')
-
-    where('EXISTS (?)', sub_query).recent
+  scope :for_wiki_page, -> { where(target_type: 'WikiPage::Meta') }
+  scope :for_design, -> { where(target_type: 'DesignManagement::Design') }
+  scope :for_fingerprint, ->(fingerprint) do
+    fingerprint.present? ? where(fingerprint: fingerprint) : none
   end
+  scope :for_action, ->(action) { where(action: action) }
 
   scope :with_associations, -> do
     # We're using preload for "push_event_payload" as otherwise the association
     # is not always available (depending on the query being built).
-    includes(:author, :project, project: :namespace)
+    includes(:author, :project, project: [:project_feature, :import_data, :namespace])
       .preload(:target, :push_event_payload)
   end
 
   scope :for_milestone_id, ->(milestone_id) { where(target_type: "Milestone", target_id: milestone_id) }
+  scope :for_wiki_meta, ->(meta) { where(target_type: 'WikiPage::Meta', target_id: meta.id) }
+  scope :created_at, ->(time) { where(created_at: time) }
+
+  # Authors are required as they're used to display who pushed data.
+  #
+  # We're just validating the presence of the ID here as foreign key constraints
+  # should ensure the ID points to a valid user.
+  validates :author_id, presence: true
+
+  validates :action_enum_value,
+    if: :design?,
+    inclusion: {
+      in: actions.values_at(*DESIGN_ACTIONS),
+      message: ->(event, _data) { "#{event.action} is not a valid design action" }
+    }
 
   self.inheritance_column = 'action'
 
   class << self
+    def model_name
+      ActiveModel::Name.new(self, nil, 'event')
+    end
+
     def find_sti_class(action)
-      if action.to_i == PUSHED
+      if actions.fetch(action, action) == actions[:pushed] # action can be integer or symbol
         PushEvent
       else
         Event
       end
     end
 
-    def subclass_from_attributes(attrs)
-      # Without this Rails will keep calling this method on the returned class,
-      # resulting in an infinite loop.
-      return unless self == Event
-
-      action = attrs.with_indifferent_access[inheritance_column].to_i
-
-      PushEvent if action == PUSHED
-    end
-
     # Update Gitlab::ContributionsCalendar#activity_dates if this changes
     def contributions
       where("action = ? OR (target_type IN (?) AND action IN (?)) OR (target_type = ? AND action = ?)",
-            Event::PUSHED,
-            %w(MergeRequest Issue), [Event::CREATED, Event::CLOSED, Event::MERGED],
-            "Note", Event::COMMENTED)
+            actions[:pushed],
+            %w(MergeRequest Issue), [actions[:created], actions[:closed], actions[:merged]],
+            "Note", actions[:commented])
     end
 
     def limit_recent(limit = 20, offset = nil)
       recent.limit(limit).offset(offset)
-    end
-
-    def actions
-      ACTIONS.keys
     end
 
     def target_types
@@ -122,84 +146,48 @@ class Event < ActiveRecord::Base
     end
   end
 
+  def present
+    super(presenter_class: ::EventPresenter)
+  end
+
   def visible_to_user?(user = nil)
-    if push? || commit_note?
-      Ability.allowed?(user, :download_code, project)
-    elsif membership_changed?
-      true
-    elsif created_project?
-      true
-    elsif issue? || issue_note?
-      Ability.allowed?(user, :read_issue, note? ? note_target : target)
-    elsif merge_request? || merge_request_note?
-      Ability.allowed?(user, :read_merge_request, note? ? note_target : target)
-    else
-      milestone?
+    return false unless capability.present?
+
+    capability.all? do |rule|
+      Ability.allowed?(user, rule, permission_object)
     end
   end
 
-  def project_name
-    if project
-      project.name_with_namespace
-    else
-      "(deleted project)"
-    end
+  def resource_parent
+    project || group
   end
 
   def target_title
     target.try(:title)
   end
 
-  def created?
-    action == CREATED
-  end
-
-  def push?
-    action == PUSHED && valid_push?
-  end
-
-  def merged?
-    action == MERGED
-  end
-
-  def closed?
-    action == CLOSED
-  end
-
-  def reopened?
-    action == REOPENED
-  end
-
-  def joined?
-    action == JOINED
-  end
-
-  def left?
-    action == LEFT
-  end
-
-  def expired?
-    action == EXPIRED
-  end
-
-  def destroyed?
-    action == DESTROYED
-  end
-
-  def commented?
-    action == COMMENTED
+  def push_action?
+    false
   end
 
   def membership_changed?
-    joined? || left? || expired?
+    joined_action? || left_action? || expired_action?
   end
 
-  def created_project?
-    created? && !target && target_type.nil?
+  def created_project_action?
+    created_action? && !target && target_type.nil?
+  end
+
+  def created_wiki_page?
+    wiki_page? && created_action?
+  end
+
+  def updated_wiki_page?
+    wiki_page? && updated_action?
   end
 
   def created_target?
-    created? && target
+    created_action? && target
   end
 
   def milestone?
@@ -218,6 +206,14 @@ class Event < ActiveRecord::Base
     target_type == "MergeRequest"
   end
 
+  def wiki_page?
+    target_type == 'WikiPage::Meta'
+  end
+
+  def design?
+    target_type == 'DesignManagement::Design'
+  end
+
   def milestone
     target if milestone?
   end
@@ -226,128 +222,61 @@ class Event < ActiveRecord::Base
     target if issue?
   end
 
+  def design
+    target if design?
+  end
+
   def merge_request
     target if merge_request?
+  end
+
+  def wiki_page
+    strong_memoize(:wiki_page) do
+      next unless wiki_page?
+
+      ProjectWiki.new(project, author).find_page(target.canonical_slug)
+    end
   end
 
   def note
     target if note?
   end
 
+  # rubocop: disable Metrics/CyclomaticComplexity
+  # rubocop: disable Metrics/PerceivedComplexity
   def action_name
-    if push?
-      if new_ref?
-        "pushed new"
-      elsif rm_ref?
-        "deleted"
-      else
-        "pushed to"
-      end
-    elsif closed?
+    if push_action?
+      push_action_name
+    elsif design?
+      design_action_names[action.to_sym]
+    elsif closed_action?
       "closed"
-    elsif merged?
+    elsif merged_action?
       "accepted"
-    elsif joined?
+    elsif joined_action?
       'joined'
-    elsif left?
+    elsif left_action?
       'left'
-    elsif expired?
+    elsif expired_action?
       'removed due to membership expiration from'
-    elsif destroyed?
+    elsif destroyed_action?
       'destroyed'
-    elsif commented?
+    elsif commented_action?
       "commented on"
-    elsif created_project?
-      if project.external_import?
-        "imported"
-      else
-        "created"
-      end
+    elsif created_wiki_page?
+      'created'
+    elsif updated_wiki_page?
+      'updated'
+    elsif created_project_action?
+      created_project_action_name
+    elsif approved_action?
+      'approved'
     else
       "opened"
     end
   end
-
-  def valid_push?
-    data[:ref] && ref_name.present?
-  rescue
-    false
-  end
-
-  def tag?
-    Gitlab::Git.tag_ref?(data[:ref])
-  end
-
-  def branch?
-    Gitlab::Git.branch_ref?(data[:ref])
-  end
-
-  def new_ref?
-    Gitlab::Git.blank_ref?(commit_from)
-  end
-
-  def rm_ref?
-    Gitlab::Git.blank_ref?(commit_to)
-  end
-
-  def md_ref?
-    !(rm_ref? || new_ref?)
-  end
-
-  def commit_from
-    data[:before]
-  end
-
-  def commit_to
-    data[:after]
-  end
-
-  def ref_name
-    if tag?
-      tag_name
-    else
-      branch_name
-    end
-  end
-
-  def branch_name
-    @branch_name ||= Gitlab::Git.ref_name(data[:ref])
-  end
-
-  def tag_name
-    @tag_name ||= Gitlab::Git.ref_name(data[:ref])
-  end
-
-  # Max 20 commits from push DESC
-  def commits
-    @commits ||= (data[:commits] || []).reverse
-  end
-
-  def commit_title
-    commit = commits.last
-
-    commit[:message] if commit
-  end
-
-  def commit_id
-    commit_to || commit_from
-  end
-
-  def commits_count
-    data[:total_commits_count] || commits.count || 0
-  end
-
-  def ref_type
-    tag? ? "tag" : "branch"
-  end
-
-  def push_with_commits?
-    !commits.empty? && commit_from && commit_to
-  end
-
-  def last_push_to_non_root?
-    branch? && project.default_branch != branch_name
-  end
+  # rubocop: enable Metrics/CyclomaticComplexity
+  # rubocop: enable Metrics/PerceivedComplexity
 
   def target_iid
     target.respond_to?(:iid) ? target.iid : target_id
@@ -367,6 +296,14 @@ class Event < ActiveRecord::Base
 
   def project_snippet_note?
     note? && target && target.for_snippet?
+  end
+
+  def personal_snippet_note?
+    note? && target && target.for_personal_snippet?
+  end
+
+  def design_note?
+    note? && note.for_design?
   end
 
   def note_target
@@ -392,17 +329,9 @@ class Event < ActiveRecord::Base
     end
   end
 
-  def note_target_type
-    if target.noteable_type.present?
-      target.noteable_type.titleize
-    else
-      "Wall"
-    end.downcase
-  end
-
   def body?
-    if push?
-      push_with_commits? || rm_ref?
+    if push_action?
+      push_with_commits?
     elsif note?
       true
     else
@@ -428,17 +357,68 @@ class Event < ActiveRecord::Base
     user ? author_id == user.id : false
   end
 
-  # We're manually replicating data into the new table since database triggers
-  # are not dumped to db/schema.rb. This could mean that a new installation
-  # would not have the triggers in place, thus losing events data in GitLab
-  # 10.0.
-  def replicate_event_for_push_events_migration
-    new_attributes = attributes.with_indifferent_access.except(:title, :data)
+  def to_partial_path
+    # We are intentionally using `Event` rather than `self.class` so that
+    # subclasses also use the `Event` implementation.
+    Event._to_partial_path
+  end
 
-    EventForMigration.create!(new_attributes)
+  protected
+
+  def capability
+    @capability ||= begin
+      capabilities.flat_map do |ability, syms|
+        if syms.any? { |sym| send(sym) } # rubocop: disable GitlabSecurity/PublicSend
+          [ability]
+        else
+          []
+        end
+      end
+    end
+  end
+
+  def capabilities
+    {
+      download_code: %i[push_action? commit_note?],
+      read_project: %i[membership_changed? created_project_action?],
+      read_issue: %i[issue? issue_note?],
+      read_merge_request: %i[merge_request? merge_request_note?],
+      read_snippet: %i[personal_snippet_note? project_snippet_note?],
+      read_milestone: %i[milestone?],
+      read_wiki: %i[wiki_page?],
+      read_design: %i[design_note? design?]
+    }
   end
 
   private
+
+  def permission_object
+    if note?
+      note_target
+    elsif target_id.present?
+      target
+    else
+      project
+    end
+  end
+
+  def push_action_name
+    if new_ref?
+      "pushed new"
+    elsif rm_ref?
+      "deleted"
+    else
+      "pushed to"
+    end
+  end
+
+  def created_project_action_name
+    if project.external_import?
+      "imported"
+    else
+      "created"
+    end
+  end
 
   def recent_update?
     project.last_activity_at > RESET_PROJECT_ACTIVITY_INTERVAL.ago
@@ -446,6 +426,22 @@ class Event < ActiveRecord::Base
 
   def set_last_repository_updated_at
     Project.unscoped.where(id: project_id)
+      .where("last_repository_updated_at < ? OR last_repository_updated_at IS NULL", REPOSITORY_UPDATED_AT_INTERVAL.ago)
       .update_all(last_repository_updated_at: created_at)
   end
+
+  def design_action_names
+    {
+      created: _('uploaded'),
+      updated: _('revised'),
+      destroyed: _('deleted'),
+      archived: _('archived')
+    }
+  end
+
+  def action_enum_value
+    self.class.actions[action]
+  end
 end
+
+Event.prepend_if_ee('EE::Event')

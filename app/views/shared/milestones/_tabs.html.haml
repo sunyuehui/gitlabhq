@@ -1,50 +1,34 @@
-- issues_accessible = milestone.is_a?(GlobalMilestone) || can?(current_user, :read_issue, @project)
+- show_project_name = local_assigns.fetch(:show_project_name, false)
 
 .scrolling-tabs-container.inner-page-scroll-tabs.is-smaller
-  .fade-left= icon('angle-left')
-  .fade-right= icon('angle-right')
-  %ul.nav-links.scrolling-tabs.js-milestone-tabs
-    - if issues_accessible
-      %li.active
-        = link_to '#tab-issues', 'data-toggle' => 'tab', 'data-show' => '.tab-issues-buttons' do
-          Issues
-          %span.badge= milestone.issues_visible_to_user(current_user).size
-      %li
-        = link_to '#tab-merge-requests', 'data-toggle' => 'tab', 'data-endpoint': milestone_merge_request_tab_path(milestone) do
-          Merge Requests
-          %span.badge= milestone.merge_requests.size
-    - else
-      %li.active
-        = link_to '#tab-merge-requests', 'data-toggle' => 'tab', 'data-endpoint': milestone_merge_request_tab_path(milestone) do
-          Merge Requests
-          %span.badge= milestone.merge_requests.size
-    %li
-      = link_to '#tab-participants', 'data-toggle' => 'tab', 'data-endpoint': milestone_participants_tab_path(milestone) do
-        Participants
-        %span.badge= milestone.participants.count
-    %li
-      = link_to '#tab-labels', 'data-toggle' => 'tab', 'data-endpoint': milestone_labels_tab_path(milestone) do
-        Labels
-        %span.badge= milestone.labels.count
-
-- issues = milestone.sorted_issues(current_user)
-- show_project_name = local_assigns.fetch(:show_project_name, false)
-- show_full_project_name = local_assigns.fetch(:show_full_project_name, false)
+  .fade-left= sprite_icon('chevron-lg-left', size: 12)
+  .fade-right= sprite_icon('chevron-lg-right', size: 12)
+  %ul.nav-links.scrolling-tabs.js-milestone-tabs.nav.nav-tabs
+    %li.nav-item
+      = link_to '#tab-issues', class: 'nav-link active', data: { toggle: 'tab', endpoint: milestone_tab_path(milestone, 'issues', show_project_name: show_project_name) } do
+        = _('Issues')
+        %span.badge.badge-pill= milestone.issues_visible_to_user(current_user).size
+    - if milestone.merge_requests_enabled?
+      %li.nav-item
+        = link_to '#tab-merge-requests', class: 'nav-link', data: { toggle: 'tab', endpoint: milestone_tab_path(milestone, 'merge_requests', show_project_name: show_project_name) } do
+          = _('Merge Requests')
+          %span.badge.badge-pill= milestone.merge_requests_visible_to_user(current_user).size
+    %li.nav-item
+      = link_to '#tab-participants', class: 'nav-link', data: { toggle: 'tab', endpoint: milestone_tab_path(milestone, 'participants') } do
+        = _('Participants')
+        %span.badge.badge-pill= milestone.issue_participants_visible_by_user(current_user).count
+    %li.nav-item
+      = link_to '#tab-labels', class: 'nav-link', data: { toggle: 'tab', endpoint: milestone_tab_path(milestone, 'labels') } do
+        = _('Labels')
+        %span.badge.badge-pill= milestone.issue_labels_visible_by_user(current_user).count
 
 .tab-content.milestone-content
-  - if issues_accessible
-    .tab-pane.active#tab-issues{ data: { sort_endpoint: (sort_issues_project_milestone_path(@project, @milestone) if @project && current_user) } }
-      = render 'shared/milestones/issues_tab', issues: issues, show_project_name: show_project_name, show_full_project_name: show_full_project_name
+  .tab-pane.active#tab-issues
+    = render "shared/milestones/tab_loading"
+  - if milestone.merge_requests_enabled?
     .tab-pane#tab-merge-requests
-      -# loaded async
-      = render "shared/milestones/tab_loading"
-  - else
-    .tab-pane.active#tab-merge-requests
-      -# loaded async
       = render "shared/milestones/tab_loading"
   .tab-pane#tab-participants
-    -# loaded async
     = render "shared/milestones/tab_loading"
   .tab-pane#tab-labels
-    -# loaded async
     = render "shared/milestones/tab_loading"

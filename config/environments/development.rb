@@ -7,11 +7,12 @@ Rails.application.configure do
   config.cache_classes = false
 
   # Show full error reports and disable caching
+  config.active_record.verbose_query_logs  = true
   config.consider_all_requests_local       = true
   config.action_controller.perform_caching = false
 
-  # Don't care if the mailer can't send
-  config.action_mailer.raise_delivery_errors = false
+  # Show a warning when a large data set is loaded into memory
+  config.active_record.warn_on_records_fetched_greater_than = 1000
 
   # Print deprecation notices to the Rails logger
   config.active_support.deprecation = :log
@@ -37,12 +38,29 @@ Rails.application.configure do
   config.action_mailer.default_url_options = { host: 'localhost', port: 3000 }
   # Open sent mails in browser
   config.action_mailer.delivery_method = :letter_opener_web
+  # Log mail delivery errors
+  config.action_mailer.raise_delivery_errors = true
   # Don't make a mess when bootstrapping a development environment
   config.action_mailer.perform_deliveries = (ENV['BOOTSTRAP'] != '1')
-  config.action_mailer.preview_path = 'spec/mailers/previews'
+  config.action_mailer.preview_path = 'app/mailers/previews'
 
   config.eager_load = false
 
   # Do not log asset requests
   config.assets.quiet = true
+
+  # BetterErrors live shell (REPL) on every stack frame
+  BetterErrors::Middleware.allow_ip!("127.0.0.1/0")
+
+  # Reassign some performance related settings when we profile the app
+  if Gitlab::Utils.to_boolean(ENV['RAILS_PROFILE'].to_s)
+    warn "Hot-reloading is disabled as you are running with RAILS_PROFILE enabled"
+    config.cache_classes = true
+    config.eager_load = true
+    config.active_record.migration_error = false
+    config.active_record.verbose_query_logs = false
+    config.action_view.cache_template_loading = true
+
+    config.middleware.delete BetterErrors::Middleware
+  end
 end

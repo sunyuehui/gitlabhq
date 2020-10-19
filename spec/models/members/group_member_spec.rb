@@ -1,6 +1,32 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe GroupMember do
+RSpec.describe GroupMember do
+  context 'scopes' do
+    it 'counts users by group ID' do
+      user_1 = create(:user)
+      user_2 = create(:user)
+      group_1 = create(:group)
+      group_2 = create(:group)
+
+      group_1.add_owner(user_1)
+      group_1.add_owner(user_2)
+      group_2.add_owner(user_1)
+
+      expect(described_class.count_users_by_group_id).to eq(group_1.id => 2,
+                                                            group_2.id => 1)
+    end
+
+    describe '.of_ldap_type' do
+      it 'returns ldap type users' do
+        group_member = create(:group_member, :ldap)
+
+        expect(described_class.of_ldap_type).to eq([group_member])
+      end
+    end
+  end
+
   describe '.access_level_roles' do
     it 'returns Gitlab::Access.options_with_owner' do
       expect(described_class.access_level_roles).to eq(Gitlab::Access.options_with_owner)
@@ -21,66 +47,26 @@ describe GroupMember do
       described_class.add_users(
         group,
         [users.first.id, users.second],
-        described_class::MASTER
+        described_class::MAINTAINER
       )
 
       expect(group.users).to include(users.first, users.second)
     end
   end
 
-  describe 'notifications' do
-    describe "#after_create" do
-      it "sends email to user" do
-        membership = build(:group_member)
+  it_behaves_like 'members notifications', :group
 
-        allow(membership).to receive(:notification_service)
-          .and_return(double('NotificationService').as_null_object)
-        expect(membership).to receive(:notification_service)
+  describe '#real_source_type' do
+    subject { create(:group_member).real_source_type }
 
-        membership.save
-      end
-    end
-
-    describe "#after_update" do
-      before do
-        @group_member = create :group_member
-        allow(@group_member).to receive(:notification_service)
-          .and_return(double('NotificationService').as_null_object)
-      end
-
-      it "sends email to user" do
-        expect(@group_member).to receive(:notification_service)
-        @group_member.update_attribute(:access_level, GroupMember::MASTER)
-      end
-
-      it "does not send an email when the access level has not changed" do
-        expect(@group_member).not_to receive(:notification_service)
-        @group_member.update_attribute(:access_level, GroupMember::OWNER)
-      end
-    end
-
-    describe '#after_accept_request' do
-      it 'calls NotificationService.accept_group_access_request' do
-        member = create(:group_member, user: build(:user), requested_at: Time.now)
-
-        expect_any_instance_of(NotificationService).to receive(:new_group_member)
-
-        member.__send__(:after_accept_request)
-      end
-    end
-
-    describe '#real_source_type' do
-      subject { create(:group_member).real_source_type }
-
-      it { is_expected.to eq 'Group' }
-    end
+    it { is_expected.to eq 'Group' }
   end
 
   describe '#update_two_factor_requirement' do
-    let(:user) { build :user }
-    let(:group_member) { build :group_member, user: user }
-
     it 'is called after creation and deletion' do
+      user = build :user
+      group_member = build :group_member, user: user
+
       expect(user).to receive(:update_two_factor_requirement)
 
       group_member.save
@@ -88,6 +74,43 @@ describe GroupMember do
       expect(user).to receive(:update_two_factor_requirement)
 
       group_member.destroy
+    end
+  end
+
+  describe '#after_accept_invite' do
+    it 'calls #update_two_factor_requirement' do
+      email = 'foo@email.com'
+      user = build(:user, email: email)
+      group = create(:group, require_two_factor_authentication: true)
+      group_member = create(:group_member, group: group, invite_token: '1234', invite_email: email)
+
+      expect(user).to receive(:require_two_factor_authentication_from_group).and_call_original
+
+      group_member.accept_invite!(user)
+
+      expect(user.require_two_factor_authentication_from_group).to be_truthy
+    end
+  end
+
+  context 'access levels' do
+    context 'with parent group' do
+      it_behaves_like 'inherited access level as a member of entity' do
+        let(:entity) { create(:group, parent: parent_entity) }
+      end
+    end
+
+    context 'with parent group and a sub subgroup' do
+      it_behaves_like 'inherited access level as a member of entity' do
+        let(:subgroup) { create(:group, parent: parent_entity) }
+        let(:entity) { create(:group, parent: subgroup) }
+      end
+
+      context 'when only the subgroup has the member' do
+        it_behaves_like 'inherited access level as a member of entity' do
+          let(:parent_entity) { create(:group, parent: create(:group)) }
+          let(:entity) { create(:group, parent: parent_entity) }
+        end
+      end
     end
   end
 end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Network
   class Graph
     attr_reader :days, :commits, :map, :notes, :repo
@@ -38,9 +40,12 @@ module Network
     # Get commits from repository
     #
     def collect_commits
-      find_commits(count_to_display_commit_in_center).map do |commit|
-        # Decorate with app/model/network/commit.rb
-        Network::Commit.new(commit)
+      # https://gitlab.com/gitlab-org/gitlab-foss/issues/58013
+      Gitlab::GitalyClient.allow_n_plus_1_calls do
+        find_commits(count_to_display_commit_in_center).map do |commit|
+          # Decorate with app/model/network/commit.rb
+          Network::Commit.new(commit)
+        end
       end
     end
 
@@ -79,7 +84,7 @@ module Network
       skip = 0
       while offset == -1
         tmp_commits = find_commits(skip)
-        if tmp_commits.size > 0
+        if tmp_commits.present?
           index = tmp_commits.index do |c|
             c.id == @commit.id
           end
@@ -152,14 +157,14 @@ module Network
     end
 
     def find_free_parent_space(range, space_base, space_step, space_default)
-      if is_overlap?(range, space_default)
+      if overlap?(range, space_default)
         find_free_space(range, space_step, space_base, space_default)
       else
         space_default
       end
     end
 
-    def is_overlap?(range, overlap_space)
+    def overlap?(range, overlap_space)
       range.each do |i|
         if i != range.first &&
             i != range.last &&
@@ -206,7 +211,7 @@ module Network
 
       # Visit branching chains
       leaves.each do |l|
-        parents = l.parents(@map).select {|p| p.space.zero?}
+        parents = l.parents(@map).select {|p| p.space == 0}
         parents.each do |p|
           place_chain(p, l.time)
         end
@@ -216,11 +221,12 @@ module Network
     def get_space_base(leaves)
       space_base = 1
       parents = leaves.last.parents(@map)
-      if parents.size > 0
+      if parents.present?
         if parents.first.space > 0
           space_base = parents.first.space
         end
       end
+
       space_base
     end
 
@@ -260,14 +266,14 @@ module Network
     def take_left_leaves(raw_commit)
       commit = @map[raw_commit.id]
       leaves = []
-      leaves.push(commit) if commit.space.zero?
+      leaves.push(commit) if commit.space == 0
 
       loop do
-        return leaves if commit.parents(@map).count.zero?
+        return leaves if commit.parents(@map).count == 0
 
         commit = commit.parents(@map).first
 
-        return leaves unless commit.space.zero?
+        return leaves unless commit.space == 0
 
         leaves.push(commit)
       end

@@ -3,7 +3,7 @@
 All methods require administrator authorization.
 
 The URL endpoint of the system hooks can also be configured using the UI in
-the admin area under **Hooks** (`/admin/hooks`).
+the **Admin Area > System Hooks** (`/admin/hooks`).
 
 Read more about [system hooks](../system_hooks/system_hooks.md).
 
@@ -11,16 +11,14 @@ Read more about [system hooks](../system_hooks/system_hooks.md).
 
 Get a list of all system hooks.
 
----
-
-```
+```plaintext
 GET /hooks
 ```
 
 Example request:
 
-```bash
-curl --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/hooks
+```shell
+curl --header "PRIVATE-TOKEN: <your_access_token>" "https://gitlab.example.com/api/v4/hooks"
 ```
 
 Example response:
@@ -33,6 +31,8 @@ Example response:
     "created_at":"2016-10-31T12:32:15.192Z",
     "push_events":true,
     "tag_push_events":false,
+    "merge_requests_events": true,
+    "repository_update_events": true,
     "enable_ssl_verification":true
   }
 ]
@@ -42,9 +42,7 @@ Example response:
 
 Add a new system hook.
 
----
-
-```
+```plaintext
 POST /hooks
 ```
 
@@ -54,12 +52,14 @@ POST /hooks
 | `token` | string | no | Secret token to validate received payloads; this will not be returned in the response |
 | `push_events` | boolean |  no | When true, the hook will fire on push events |
 | `tag_push_events` | boolean | no | When true, the hook will fire on new tags being pushed |
+| `merge_requests_events` | boolean | no | Trigger hook on merge requests events |
+| `repository_update_events` | boolean | no | Trigger hook on repository update events |
 | `enable_ssl_verification` | boolean | no | Do SSL verification when triggering the hook |
 
 Example request:
 
-```bash
-curl --request POST --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" "https://gitlab.example.com/api/v4/hooks?url=https://gitlab.example.com/hook"
+```shell
+curl --request POST --header "PRIVATE-TOKEN: <your_access_token>" "https://gitlab.example.com/api/v4/hooks?url=https://gitlab.example.com/hook"
 ```
 
 Example response:
@@ -72,6 +72,8 @@ Example response:
     "created_at":"2016-10-31T12:32:15.192Z",
     "push_events":true,
     "tag_push_events":false,
+    "merge_requests_events": true,
+    "repository_update_events": true,
     "enable_ssl_verification":true
   }
 ]
@@ -79,7 +81,7 @@ Example response:
 
 ## Test system hook
 
-```
+```plaintext
 GET /hooks/:id
 ```
 
@@ -89,8 +91,8 @@ GET /hooks/:id
 
 Example request:
 
-```bash
-curl --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/hooks/2
+```shell
+curl --header "PRIVATE-TOKEN: <your_access_token>" "https://gitlab.example.com/api/v4/hooks/2"
 ```
 
 Example response:
@@ -110,9 +112,7 @@ Example response:
 
 Deletes a system hook.
 
----
-
-```
+```plaintext
 DELETE /hooks/:id
 ```
 
@@ -122,6 +122,6 @@ DELETE /hooks/:id
 
 Example request:
 
-```bash
-curl --request DELETE --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/hooks/2
+```shell
+curl --request DELETE --header "PRIVATE-TOKEN: <your_access_token>" "https://gitlab.example.com/api/v4/hooks/2"
 ```

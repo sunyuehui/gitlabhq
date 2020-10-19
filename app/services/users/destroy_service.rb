@@ -1,5 +1,9 @@
+# frozen_string_literal: true
+
 module Users
   class DestroyService
+    DestroyError = Class.new(StandardError)
+
     attr_accessor :current_user
 
     def initialize(current_user)
@@ -22,7 +26,7 @@ module Users
     def execute(user, options = {})
       delete_solo_owned_groups = options.fetch(:delete_solo_owned_groups, options[:hard_delete])
 
-      unless Ability.allowed?(current_user, :destroy_user, user)
+      unless Ability.allowed?(current_user, :destroy_user, user) || options[:skip_authorization]
         raise Gitlab::Access::AccessDeniedError, "#{current_user} tried to destroy user #{user}!"
       end
 
@@ -31,24 +35,42 @@ module Users
         return user
       end
 
+      # Calling all before/after_destroy hooks for the user because
+      # there is no dependent: destroy in the relationship. And the removal
+      # is done by a foreign_key. Otherwise they won't be called
+      user.members.find_each { |member| member.run_callbacks(:destroy) }
+
       user.solo_owned_groups.each do |group|
         Groups::DestroyService.new(group, current_user).execute
       end
 
+      namespace = user.namespace
+      namespace.prepare_for_destroy
+
       user.personal_projects.each do |project|
-        # Skip repository removal because we remove directory with namespace
-        # that contain all this repositories
-        ::Projects::DestroyService.new(project, current_user, skip_repo: true).execute
+        success = ::Projects::DestroyService.new(project, current_user).execute
+        raise DestroyError, "Project #{project.id} can't be deleted" unless success
       end
+
+      yield(user) if block_given?
 
       MigrateToGhostUserService.new(user).execute unless options[:hard_delete]
 
+      response = Snippets::BulkDestroyService.new(current_user, user.snippets).execute(options)
+      raise DestroyError, response.message if response.error?
+
+      # Rails attempts to load all related records into memory before
+      # destroying: https://github.com/rails/rails/issues/22510
+      # This ensures we delete records in batches.
+      user.destroy_dependent_associations_in_batches(exclude: [:snippets])
+
       # Destroy the namespace after destroying the user since certain methods may depend on the namespace existing
-      namespace = user.namespace
       user_data = user.destroy
-      namespace.really_destroy!
+      namespace.destroy
 
       user_data
     end
   end
 end
+
+Users::DestroyService.prepend_if_ee('EE::Users::DestroyService')

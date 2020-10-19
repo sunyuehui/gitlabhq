@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::SlashCommands::Presenters::IssueNew do
+RSpec.describe Gitlab::SlashCommands::Presenters::IssueNew do
   let(:project) { create(:project) }
   let(:issue) { create(:issue, project: project) }
   let(:attachment) { subject[:attachments].first }

@@ -1,21 +1,22 @@
+# frozen_string_literal: true
+
 require 'uri'
 
 module Banzai
   module Filter
-    # HTML filter that "fixes" relative upload links to files.
-    # Context options:
-    #   :project (required) - Current project
+    # HTML filter that "fixes" links to uploads.
     #
-    class UploadLinkFilter < HTML::Pipeline::Filter
+    # Context options:
+    #   :group
+    #   :only_path
+    #   :project
+    #   :system_note
+    class UploadLinkFilter < BaseRelativeLinkFilter
       def call
-        return doc unless project
+        return doc if context[:system_note]
 
-        doc.xpath('descendant-or-self::a[starts-with(@href, "/uploads/")]').each do |el|
-          process_link_attr el.attribute('href')
-        end
-
-        doc.xpath('descendant-or-self::img[starts-with(@src, "/uploads/")]').each do |el|
-          process_link_attr el.attribute('src')
+        linkable_attributes.each do |attr|
+          process_link_to_upload_attr(attr)
         end
 
         doc
@@ -23,23 +24,41 @@ module Banzai
 
       protected
 
-      def process_link_attr(html_attr)
-        html_attr.value = build_url(html_attr.value).to_s
+      def process_link_to_upload_attr(html_attr)
+        return unless html_attr.value.start_with?('/uploads/')
+
+        path_parts = [unescape_and_scrub_uri(html_attr.value)]
+
+        if project
+          path_parts.unshift(relative_url_root, project.full_path)
+        elsif group
+          path_parts.unshift(relative_url_root, 'groups', group.full_path, '-')
+        else
+          path_parts.unshift(relative_url_root)
+        end
+
+        begin
+          path = Addressable::URI.escape(File.join(*path_parts))
+        rescue Addressable::URI::InvalidURIError
+          return
+        end
+
+        html_attr.value =
+          if context[:only_path]
+            path
+          else
+            Addressable::URI.join(Gitlab.config.gitlab.base_url, path).to_s
+          end
+
+        if html_attr.name == 'href'
+          html_attr.parent.set_attribute('data-link', 'true')
+        end
+
+        html_attr.parent.add_class('gfm')
       end
 
-      def build_url(uri)
-        File.join(Gitlab.config.gitlab.url, project.full_path, uri)
-      end
-
-      def project
-        context[:project]
-      end
-
-      # Ensure that a :project key exists in context
-      #
-      # Note that while the key might exist, its value could be nil!
-      def validate
-        needs :project
+      def group
+        context[:group]
       end
     end
   end

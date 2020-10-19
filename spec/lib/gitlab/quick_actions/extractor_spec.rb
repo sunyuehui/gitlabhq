@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::QuickActions::Extractor do
+RSpec.describe Gitlab::QuickActions::Extractor do
   let(:definitions) do
     Class.new do
       include Gitlab::QuickActions::Dsl
@@ -182,6 +184,14 @@ describe Gitlab::QuickActions::Extractor do
       expect(msg).to eq "hello\nworld"
     end
 
+    it 'extracts command case insensitive' do
+      msg = %(hello\n/PoWer @user.name %9.10 ~"bar baz.2"\nworld)
+      msg, commands = extractor.extract_commands(msg)
+
+      expect(commands).to eq [['power', '@user.name %9.10 ~"bar baz.2"']]
+      expect(msg).to eq "hello\nworld"
+    end
+
     it 'does not extract noop commands' do
       msg = %(hello\nworld\n/reopen\n/noop_command)
       msg, commands = extractor.extract_commands(msg)
@@ -200,6 +210,30 @@ describe Gitlab::QuickActions::Extractor do
 
     it 'extracts and performs substitution commands' do
       msg = %(hello\nworld\n/reopen\n/shrug this is great?)
+      msg, commands = extractor.extract_commands(msg)
+
+      expect(commands).to eq [['reopen'], ['shrug', 'this is great?']]
+      expect(msg).to eq "hello\nworld\nthis is great? SHRUG"
+    end
+
+    it 'extracts and performs multiple substitution commands' do
+      msg = %(hello\nworld\n/reopen\n/shrug this is great?\n/shrug meh)
+      msg, commands = extractor.extract_commands(msg)
+
+      expect(commands).to eq [['reopen'], ['shrug', 'this is great?'], %w(shrug meh)]
+      expect(msg).to eq "hello\nworld\nthis is great? SHRUG\nmeh SHRUG"
+    end
+
+    it 'does not extract substitution command in inline code' do
+      msg = %(hello\nworld\n/reopen\n`/tableflip this is great`?)
+      msg, commands = extractor.extract_commands(msg)
+
+      expect(commands).to eq [['reopen']]
+      expect(msg).to eq "hello\nworld\n`/tableflip this is great`?"
+    end
+
+    it 'extracts and performs substitution commands case insensitive' do
+      msg = %(hello\nworld\n/reOpen\n/sHRuG this is great?)
       msg, commands = extractor.extract_commands(msg)
 
       expect(commands).to eq [['reopen'], ['shrug', 'this is great?']]
@@ -255,6 +289,70 @@ describe Gitlab::QuickActions::Extractor do
 
       expect(commands).to be_empty
       expect(msg).to eq expected
+    end
+
+    it 'does not extract commands in multiline inline code on seperated rows' do
+      msg = "Hello\r\n`\r\nThis is some text\r\n/close\r\n/assign @user\r\n`\r\n\r\nWorld"
+      expected = msg.delete("\r")
+      msg, commands = extractor.extract_commands(msg)
+
+      expect(commands).to be_empty
+      expect(msg).to eq expected
+    end
+
+    it 'does not extract commands in multiline inline code starting from text' do
+      msg = "Hello `This is some text\r\n/close\r\n/assign @user\r\n`\r\n\r\nWorld"
+      expected = msg.delete("\r")
+      msg, commands = extractor.extract_commands(msg)
+
+      expect(commands).to be_empty
+      expect(msg).to eq expected
+    end
+
+    it 'does not extract commands in inline code' do
+      msg = "`This is some text\r\n/close\r\n/assign @user\r\n`\r\n\r\nWorld"
+      expected = msg.delete("\r")
+      msg, commands = extractor.extract_commands(msg)
+
+      expect(commands).to be_empty
+      expect(msg).to eq expected
+    end
+
+    it 'limits to passed commands when they are passed' do
+      msg = <<~MSG.strip
+      Hello, we should only extract the commands passed
+      /reopen
+      /labels hello world
+      /power
+      MSG
+      expected_msg = <<~EXPECTED.strip
+      Hello, we should only extract the commands passed
+      /power
+      EXPECTED
+      expected_commands = [['reopen'], ['labels', 'hello world']]
+
+      msg, commands = extractor.extract_commands(msg, only: [:open, :labels])
+
+      expect(commands).to eq(expected_commands)
+      expect(msg).to eq expected_msg
+    end
+  end
+
+  describe '#redact_commands' do
+    using RSpec::Parameterized::TableSyntax
+
+    where(:text, :expected) do
+      "hello\n/labels ~label1 ~label2\nworld" | "hello\n`/labels ~label1 ~label2`\nworld"
+      "hello\n/open\n/labels ~label1\nworld"  | "hello\n`/open`\n`/labels ~label1`\nworld"
+      "hello\n/reopen\nworld"                 | "hello\n`/reopen`\nworld"
+      "/reopen\nworld"                        | "`/reopen`\nworld"
+      "hello\n/open"                          | "hello\n`/open`"
+    end
+
+    with_them do
+      it 'encloses quick actions with code span markdown' do
+        expect(extractor.redact_commands(text)).to eq(expected)
+      end
     end
   end
 end

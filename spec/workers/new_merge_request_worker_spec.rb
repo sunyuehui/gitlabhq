@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe NewMergeRequestWorker do
+RSpec.describe NewMergeRequestWorker do
   describe '#perform' do
     let(:worker) { described_class.new }
 
@@ -9,13 +11,15 @@ describe NewMergeRequestWorker do
         expect(EventCreateService).not_to receive(:new)
         expect(NotificationService).not_to receive(:new)
 
-        worker.perform(99, create(:user).id)
+        worker.perform(non_existing_record_id, create(:user).id)
       end
 
       it 'logs an error' do
-        expect(Rails.logger).to receive(:error).with('NewMergeRequestWorker: couldn\'t find MergeRequest with ID=99, skipping job')
+        user = create(:user)
 
-        worker.perform(99, create(:user).id)
+        expect(Gitlab::AppLogger).to receive(:error).with("NewMergeRequestWorker: couldn't find MergeRequest with ID=#{non_existing_record_id}, skipping job")
+
+        worker.perform(non_existing_record_id, user.id)
       end
     end
 
@@ -24,13 +28,15 @@ describe NewMergeRequestWorker do
         expect(EventCreateService).not_to receive(:new)
         expect(NotificationService).not_to receive(:new)
 
-        worker.perform(create(:merge_request).id, 99)
+        worker.perform(create(:merge_request).id, non_existing_record_id)
       end
 
       it 'logs an error' do
-        expect(Rails.logger).to receive(:error).with('NewMergeRequestWorker: couldn\'t find User with ID=99, skipping job')
+        merge_request = create(:merge_request)
 
-        worker.perform(create(:merge_request).id, 99)
+        expect(Gitlab::AppLogger).to receive(:error).with("NewMergeRequestWorker: couldn't find User with ID=#{non_existing_record_id}, skipping job")
+
+        worker.perform(merge_request.id, non_existing_record_id)
       end
     end
 
@@ -46,8 +52,10 @@ describe NewMergeRequestWorker do
         expect { worker.perform(merge_request.id, user.id) }.to change { Event.count }.from(0).to(1)
       end
 
-      it 'creates a notification for the assignee' do
-        expect(Notify).to receive(:new_merge_request_email).with(mentioned.id, merge_request.id).and_return(double(deliver_later: true))
+      it 'creates a notification for the mentioned user' do
+        expect(Notify).to receive(:new_merge_request_email)
+          .with(mentioned.id, merge_request.id, NotificationReason::MENTIONED)
+          .and_return(double(deliver_later: true))
 
         worker.perform(merge_request.id, user.id)
       end

@@ -1,8 +1,11 @@
-require 'rails_helper'
+# frozen_string_literal: true
+
+require 'spec_helper'
 
 RSpec.describe AbuseReport do
-  subject     { create(:abuse_report) }
-  let(:user)  { create(:admin) }
+  let_it_be(:report, reload: true) { create(:abuse_report) }
+  let_it_be(:user, reload: true) { create(:admin) }
+  subject { report }
 
   it { expect(subject).to be_valid }
 

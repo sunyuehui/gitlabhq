@@ -1,13 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe TestHooks::SystemService do
+RSpec.describe TestHooks::SystemService do
   let(:current_user) { create(:user) }
 
   describe '#execute' do
     let(:project) { create(:project, :repository) }
     let(:hook)    { create(:system_hook) }
     let(:service) { described_class.new(hook, current_user, trigger) }
-    let(:sample_data) { { data: 'sample' }}
     let(:success_result) { { status: :success, http_status: 200, message: 'ok' } }
 
     before do
@@ -25,56 +26,57 @@ describe TestHooks::SystemService do
 
     context 'push_events' do
       let(:trigger) { 'push_events' }
-
-      it 'returns error message if not enough data' do
-        allow(project).to receive(:empty_repo?).and_return(true)
-
-        expect(hook).not_to receive(:execute)
-        expect(service.execute).to include({ status: :error, message: "Ensure project \"#{project.human_name}\" has commits." })
-      end
+      let(:trigger_key) { :push_hooks }
 
       it 'executes hook' do
-        allow(project).to receive(:empty_repo?).and_return(false)
-        allow(Gitlab::DataBuilder::Push).to receive(:build_sample).and_return(sample_data)
+        expect(Gitlab::DataBuilder::Push).to receive(:sample_data).and_call_original
 
-        expect(hook).to receive(:execute).with(sample_data, trigger).and_return(success_result)
+        expect(hook).to receive(:execute).with(Gitlab::DataBuilder::Push::SAMPLE_DATA, trigger_key).and_return(success_result)
         expect(service.execute).to include(success_result)
       end
     end
 
     context 'tag_push_events' do
       let(:trigger) { 'tag_push_events' }
-
-      it 'returns error message if not enough data' do
-        allow(project.repository).to receive(:tags).and_return([])
-
-        expect(hook).not_to receive(:execute)
-        expect(service.execute).to include({ status: :error, message: "Ensure project \"#{project.human_name}\" has tags." })
-      end
+      let(:trigger_key) { :tag_push_hooks }
 
       it 'executes hook' do
         allow(project.repository).to receive(:tags).and_return(['tag'])
-        allow(Gitlab::DataBuilder::Push).to receive(:build_sample).and_return(sample_data)
+        expect(Gitlab::DataBuilder::Push).to receive(:sample_data).and_call_original
 
-        expect(hook).to receive(:execute).with(sample_data, trigger).and_return(success_result)
+        expect(hook).to receive(:execute).with(Gitlab::DataBuilder::Push::SAMPLE_DATA, trigger_key).and_return(success_result)
         expect(service.execute).to include(success_result)
       end
     end
 
     context 'repository_update_events' do
       let(:trigger) { 'repository_update_events' }
+      let(:trigger_key) { :repository_update_hooks }
 
-      it 'returns error message if not enough data' do
-        allow(project).to receive(:commit).and_return(nil)
+      it 'executes hook' do
+        expect(Gitlab::DataBuilder::Repository).to receive(:sample_data).and_call_original
+
+        expect(hook).to receive(:execute).with(Gitlab::DataBuilder::Repository::SAMPLE_DATA, trigger_key).and_return(success_result)
+        expect(service.execute).to include(success_result)
+      end
+    end
+
+    context 'merge_requests_events' do
+      let(:trigger) { 'merge_requests_events' }
+
+      it 'returns error message if the user does not have any repository with a merge request' do
         expect(hook).not_to receive(:execute)
-        expect(service.execute).to include({ status: :error, message: "Ensure project \"#{project.human_name}\" has commits." })
+        expect(service.execute).to include({ status: :error, message: 'Ensure one of your projects has merge requests.' })
       end
 
       it 'executes hook' do
-        allow(project).to receive(:empty_repo?).and_return(false)
-        allow(Gitlab::DataBuilder::Repository).to receive(:update).and_return(sample_data)
+        trigger_key = :merge_request_hooks
+        sample_data = { data: 'sample' }
+        create(:project_member, user: current_user, project: project)
+        create(:merge_request, source_project: project)
+        allow_any_instance_of(MergeRequest).to receive(:to_hook_data).and_return(sample_data)
 
-        expect(hook).to receive(:execute).with(sample_data, trigger).and_return(success_result)
+        expect(hook).to receive(:execute).with(sample_data, trigger_key).and_return(success_result)
         expect(service.execute).to include(success_result)
       end
     end
