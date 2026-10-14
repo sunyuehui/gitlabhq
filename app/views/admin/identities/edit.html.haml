@@ -1,6 +1,7 @@
-- page_title "Edit", @identity.provider, "Identities", @user.name, "Users"
-%h3.page-title
-  Edit identity for #{@user.name}
-%hr
+- add_to_breadcrumbs _('Users'), admin_users_path
+- add_to_breadcrumbs @user.name, admin_user_identities_path(@user)
+- breadcrumb_title _('Edit')
+- page_title _("Edit identity"), @identity.provider, _("Identities"), @user.name, _("Users")
 
+= render ::Layouts::PageHeadingComponent.new(_('Edit identity for %{user_name}') % { user_name: @user.name })
 = render 'form'

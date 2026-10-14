@@ -1,29 +1,28 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'User wants to add a .gitignore file' do
+RSpec.describe 'Projects > Files > User wants to add a .gitignore file', :js, feature_category: :source_code_management do
+  include Features::SourceEditorSpecHelpers
+
   before do
-    user = create(:user)
     project = create(:project, :repository)
-    project.team << [user, :master]
-    sign_in user
+    sign_in project.first_owner
     visit project_new_blob_path(project, 'master', file_name: '.gitignore')
   end
 
-  scenario 'user can see .gitignore dropdown' do
-    expect(page).to have_css('.gitignore-selector')
-  end
+  it 'user can pick a .gitignore file from the dropdown' do
+    click_button 'Apply a template'
 
-  scenario 'user can pick a .gitignore file from the dropdown', js: true do
-    find('.js-gitignore-selector').click
-    wait_for_requests
-    within '.gitignore-selector' do
-      find('.dropdown-input-field').set('rails')
-      find('.dropdown-content li', text: 'Rails').click
+    within '.gl-new-dropdown-panel' do
+      find('.gl-listbox-search-input').set('rails')
+      find('.gl-new-dropdown-contents li', text: 'Rails').click
     end
+
     wait_for_requests
 
-    expect(page).to have_css('.gitignore-selector .dropdown-toggle-text', text: 'Rails')
-    expect(page).to have_content('/.bundle')
-    expect(page).to have_content('# Gemfile.lock, .ruby-version, .ruby-gemset')
+    expect(page).to have_css('.gl-new-dropdown-button-text', text: 'Rails')
+    expect(find('.monaco-editor')).to have_content('/.bundle')
+    expect(find('.monaco-editor')).to have_content('config/initializers/secret_token.rb')
   end
 end

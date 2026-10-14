@@ -1,221 +1,217 @@
-/* eslint-disable func-names, space-before-function-paren, no-var, prefer-rest-params, wrap-iife, no-unused-vars, consistent-return, one-var, one-var-declaration-per-line, quotes, prefer-template, object-shorthand, comma-dangle, no-else-return, no-param-reassign, max-len */
+/* eslint-disable func-names, consistent-return, no-param-reassign */
 
-import _ from 'underscore';
-import Cookies from 'js-cookie';
-import SidebarHeightManager from './sidebar_height_manager';
+import $ from 'jquery';
+import { PanelBreakpointInstance } from '~/panel_breakpoint_instance';
+import { setCookie } from '~/lib/utils/common_utils';
+import { hide, fixTitle } from '~/tooltips';
+import { __ } from './locale';
 
-(function() {
-  this.Sidebar = (function() {
-    function Sidebar(currentUser) {
-      this.toggleTodo = this.toggleTodo.bind(this);
-      this.sidebar = $('aside');
+const updateSidebarClasses = (layoutPage, rightSidebar) => {
+  if (PanelBreakpointInstance.isDesktop()) {
+    layoutPage.classList.remove('right-sidebar-expanded', 'right-sidebar-collapsed');
+    rightSidebar.classList.remove('right-sidebar-collapsed');
+    rightSidebar.classList.add('right-sidebar-expanded');
+  } else {
+    layoutPage.classList.add('right-sidebar-collapsed', 'is-merge-request');
+    rightSidebar.classList.add('right-sidebar-collapsed');
+    rightSidebar.classList.remove('right-sidebar-expanded');
+  }
+};
 
-      this.removeListeners();
-      this.addEventListeners();
+function Sidebar() {
+  this.sidebar = $('aside');
+
+  this.isMR = /projects:merge_requests:/.test(document.body.dataset.page);
+
+  this.isTransitioning = false;
+
+  this.removeListeners();
+  this.addEventListeners();
+}
+
+Sidebar.initialize = function () {
+  if (!this.instance) {
+    this.instance = new Sidebar();
+  }
+};
+
+Sidebar.prototype.removeListeners = function () {
+  this.sidebar.off('click', '.sidebar-collapsed-icon');
+  // eslint-disable-next-line @gitlab/no-global-event-off
+  this.sidebar.off('hidden.gl.dropdown');
+  // eslint-disable-next-line @gitlab/no-global-event-off
+  this.sidebar.off('hiddenGlDropdown');
+  // eslint-disable-next-line @gitlab/no-global-event-off
+  $('.dropdown').off('loading.gl.dropdown');
+  // eslint-disable-next-line @gitlab/no-global-event-off
+  $('.dropdown').off('loaded.gl.dropdown');
+  $(document).off('click', '.js-sidebar-toggle');
+};
+
+Sidebar.prototype.addEventListeners = function () {
+  const $document = $(document);
+
+  this.sidebar.on('click', '.sidebar-collapsed-icon', this, this.sidebarCollapseClicked);
+  this.sidebar.on('hidden.gl.dropdown', this, this.onSidebarDropdownHidden);
+  this.sidebar.on('hiddenGlDropdown', this, this.onSidebarDropdownHidden);
+
+  $document.on('click', '.js-sidebar-toggle', this.sidebarToggleClicked.bind(this));
+
+  const layoutPage = document.querySelector('.layout-page');
+  const rightSidebar = document.querySelector('.js-right-sidebar');
+
+  if (rightSidebar?.classList.contains('right-sidebar-merge-requests')) {
+    updateSidebarClasses(layoutPage, rightSidebar);
+
+    PanelBreakpointInstance.addResizeListener(() => {
+      updateSidebarClasses(layoutPage, rightSidebar);
+    });
+  }
+};
+
+Sidebar.prototype.sidebarToggleClicked = function (e, triggered) {
+  if (this.isTransitioning && this.sidebar.is(':not(.right-sidebar-merge-requests)')) return;
+
+  this.isTransitioning = true;
+
+  /**
+   * We're bypassing `transitionend` event handler only when
+   * transition-duration is 0, as in rspecs, animations are
+   * disabled which causes transitionend event to never emit;
+   * See https://developer.mozilla.org/en-US/docs/Web/API/Element/transitionend_event
+   * This causes the `isTransitioning` flag to never be updated
+   * making sidebar no longer expandable once collapsed;
+   * See https://gitlab.com/gitlab-org/gitlab/-/issues/579764
+   */
+  if (this.sidebar.css('transitionDuration') !== '0s') {
+    this.sidebar.one('transitionend', () => {
+      this.isTransitioning = false;
+    });
+  } else {
+    setTimeout(() => {
+      this.isTransitioning = false;
+    }, 0);
+  }
+
+  const $toggleButtons = $('.js-sidebar-toggle');
+  const $collapseIcon = $('.js-sidebar-collapse');
+  const $expandIcon = $('.js-sidebar-expand');
+  const $toggleButtonMilestone = $('.js-milestone-toggle');
+
+  const $toggleContainer = $('.js-sidebar-toggle-container');
+  const isExpanded = $toggleContainer.data('is-expanded');
+  const tooltipLabel = isExpanded ? __('Expand sidebar') : __('Collapse sidebar');
+  e.preventDefault();
+
+  if (isExpanded) {
+    $toggleContainer.data('is-expanded', false);
+    $collapseIcon.addClass('hidden');
+    $expandIcon.removeClass('hidden');
+    $('aside.right-sidebar')
+      .removeClass('right-sidebar-expanded')
+      .addClass('right-sidebar-collapsed');
+
+    if (!this.isMR) {
+      $('.layout-page').removeClass('right-sidebar-expanded').addClass('right-sidebar-collapsed');
     }
 
-    Sidebar.prototype.removeListeners = function () {
-      this.sidebar.off('click', '.sidebar-collapsed-icon');
-      $('.dropdown').off('hidden.gl.dropdown');
-      $('.dropdown').off('loading.gl.dropdown');
-      $('.dropdown').off('loaded.gl.dropdown');
-      $(document).off('click', '.js-sidebar-toggle');
-    };
+    if ($toggleButtonMilestone) {
+      $toggleButtonMilestone.removeClass('hidden');
+    }
+  } else {
+    $toggleContainer.data('is-expanded', true);
+    $expandIcon.addClass('hidden');
+    $collapseIcon.removeClass('hidden');
+    $('aside.right-sidebar')
+      .removeClass('right-sidebar-collapsed')
+      .addClass('right-sidebar-expanded');
 
-    Sidebar.prototype.addEventListeners = function() {
-      SidebarHeightManager.init();
-      const $document = $(document);
+    if (!this.isMR) {
+      $('.layout-page').removeClass('right-sidebar-collapsed').addClass('right-sidebar-expanded');
+    }
 
-      this.sidebar.on('click', '.sidebar-collapsed-icon', this, this.sidebarCollapseClicked);
-      $('.dropdown').on('hidden.gl.dropdown', this, this.onSidebarDropdownHidden);
-      $('.dropdown').on('loading.gl.dropdown', this.sidebarDropdownLoading);
-      $('.dropdown').on('loaded.gl.dropdown', this.sidebarDropdownLoaded);
+    if ($toggleButtonMilestone) {
+      $toggleButtonMilestone.addClass('hidden');
+    }
+  }
 
-      $document.on('click', '.js-sidebar-toggle', function(e, triggered) {
-        var $allGutterToggleIcons, $this, $thisIcon;
-        e.preventDefault();
-        $this = $(this);
-        $thisIcon = $this.find('i');
-        $allGutterToggleIcons = $('.js-sidebar-toggle i');
-        if ($thisIcon.hasClass('fa-angle-double-right')) {
-          $allGutterToggleIcons.removeClass('fa-angle-double-right').addClass('fa-angle-double-left');
-          $('aside.right-sidebar').removeClass('right-sidebar-expanded').addClass('right-sidebar-collapsed');
-          $('.page-with-sidebar').removeClass('right-sidebar-expanded').addClass('right-sidebar-collapsed');
-        } else {
-          $allGutterToggleIcons.removeClass('fa-angle-double-left').addClass('fa-angle-double-right');
-          $('aside.right-sidebar').removeClass('right-sidebar-collapsed').addClass('right-sidebar-expanded');
-          $('.page-with-sidebar').removeClass('right-sidebar-collapsed').addClass('right-sidebar-expanded');
-        }
-        if (!triggered) {
-          return Cookies.set("collapsed_gutter", $('.right-sidebar').hasClass('right-sidebar-collapsed'));
-        }
-      });
-      return $(document).off('click', '.js-issuable-todo').on('click', '.js-issuable-todo', this.toggleTodo);
-    };
+  $toggleButtons.attr('data-original-title', tooltipLabel);
+  $toggleButtons.attr('title', tooltipLabel);
+  fixTitle($toggleButtons);
+  hide($toggleButtons);
 
-    Sidebar.prototype.toggleTodo = function(e) {
-      var $btnText, $this, $todoLoading, ajaxType, url;
-      $this = $(e.currentTarget);
-      ajaxType = $this.attr('data-delete-path') ? 'DELETE' : 'POST';
-      if ($this.attr('data-delete-path')) {
-        url = "" + ($this.attr('data-delete-path'));
-      } else {
-        url = "" + ($this.data('url'));
-      }
+  if (!triggered) {
+    setCookie('collapsed_gutter', $('.right-sidebar').hasClass('right-sidebar-collapsed'));
+  }
+};
 
-      $this.tooltip('hide');
+Sidebar.prototype.sidebarCollapseClicked = function (e) {
+  if ($(e.currentTarget).hasClass('js-dont-change-state')) {
+    return;
+  }
+  const sidebar = e.data;
+  e.preventDefault();
+  const $block = $(this).closest('.block');
+  return sidebar.openDropdown($block);
+};
 
-      return $.ajax({
-        url: url,
-        type: ajaxType,
-        dataType: 'json',
-        data: {
-          issuable_id: $this.data('issuable-id'),
-          issuable_type: $this.data('issuable-type')
-        },
-        beforeSend: (function(_this) {
-          return function() {
-            $('.js-issuable-todo').disable()
-              .addClass('is-loading');
-          };
-        })(this)
-      }).done((function(_this) {
-        return function(data) {
-          return _this.todoUpdateDone(data);
-        };
-      })(this));
-    };
+Sidebar.prototype.openDropdown = function (blockOrName) {
+  const $block = typeof blockOrName === 'string' ? this.getBlock(blockOrName) : blockOrName;
+  if (!this.isOpen()) {
+    this.setCollapseAfterUpdate($block);
+    this.toggleSidebar('open');
+  }
+};
 
-    Sidebar.prototype.todoUpdateDone = function(data) {
-      const deletePath = data.delete_path ? data.delete_path : null;
-      const attrPrefix = deletePath ? 'mark' : 'todo';
-      const $todoBtns = $('.js-issuable-todo');
+Sidebar.prototype.setCollapseAfterUpdate = function ($block) {
+  $block.addClass('collapse-after-update');
+  return $('.layout-page').addClass('with-overlay');
+};
 
-      $(document).trigger('todo:toggle', data.count);
+Sidebar.prototype.onSidebarDropdownHidden = function (e) {
+  const sidebar = e.data;
+  e.preventDefault();
+  const $block = $(e.target).closest('.block');
+  return sidebar.sidebarDropdownHidden($block);
+};
 
-      $todoBtns.each((i, el) => {
-        const $el = $(el);
-        const $elText = $el.find('.js-issuable-todo-inner');
+Sidebar.prototype.sidebarDropdownHidden = function ($block) {
+  if ($block.hasClass('collapse-after-update')) {
+    $block.removeClass('collapse-after-update');
+    $('.layout-page').removeClass('with-overlay');
+    return this.toggleSidebar('hide');
+  }
+};
 
-        $el.removeClass('is-loading')
-          .enable()
-          .attr('aria-label', $el.data(`${attrPrefix}-text`))
-          .attr('data-delete-path', deletePath)
-          .attr('title', $el.data(`${attrPrefix}-text`));
+Sidebar.prototype.triggerOpenSidebar = function () {
+  return this.sidebar.find('.js-sidebar-toggle').trigger('click');
+};
 
-        if ($el.hasClass('has-tooltip')) {
-          $el.tooltip('fixTitle');
-        }
+Sidebar.prototype.toggleSidebar = function (action) {
+  if (action == null) {
+    action = 'toggle';
+  }
+  if (action === 'toggle') {
+    this.triggerOpenSidebar();
+  }
+  if (action === 'open') {
+    if (!this.isOpen()) {
+      this.triggerOpenSidebar();
+    }
+  }
+  if (action === 'hide') {
+    if (this.isOpen()) {
+      return this.triggerOpenSidebar();
+    }
+  }
+};
 
-        if ($el.data(`${attrPrefix}-icon`)) {
-          $elText.html($el.data(`${attrPrefix}-icon`));
-        } else {
-          $elText.text($el.data(`${attrPrefix}-text`));
-        }
-      });
-    };
+Sidebar.prototype.isOpen = function () {
+  return this.sidebar.is('.right-sidebar-expanded');
+};
 
-    Sidebar.prototype.sidebarDropdownLoading = function(e) {
-      var $loading, $sidebarCollapsedIcon, i, img;
-      $sidebarCollapsedIcon = $(this).closest('.block').find('.sidebar-collapsed-icon');
-      img = $sidebarCollapsedIcon.find('img');
-      i = $sidebarCollapsedIcon.find('i');
-      $loading = $('<i class="fa fa-spinner fa-spin"></i>');
-      if (img.length) {
-        img.before($loading);
-        return img.hide();
-      } else if (i.length) {
-        i.before($loading);
-        return i.hide();
-      }
-    };
+Sidebar.prototype.getBlock = function (name) {
+  return this.sidebar.find(`.block.${name}`);
+};
 
-    Sidebar.prototype.sidebarDropdownLoaded = function(e) {
-      var $sidebarCollapsedIcon, i, img;
-      $sidebarCollapsedIcon = $(this).closest('.block').find('.sidebar-collapsed-icon');
-      img = $sidebarCollapsedIcon.find('img');
-      $sidebarCollapsedIcon.find('i.fa-spin').remove();
-      i = $sidebarCollapsedIcon.find('i');
-      if (img.length) {
-        return img.show();
-      } else {
-        return i.show();
-      }
-    };
-
-    Sidebar.prototype.sidebarCollapseClicked = function(e) {
-      var $block, sidebar;
-      if ($(e.currentTarget).hasClass('dont-change-state')) {
-        return;
-      }
-      sidebar = e.data;
-      e.preventDefault();
-      $block = $(this).closest('.block');
-      return sidebar.openDropdown($block);
-    };
-
-    Sidebar.prototype.openDropdown = function(blockOrName) {
-      var $block;
-      $block = _.isString(blockOrName) ? this.getBlock(blockOrName) : blockOrName;
-      $block.find('.edit-link').trigger('click');
-      if (!this.isOpen()) {
-        this.setCollapseAfterUpdate($block);
-        return this.toggleSidebar('open');
-      }
-    };
-
-    Sidebar.prototype.setCollapseAfterUpdate = function($block) {
-      $block.addClass('collapse-after-update');
-      return $('.page-with-sidebar').addClass('with-overlay');
-    };
-
-    Sidebar.prototype.onSidebarDropdownHidden = function(e) {
-      var $block, sidebar;
-      sidebar = e.data;
-      e.preventDefault();
-      $block = $(this).closest('.block');
-      return sidebar.sidebarDropdownHidden($block);
-    };
-
-    Sidebar.prototype.sidebarDropdownHidden = function($block) {
-      if ($block.hasClass('collapse-after-update')) {
-        $block.removeClass('collapse-after-update');
-        $('.page-with-sidebar').removeClass('with-overlay');
-        return this.toggleSidebar('hide');
-      }
-    };
-
-    Sidebar.prototype.triggerOpenSidebar = function() {
-      return this.sidebar.find('.js-sidebar-toggle').trigger('click');
-    };
-
-    Sidebar.prototype.toggleSidebar = function(action) {
-      if (action == null) {
-        action = 'toggle';
-      }
-      if (action === 'toggle') {
-        this.triggerOpenSidebar();
-      }
-      if (action === 'open') {
-        if (!this.isOpen()) {
-          this.triggerOpenSidebar();
-        }
-      }
-      if (action === 'hide') {
-        if (this.isOpen()) {
-          return this.triggerOpenSidebar();
-        }
-      }
-    };
-
-    Sidebar.prototype.isOpen = function() {
-      return this.sidebar.is('.right-sidebar-expanded');
-    };
-
-    Sidebar.prototype.getBlock = function(name) {
-      return this.sidebar.find(".block." + name);
-    };
-
-    return Sidebar;
-  })();
-}).call(window);
+export default Sidebar;

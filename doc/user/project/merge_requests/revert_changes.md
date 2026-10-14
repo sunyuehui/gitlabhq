@@ -1,64 +1,119 @@
-# Reverting changes
-
-> [Introduced][ce-1990] in GitLab 8.5.
-
+---
+stage: AI Coding
+group: Code Review
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+description: How to revert commits or merge requests in a GitLab project.
+title: Revert changes
 ---
 
-GitLab implements Git's powerful feature to [revert any commit][git-revert]
-with introducing a **Revert** button in Merge Requests and commit details.
+{{< details >}}
 
-## Reverting a Merge Request
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-_**Note:** The **Revert** button will only be available for Merge Requests
-created since GitLab 8.5. However, you can still revert a Merge Request
-by reverting the merge commit from the list of Commits page._
+{{< /details >}}
 
-After the Merge Request has been merged, a **Revert** button will be available
-to revert the changes introduced by that Merge Request:
+Mistakes happen in code. Version control makes it possible to fix those mistakes by reverting them.
 
-![Revert Merge Request](img/revert_changes_mr.png)
+When you revert a commit, you create a new commit (a revert commit) that reverses the
+bad change, rather than erasing the existence of the problem from your project's history. Revert commits
+provide a clear audit trail, rather than a gap where the previous commit was. The revert commit
+follows your project's access controls and processes, and:
 
----
+- Removes the lines added in the original commit.
+- Restores the lines removed in the original commit.
+- Restores the lines modified in the original commit to their previous state.
 
-You can revert the changes directly into the selected branch or you can opt to
-create a new Merge Request with the revert changes:
+Reverts are not limited to just commits. If the bad change spans more than one commit, consider
+reverting all changes from the merge request, rather than reverting commit by commit. This approach
+provides a cleaner audit trail.
 
-![Revert Merge Request modal](img/revert_changes_mr_modal.png)
+## Revert a merge request
 
----
+After a merge request merges, you can revert all changes in the merge request.
 
-After the Merge Request has been reverted, the **Revert** button will not be
-available anymore.
+Prerequisites:
 
-## Reverting a Commit
+- You must have a role for the project that allows you to edit merge requests, and add
+  code to the repository.
+- Your project must use the [merge method](methods/_index.md#fast-forward-merge) **Merge Commit**,
+  set in your project's **Settings** > **Merge requests**.
 
-You can revert a Commit from the Commit details page:
+  You can revert fast-forwarded commits from the GitLab UI if either:
 
-![Revert commit](img/revert_changes_commit.png)
+  - The commits are squashed, or
+  - The merge request contains a single commit.
 
----
+For more information, see [issue 22236](https://gitlab.com/gitlab-org/gitlab/-/issues/22236).
 
-Similar to reverting a Merge Request, you can opt to revert the changes
-directly into the target branch or create a new Merge Request to revert the
-changes:
+To revert merge request `Example`:
 
-![Revert commit modal](img/revert_changes_commit_modal.png)
+1. In the top bar, select **Search or go to** and find your project.
+1. In the left sidebar, select **Code** > **Merge requests**.
+1. From the secondary menu, select **Merged**, and select your merge request (here, `Example`).
+1. Scroll to the merge request reports area, and find the report showing the
+   **Merged by** information.
+1. Select **Revert**.
+1. In **Revert in branch**, select the branch to revert your changes into.
+1. To revert immediately, without a merge request:
+   1. Clear **Start a new merge request**.
+   1. Select **Revert**, and the revert of `Example` is complete.
+1. To review the revert in a new merge request instead of reverting immediately,
+   select **Start a new merge request**, then:
+   1. Fill in the fields for your revert merge request, then select **Create merge request**.
+   1. When the merge request merges, the revert of `Example` is complete.
 
----
+## Revert a commit
 
-After the Commit has been reverted, the **Revert** button will not be available
-anymore.
+You can revert any commit in a repository into either:
 
-Please note that when reverting merge commits, the mainline will always be the
-first parent. If you want to use a different mainline then you need to do that
-from the command line.
+- The current branch.
+- A new merge request.
 
-Here is a quick example to revert a merge commit using the second parent as the
-mainline:
+Prerequisites:
 
-```bash
-git revert -m 2 7a39eb0
-```
+- Your role for the project must allow you to edit merge requests, and add
+  code to the repository.
+- The commit must not have already been reverted, as the **Revert** option is not
+  shown in this case.
 
-[ce-1990]: https://gitlab.com/gitlab-org/gitlab-ce/merge_requests/1990 "Revert button Merge Request"
-[git-revert]: https://git-scm.com/docs/git-revert "Git revert documentation"
+To do this:
+
+1. In the top bar, select **Search or go to** and find your project.
+1. If you know the merge request that contains the commit:
+   1. In the left sidebar, select **Code** > **Merge requests**, then select your merge request.
+   1. Select **Commits**, then select the title of the commit you want to revert.
+      This displays the commit in the context of your merge request.
+   1. Below the secondary menu, GitLab shows the message **Viewing commit `00001111`**,
+      where `00001111` is the hash of the commit. Select the commit hash to show
+      the commit's page.
+1. If you don't know the merge request the commit originated from:
+   1. In the left sidebar, select **Code** > **Commits**.
+   1. Select the title of the commit to display full information about the commit.
+1. In the upper-right corner, select **Options**, then select **Revert**.
+1. In **Revert in branch**, select the branch to revert your changes into.
+1. To revert immediately, without a merge request:
+   1. Clear **Start a new merge request**.
+   1. Select **Revert**.
+1. To review the revert in a new merge request instead of reverting immediately,
+   select **Start a new merge request**, then:
+   1. Fill in the fields for your revert merge request, then select **Create merge request**.
+   1. When the merge request merges, the commit revert is complete.
+
+### Revert a merge commit to a different parent commit
+
+When you revert a merge commit, the branch you merged to (often `main`) is always the
+first parent. To revert a merge commit to a different parent, you must revert the commit from
+the command line, see [revert and undo changes with Git](../../../topics/git/undo.md#revert-a-merge-commit-to-a-different-parent).
+
+## Redact text from repository
+
+For more information on [redacting text](../repository/repository_size.md#redact-text-from-repository) from a repository and other techniques to remove data, see
+[repository size](../repository/repository_size.md).
+
+## Related topics
+
+- [Official `git revert` documentation](https://git-scm.com/docs/git-revert)
+- [Undo changes by using Git](../../../topics/git/undo.md)
+- [Revert a commit](../../../api/commits.md#revert-a-commit) with the Commits API
+- How changelogs [handle reverted commits](../changelogs.md#reverted-commit-handling)

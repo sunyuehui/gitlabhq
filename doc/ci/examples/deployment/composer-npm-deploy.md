@@ -1,26 +1,37 @@
-## Running Composer and NPM scripts with deployment via SCP
+---
+stage: Verify
+group: Runner Core
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Running Composer and npm scripts with deployment through SCP in GitLab CI/CD
+---
 
-This guide covers the building dependencies of a PHP project while compiling assets via an NPM script.
+{{< details >}}
 
-While is possible to create your own image with custom PHP and Node JS versions, for brevity, we will use an existing [Docker image](https://hub.docker.com/r/tetraweb/php/) that contains both PHP and NodeJS installed.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
+{{< /details >}}
+
+Use [GitLab CI/CD](../../_index.md) to build dependencies of a PHP project while compiling assets with an npm script.
+
+It is possible to create your own image with custom PHP and Node.js versions. For brevity, this guide uses the official [`php`](https://hub.docker.com/_/php) Docker image and installs Node.js in the `before_script`.
 
 ```yaml
-image: tetraweb/php
+image: php:8.3
 ```
 
-The next step is to install zip/unzip packages and make composer available. We will place these in the `before_script` section:
+The next step is to install the zip/unzip packages and Node.js, and make Composer available. Place these in the `before_script` section:
 
 ```yaml
 before_script:
   - apt-get update
-  - apt-get install zip unzip
+  - apt-get install -y git zip unzip nodejs npm
   - php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
   - php composer-setup.php
   - php -r "unlink('composer-setup.php');"
 ```
 
-This will make sure we have all requirements ready. Next, we want to run `composer install` to fetch all PHP dependencies  and `npm install` to load node packages, then run the `npm` script. We need to append them  into `before_script` section:
+This ensures all requirements are ready. Next, run `composer install` to fetch all PHP dependencies and `npm install` to load Node.js packages. Then run the `npm` script. Append the commands to the `before_script` section:
 
 ```yaml
 before_script:
@@ -33,23 +44,23 @@ before_script:
 In this particular case, the `npm deploy` script is a Gulp script that does the following:
 
 1. Compile CSS & JS
-2. Create sprites
-3. Copy various assets (images, fonts) around
-4. Replace some strings
+1. Create sprites
+1. Copy various assets (images, fonts) around
+1. Replace some strings
 
-All these operations will put all files into a `build` folder, which is ready to be deployed to a live server.
+All these operations put all files into a `build` folder, which is ready to be deployed to a live server.
 
-### How to transfer files to a live server?
+## How to transfer files to a live server
 
-You have multiple options: rsync, scp, sftp and so on. For now, we will use scp.
+You have multiple options such as rsync, SCP, or SFTP. For now, use SCP.
 
-To make this work, you need to add a GitLab Secret Variable (accessible on _gitlab.example/your-project-name/variables_). That variable will be called `STAGING_PRIVATE_KEY` and it's the  **private** ssh key of your server.
+To make this work, you must add a GitLab CI/CD Variable (accessible on `gitlab.example/your-project-name/variables`). Name this variable `STAGING_PRIVATE_KEY` and set it to the private SSH key of your server.
 
-#### Security tip
+### Security tip
 
-Create a user that has access **only** to the folder that needs to be updated!
+Create a user that has access only to the folder that needs to be updated.
 
-After you create that variable, you need to make sure that key will be added to the docker container on run:
+After you create that variable, make sure that key is added to the Docker container on run:
 
 ```yaml
 before_script:
@@ -60,26 +71,26 @@ before_script:
   - '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
 ```
 
-In order, this means that:
+This script performs the following actions:
 
-1. We check if the `ssh-agent` is available and we install it if it's not;
-2. We create the `~/.ssh` folder;
-3. We make sure we're running bash;
-4. We disable host checking (we don't ask for user accept when we first connect to a server; and since every job will equal a first connect, we kind of need this)
+1. Check if the `ssh-agent` is available and install it if it's not.
+1. Create the `~/.ssh` folder.
+1. Make sure the script execution environment is running bash.
+1. Disable host checking. Every connection occurs in a new environment, so disabling host checking ensures GitLab doesn't ask the user to verify and accept the server's identity before connecting each time.
 
 And this is basically all you need in the `before_script` section.
 
-## How to deploy things?
+## How to deploy
 
-As we stated above, we need to deploy the `build` folder from the docker image to our server. To do so, we create a new job:
+To deploy the `build` folder from the Docker image to your server, create a new job:
 
 ```yaml
 stage_deploy:
   artifacts:
     paths:
       - build/
-  only:
-    - dev
+  rules:
+    - if: $CI_COMMIT_BRANCH == "dev"
   script:
     - ssh-add <(echo "$STAGING_PRIVATE_KEY")
     - ssh -p22 server_user@server_host "mkdir htdocs/wp-content/themes/_tmp"
@@ -88,18 +99,18 @@ stage_deploy:
     - ssh -p22 server_user@server_host "rm -rf htdocs/wp-content/themes/_old"
 ```
 
-### What's going on here?
+Here's the breakdown:
 
-1. `only:dev` means that this build will run only when something is pushed to the `dev` branch. You can remove this block completely and have everything be ran on every push (but probably this is something you don't want)
-2. `ssh-add ...` we will add that private key you added on the web UI to the docker container
-3. We will connect via `ssh` and create a new `_tmp` folder
-4. We will connect via `scp` and upload the `build` folder (which was generated by a `npm` script) to our previously created `_tmp` folder
-5. We will connect again to `ssh` and move the `live` folder to an `_old` folder, then move `_tmp` to `live`.
-6. We connect to ssh and remove the `_old` folder
+1. `rules:if: $CI_COMMIT_BRANCH == "dev"` means that this build runs only when something is pushed to the `dev` branch. You can remove this block completely and have everything run on every push (but probably this is something you don't want).
+1. `ssh-add ...` adds that private key you added on the web UI to the Docker container.
+1. Connect using `ssh` and create a new `_tmp` folder.
+1. Connect using `scp` and upload the `build` folder (which was generated by a `npm` script) to the previously created `_tmp` folder.
+1. Connect again using `ssh` and move the `live` folder to an `_old` folder, then move `_tmp` to `live`.
+1. Connect to SSH and remove the `_old` folder.
 
-What's the deal with the artifacts? We just tell GitLab CI to keep the `build` directory (later on, you can download that as needed).
+The `artifacts` section instructs GitLab CI/CD to keep the `build` directory (later on, you can download that as needed).
 
-#### Why we do it this way?
+### Why do it this way
 
 If you're using this only for stage server, you could do this in two steps:
 
@@ -108,45 +119,43 @@ If you're using this only for stage server, you could do this in two steps:
 - scp -P22 -r build/* server_user@server_host:htdocs/wp-content/themes/live
 ```
 
-The problem is that there will be a small period of time when you won't have the app on your server.
+The problem is that there's a small period of time when you don't have the app on your server.
 
-So we use so many steps because we want to make sure that at any given time we have a functional app in place.
+Therefore, for a production environment, the additional steps ensure that a functional app is in place at any given time.
 
-## Where to go next?
+## Where to go next
 
-Since this was a WordPress project, I gave real life code snippets. Some ideas you can pursuit:
+Because this was a WordPress project, it includes real code snippets. Some further ideas you can pursue:
 
-- Having a slightly different script for `master` branch will allow you to deploy to a production server from that branch and to a stage server from any other branches;
-- Instead of pushing it live, you can push it to WordPress official repo (with creating a SVN commit & stuff);
+- Having a slightly different script for the default branch allows you to deploy to a production server from that branch and to a stage server from any other branches.
+- Instead of pushing it live, you can push it to WordPress official repository.
 - You could generate i18n text domains on the fly.
 
 ---
 
-Our final `.gitlab-ci.yml` will look like this:
+The final `.gitlab-ci.yml` looks like this:
 
 ```yaml
-image: tetraweb/php
-
-before_script:
-  - apt-get update
-  - apt-get install zip unzip
-  - php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-  - php composer-setup.php
-  - php -r "unlink('composer-setup.php');"
-  - php composer.phar install
-  - npm install
-  - npm run deploy
-  - 'which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )'
-  - mkdir -p ~/.ssh
-  - eval $(ssh-agent -s)
-  - '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
-
 stage_deploy:
+  image: php:8.3
   artifacts:
     paths:
-    - build/
-  only:
-    - dev
+      - build/
+  rules:
+    - if: $CI_COMMIT_BRANCH == "dev"
+  before_script:
+    - apt-get update
+    - apt-get install -y git zip unzip nodejs npm
+    - php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+    - php composer-setup.php
+    - php -r "unlink('composer-setup.php');"
+    - php composer.phar install
+    - npm install
+    - npm run deploy
+    - 'which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )'
+    - mkdir -p ~/.ssh
+    - eval $(ssh-agent -s)
+    - '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
   script:
     - ssh-add <(echo "$STAGING_PRIVATE_KEY")
     - ssh -p22 server_user@server_host "mkdir htdocs/wp-content/themes/_tmp"

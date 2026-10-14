@@ -1,48 +1,24 @@
-- access = note_max_access_for_user(note)
+- access = note_human_max_access(note)
+- if note.noteable_author?(@noteable)
+  = render Pajamas::BadgeComponent.new(_("Author"), variant: 'neutral', class: 'has-tooltip gl-hidden @md/panel:gl-inline-block gl-mr-3', title: _("This user is the author of this %{noteable}.") % { noteable: @noteable.human_class_name })
 - if access
-  %span.note-role= access
+  = render Pajamas::BadgeComponent.new(access, variant: 'neutral', class: 'has-tooltip gl-hidden @md/panel:gl-inline-block gl-mr-3', title: _("This user has the %{access} role in the %{name} project.") % { access: access.downcase, name: note.project_name })
+- elsif note.contributor?
+  = render Pajamas::BadgeComponent.new(_("Contributor"), variant: 'neutral', class: 'has-tooltip gl-hidden @md/panel:gl-inline-block gl-mr-3', title: _("This user has previously committed to the %{name} project.") % { name: note.project_name })
 
-- if note.resolvable?
-  - can_resolve = can?(current_user, :resolve_note, note)
-  %resolve-btn{ "project-path" => project_path(note.project),
-      "discussion-id" => note.discussion_id(@noteable),
-      ":note-id" => note.id,
-      ":resolved" => note.resolved?,
-      ":can-resolve" => can_resolve,
-      ":author-name" => "'#{j(note.author.name)}'",
-      "author-avatar" => note.author.avatar_url,
-      ":note-truncated" => "'#{j(truncate(note.note, length: 17))}'",
-      ":resolved-by" => "'#{j(note.resolved_by.try(:name))}'",
-      "v-show" => "#{can_resolve || note.resolved?}",
-      "inline-template" => true,
-      "ref" => "note_#{note.id}" }
-
-    .note-actions-item
-      %button.note-action-button.line-resolve-btn{ type: "button",
-          class: ("is-disabled" unless can_resolve),
-          ":class" => "{ 'is-active': isResolved }",
-          ":aria-label" => "buttonText",
-          "@click" => "resolve",
-          ":title" => "buttonText",
-          ":ref" => "'button'" }
-
-        = icon('spin spinner', 'v-show' => 'loading', class: 'loading', 'aria-hidden' => 'true', 'aria-label' => 'Loading')
-        %div{ 'v-show' => '!loading' }= render 'shared/icons/icon_status_success.svg'
-
-- if current_user
+- if can?(current_user, :award_emoji, note)
   - if note.emoji_awardable?
-    - user_authored = note.user_authored?(current_user)
-    .note-actions-item
-      = button_tag title: 'Add reaction', class: "note-action-button note-emoji-button js-add-award js-note-emoji #{'js-user-authored' if user_authored} has-tooltip btn btn-transparent", data: { position: 'right', container: 'body' } do
-        = icon('spinner spin')
-        %span{ class: 'link-highlight award-control-icon-neutral' }= custom_icon('emoji_slightly_smiling_face')
-        %span{ class: 'link-highlight award-control-icon-positive' }= custom_icon('emoji_smiley')
-        %span{ class: 'link-highlight award-control-icon-super-positive' }= custom_icon('emoji_smile')
+    = render Pajamas::ButtonComponent.new(category: :tertiary,
+      button_options: { title: _('Add reaction'), class: 'btn-icon add-reaction-button note-action-button note-emoji-button js-add-award js-note-emoji has-tooltip', data: { position: 'right', container: 'body' }, 'aria-label': _('Add reaction') }) do
+      = sprite_icon('slight-smile', css_class: 'reaction-control-icon-neutral award-control-icon-neutral gl-button-icon gl-icon')
+      = sprite_icon('smiley', css_class: 'reaction-control-icon-positive award-control-icon-positive gl-button-icon gl-icon !gl-left-3')
+      = sprite_icon('smile', css_class: 'reaction-control-icon-super-positive award-control-icon-super-positive gl-button-icon gl-icon !gl-left-3 ')
 
   - if note_editable
-    .note-actions-item
-      = button_tag title: 'Edit comment', class: 'note-action-button js-note-edit has-tooltip btn btn-transparent', data: { container: 'body' } do
-        %span.link-highlight
-          = custom_icon('icon_pencil')
+    .gl-ml-0
+      = render Pajamas::ButtonComponent.new(category: :tertiary,
+        icon: 'pencil',
+        button_options: { class: 'gl-hidden @sm/panel:gl-inline-block note-action-button js-note-edit has-tooltip', data: { testid: 'edit-comment-button' }, title: _('Edit comment'), 'aria-label': _('Edit comment') })
 
   = render 'projects/notes/more_actions_dropdown', note: note, note_editable: note_editable
+

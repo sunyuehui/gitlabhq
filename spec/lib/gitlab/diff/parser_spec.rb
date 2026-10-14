@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Diff::Parser do
+RSpec.describe Gitlab::Diff::Parser, feature_category: :code_review_workflow do
   include RepoHelpers
 
   let(:project) { create(:project, :repository) }
@@ -10,7 +12,7 @@ describe Gitlab::Diff::Parser do
 
   describe '#parse' do
     let(:diff) do
-      <<eos
+      <<DIFF
 --- a/files/ruby/popen.rb
 +++ b/files/ruby/popen.rb
 @@ -6,12 +6,18 @@ module Popen
@@ -43,7 +45,7 @@ describe Gitlab::Diff::Parser do
      Open3.popen3(vars, *cmd, options) do |stdin, stdout, stderr, wait_thr|
        @cmd_output << stdout.read
        @cmd_output << stderr.read
-eos
+DIFF
     end
 
     before do
@@ -83,7 +85,7 @@ eos
       describe 'unchanged line' do
         let(:line) { @lines.last }
 
-        it { expect(line.type).to eq(nil) }
+        it { expect(line.type).to be_nil }
         it { expect(line.old_pos).to eq(24) }
         it { expect(line.new_pos).to eq(31) }
         it { expect(line.text).to eq('       @cmd_output << stderr.read') }
@@ -93,7 +95,7 @@ eos
 
   describe '\ No newline at end of file' do
     it "parses nonewline in one file correctly" do
-      first_nonewline_diff = <<~END
+      first_nonewline_diff = <<~DIFF
         --- a/test
         +++ b/test
         @@ -1,2 +1,2 @@
@@ -101,7 +103,7 @@ eos
          lorem
         -ipsum
         \\ No newline at end of file
-      END
+      DIFF
       lines = parser.parse(first_nonewline_diff.lines).to_a
 
       expect(lines[0].type).to eq('new')
@@ -113,7 +115,7 @@ eos
     end
 
     it "parses nonewline in two files correctly" do
-      both_nonewline_diff = <<~END
+      both_nonewline_diff = <<~DIFF
         --- a/test
         +++ b/test
         @@ -1,2 +1,2 @@
@@ -123,7 +125,7 @@ eos
         +ipsum
         +lorem
         \\ No newline at end of file
-      END
+      DIFF
       lines = parser.parse(both_nonewline_diff.lines).to_a
 
       expect(lines[0].type).to eq('old')
@@ -142,5 +144,32 @@ eos
   context 'when lines is empty' do
     it { expect(parser.parse([])).to eq([]) }
     it { expect(parser.parse(nil)).to eq([]) }
+  end
+
+  context 'when it is a binary notice' do
+    let(:diff)  do
+      <<~DIFF
+        Binary files a/test and b/test differ
+      DIFF
+    end
+
+    it { expect(parser.parse(diff.each_line)).to eq([]) }
+  end
+
+  describe 'tolerates special diff markers in a content' do
+    it "counts lines correctly" do
+      diff = <<~DIFF
+        --- a/test
+        +++ b/test
+        @@ -1,2 +1,2 @@
+        +ipsum
+        +++ b
+        -ipsum
+      DIFF
+
+      lines = parser.parse(diff.lines).to_a
+
+      expect(lines.size).to eq(3)
+    end
   end
 end

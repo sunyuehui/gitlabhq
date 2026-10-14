@@ -1,64 +1,59 @@
+# frozen_string_literal: true
+
 module Groups
   class VariablesController < Groups::ApplicationController
-    before_action :variable, only: [:show, :update, :destroy]
-    before_action :authorize_admin_build!
+    before_action :authorize_admin_group!, except: :update
+    before_action :authorize_admin_cicd_variables!, only: :update
 
-    def index
-      redirect_to group_settings_ci_cd_path(group)
-    end
+    skip_cross_project_access_check :show, :update
+
+    feature_category :pipeline_composition
+
+    urgency :low, [:show]
 
     def show
+      respond_to do |format|
+        format.json do
+          render status: :ok, json: { variables: ::Ci::GroupVariableSerializer.new.represent(@group.variables) }
+        end
+      end
     end
 
     def update
-      if variable.update(variable_params)
-        redirect_to group_variables_path(group),
-                    notice: 'Variable was successfully updated.'
-      else
-        render "show"
-      end
-    end
+      update_result = Ci::ChangeVariablesService.new(
+        container: @group, current_user: current_user,
+        params: group_variables_params
+      ).execute
 
-    def create
-      @variable = group.variables.create(variable_params)
-        .present(current_user: current_user)
-
-      if @variable.persisted?
-        redirect_to group_settings_ci_cd_path(group),
-                    notice: 'Variable was successfully created.'
+      if update_result
+        respond_to do |format|
+          format.json { render_group_variables }
+        end
       else
-        render "show"
-      end
-    end
-
-    def destroy
-      if variable.destroy
-        redirect_to group_settings_ci_cd_path(group),
-                    status: 302,
-                    notice: 'Variable was successfully removed.'
-      else
-        redirect_to group_settings_ci_cd_path(group),
-                    status: 302,
-                    notice: 'Failed to remove the variable.'
+        respond_to do |format|
+          format.json { render_error }
+        end
       end
     end
 
     private
 
-    def variable_params
-      params.require(:variable).permit(*variable_params_attributes)
+    def render_group_variables
+      render status: :ok, json: { variables: ::Ci::GroupVariableSerializer.new.represent(@group.variables) }
+    end
+
+    def render_error
+      render status: :bad_request, json: @group.errors.full_messages
+    end
+
+    def group_variables_params
+      params.permit(variables_attributes: Array(variable_params_attributes))
     end
 
     def variable_params_attributes
-      %i[key value protected]
-    end
-
-    def variable
-      @variable ||= group.variables.find(params[:id]).present(current_user: current_user)
-    end
-
-    def authorize_admin_build!
-      return render_404 unless can?(current_user, :admin_build, group)
+      %i[id variable_type key description value protected masked hidden raw _destroy]
     end
   end
 end
+
+Groups::VariablesController.prepend_mod_with('Groups::VariablesController')

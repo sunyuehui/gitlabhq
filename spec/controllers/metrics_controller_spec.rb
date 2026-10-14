@@ -1,73 +1,70 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe MetricsController do
+RSpec.describe MetricsController, :request_store do
   include StubENV
 
-  let(:json_response) { JSON.parse(response.body) }
-  let(:metrics_multiproc_dir) { Dir.mktmpdir }
+  let(:metrics_multiproc_dir) { @metrics_multiproc_dir }
   let(:whitelisted_ip) { '127.0.0.1' }
   let(:whitelisted_ip_range) { '10.0.0.0/24' }
   let(:ip_in_whitelisted_range) { '10.0.0.1' }
   let(:not_whitelisted_ip) { '10.0.1.1' }
+
+  around do |example|
+    Dir.mktmpdir do |path|
+      @metrics_multiproc_dir = path
+      example.run
+    end
+  end
 
   before do
     stub_env('IN_MEMORY_APPLICATION_SETTINGS', 'false')
     allow(Prometheus::Client.configuration).to receive(:multiprocess_files_dir).and_return(metrics_multiproc_dir)
     allow(Gitlab::Metrics).to receive(:prometheus_metrics_enabled?).and_return(true)
     allow(Settings.monitoring).to receive(:ip_whitelist).and_return([whitelisted_ip, whitelisted_ip_range])
+    allow_next_instance_of(MetricsService) do |instance|
+      allow(instance).to receive(:metrics_text).and_return("prometheus_counter 1")
+    end
+  end
+
+  shared_examples_for 'protected metrics endpoint' do |examples|
+    context 'accessed from whitelisted ip' do
+      before do
+        allow(Gitlab::RequestContext.instance).to receive(:client_ip).and_return(whitelisted_ip)
+      end
+
+      it_behaves_like examples
+    end
+
+    context 'accessed from ip in whitelisted range' do
+      before do
+        allow(Gitlab::RequestContext.instance).to receive(:client_ip).and_return(ip_in_whitelisted_range)
+      end
+
+      it_behaves_like examples
+    end
+
+    context 'accessed from not whitelisted ip' do
+      before do
+        allow(Gitlab::RequestContext.instance).to receive(:client_ip).and_return(not_whitelisted_ip)
+      end
+
+      it 'returns the expected error response' do
+        get :index
+
+        expect(response).to have_gitlab_http_status(:not_found)
+      end
+    end
   end
 
   describe '#index' do
-    shared_examples_for 'endpoint providing metrics' do
-      it 'returns DB ping metrics' do
+    shared_examples_for 'providing metrics' do
+      it 'returns prometheus metrics' do
         get :index
 
-        expect(response.body).to match(/^db_ping_timeout 0$/)
-        expect(response.body).to match(/^db_ping_success 1$/)
-        expect(response.body).to match(/^db_ping_latency_seconds [0-9\.]+$/)
-      end
-
-      it 'returns Redis ping metrics' do
-        get :index
-
-        expect(response.body).to match(/^redis_ping_timeout 0$/)
-        expect(response.body).to match(/^redis_ping_success 1$/)
-        expect(response.body).to match(/^redis_ping_latency_seconds [0-9\.]+$/)
-      end
-
-      it 'returns Caching ping metrics' do
-        get :index
-
-        expect(response.body).to match(/^redis_cache_ping_timeout 0$/)
-        expect(response.body).to match(/^redis_cache_ping_success 1$/)
-        expect(response.body).to match(/^redis_cache_ping_latency_seconds [0-9\.]+$/)
-      end
-
-      it 'returns Queues ping metrics' do
-        get :index
-
-        expect(response.body).to match(/^redis_queues_ping_timeout 0$/)
-        expect(response.body).to match(/^redis_queues_ping_success 1$/)
-        expect(response.body).to match(/^redis_queues_ping_latency_seconds [0-9\.]+$/)
-      end
-
-      it 'returns SharedState ping metrics' do
-        get :index
-
-        expect(response.body).to match(/^redis_shared_state_ping_timeout 0$/)
-        expect(response.body).to match(/^redis_shared_state_ping_success 1$/)
-        expect(response.body).to match(/^redis_shared_state_ping_latency_seconds [0-9\.]+$/)
-      end
-
-      it 'returns file system check metrics' do
-        get :index
-
-        expect(response.body).to match(/^filesystem_access_latency_seconds{shard="default"} [0-9\.]+$/)
-        expect(response.body).to match(/^filesystem_accessible{shard="default"} 1$/)
-        expect(response.body).to match(/^filesystem_write_latency_seconds{shard="default"} [0-9\.]+$/)
-        expect(response.body).to match(/^filesystem_writable{shard="default"} 1$/)
-        expect(response.body).to match(/^filesystem_read_latency_seconds{shard="default"} [0-9\.]+$/)
-        expect(response.body).to match(/^filesystem_readable{shard="default"} 1$/)
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(response.body).to match(/^prometheus_counter 1$/)
       end
 
       context 'prometheus metrics are disabled' do
@@ -78,37 +75,41 @@ describe MetricsController do
         it 'returns proper response' do
           get :index
 
-          expect(response.status).to eq(404)
+          expect(response).to have_gitlab_http_status(:ok)
+          expect(response.body).to eq("# Metrics are disabled, see: http://test.host/help/administration/monitoring/prometheus/gitlab_metrics.md\n")
         end
       end
     end
 
-    context 'accessed from whitelisted ip' do
-      before do
-        allow(Gitlab::RequestContext).to receive(:client_ip).and_return(whitelisted_ip)
+    include_examples 'protected metrics endpoint', 'providing metrics'
+  end
+
+  describe '#system' do
+    shared_examples_for 'providing system stats' do
+      let(:summary) do
+        {
+          version: 'ruby-3.0-patch1',
+          memory_rss: 1024
+        }
       end
 
-      it_behaves_like 'endpoint providing metrics'
-    end
+      it 'renders system stats JSON' do
+        allow(Prometheus::PidProvider).to receive(:worker_id).and_return('worker-0')
+        allow(Gitlab::Metrics::System).to receive(:summary).and_return(summary)
 
-    context 'accessed from ip in whitelisted range' do
-      before do
-        allow(Gitlab::RequestContext).to receive(:client_ip).and_return(ip_in_whitelisted_range)
-      end
+        get :system
 
-      it_behaves_like 'endpoint providing metrics'
-    end
-
-    context 'accessed from not whitelisted ip' do
-      before do
-        allow(Gitlab::RequestContext).to receive(:client_ip).and_return(not_whitelisted_ip)
-      end
-
-      it 'returns proper response' do
-        get :index
-
-        expect(response.status).to eq(404)
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(response_json['version']).to eq('ruby-3.0-patch1')
+        expect(response_json['worker_id']).to eq('worker-0')
+        expect(response_json['memory_rss']).to eq(1024)
       end
     end
+
+    include_examples 'protected metrics endpoint', 'providing system stats'
+  end
+
+  def response_json
+    Gitlab::Json.parse(response.body)
   end
 end

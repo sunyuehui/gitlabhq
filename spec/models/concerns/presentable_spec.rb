@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Presentable do
+RSpec.describe Presentable do
   let(:build) { Ci::Build.new }
 
   describe '#present' do

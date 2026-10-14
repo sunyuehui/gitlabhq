@@ -1,14 +1,27 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::RequestForgeryProtection, :allow_forgery_protection do
-  let(:csrf_token) { SecureRandom.base64(ActionController::RequestForgeryProtection::AUTHENTICITY_TOKEN_LENGTH) }
+RSpec.describe Gitlab::RequestForgeryProtection, :allow_forgery_protection do
+  let(:csrf_token) { 'YAYvO6dOQJGvIp/7DnZSa42h8AjB5mp0cXGIBgciby8=' }
+
   let(:env) do
     {
-      'rack.input' => '',
+      'rack.input' => StringIO.new(''),
       'rack.session' => {
         _csrf_token: csrf_token
       }
     }
+  end
+
+  before do
+    allow(env['rack.session']).to receive_messages(enabled?: true, loaded?: true)
+  end
+
+  it 'logs to /dev/null' do
+    expect(ActiveSupport::Logger).to receive(:new).with(File::NULL)
+
+    described_class::Controller.new.logger
   end
 
   describe '.call' do
@@ -50,6 +63,11 @@ describe Gitlab::RequestForgeryProtection, :allow_forgery_protection do
   end
 
   describe '.verified?' do
+    it 'does not modify the env' do
+      env['REQUEST_METHOD'] = "GET"
+      expect { described_class.verified?(env) }.not_to change { env }
+    end
+
     context 'when the request method is GET' do
       before do
         env['REQUEST_METHOD'] = 'GET'
@@ -68,6 +86,16 @@ describe Gitlab::RequestForgeryProtection, :allow_forgery_protection do
       context 'when the CSRF token is valid' do
         before do
           env['HTTP_X_CSRF_TOKEN'] = csrf_token
+        end
+
+        it 'returns true' do
+          expect(described_class.verified?(env)).to be_truthy
+        end
+      end
+
+      context 'when the CSRF token is valid and in the body' do
+        before do
+          env['rack.input'] = StringIO.new("authenticity_token=#{csrf_token}")
         end
 
         it 'returns true' do

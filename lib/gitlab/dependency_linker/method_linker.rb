@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module DependencyLinker
     class MethodLinker < BaseLinker
@@ -21,18 +23,22 @@ module Gitlab
       #   link_method_call('name')
       #   # Will link `package` in `self.name = "package"`
       def link_method_call(method_name, value = nil, &url_proc)
+        regex = method_call_regex(method_name, value)
+
+        link_regex(regex, &url_proc)
+      end
+
+      def method_call_regex(method_name, value = nil)
         method_name = regexp_for_value(method_name)
         value = regexp_for_value(value)
 
-        regex = %r{
-          #{method_name}            # Method name
-          \s*                       # Whitespace
-          [(=]?                     # Opening brace or equals sign
-          \s*                       # Whitespace
-          ['"](?<name>#{value})['"] # Package name in quotes
+        %r{
+        (?:^\s{0,10}(?:[a-z_.]{1,100}\.)?)\K # Look behind newline + whitespace + yielded object e.g. `spec.`
+          #{method_name}                    # Method name
+          \s{0,50}                          # Whitespace
+          (?:[(=]\s{0,50})?                 # ( or = + whitespace
+          ['"](?<name>#{value})['"]         # Package name in quotes
         }x
-
-        link_regex(regex, &url_proc)
       end
     end
   end

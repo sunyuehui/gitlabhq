@@ -1,18 +1,24 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
       module Build
         class Retryable < Status::Extended
           def has_action?
-            can?(user, :update_build, subject)
+            can?(user, :retry_job, subject)
           end
 
           def action_icon
-            'icon_action_retry'
+            'retry'
           end
 
           def action_title
-            'Retry'
+            s_('Job|Run again')
+          end
+
+          def action_button_title
+            s_('Job|Run this job again')
           end
 
           def action_path
@@ -21,6 +27,10 @@ module Gitlab
 
           def action_method
             :post
+          end
+
+          def confirmation_message
+            subject.manual_confirmation_message
           end
 
           def self.matches?(build, user)

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module SystemCheck
   module App
     class ActiveUsersCheck < SystemCheck::BaseCheck
@@ -5,12 +7,9 @@ module SystemCheck
 
       def multi_check
         active_users = User.active.count
-
-        if active_users > 0
-          $stdout.puts active_users.to_s.color(:green)
-        else
-          $stdout.puts active_users.to_s.color(:red)
-        end
+        color_status = :red
+        color_status = :green if active_users > 0
+        say Rainbow(active_users.to_s).color(color_status)
       end
     end
   end

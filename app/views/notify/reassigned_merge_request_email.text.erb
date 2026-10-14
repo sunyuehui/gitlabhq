@@ -1,6 +1,15 @@
-Reassigned Merge Request <%= @merge_request.iid %>
+<% added_names = sanitize_name(@added_assignees.to_sentence(locale: I18n.locale)) -%>
+<% removed_names = sanitize_name(@removed_assignees.to_sentence(locale: I18n.locale)) -%>
+Reassigned merge request <%= @merge_request.iid %>
 
-<%= url_for([@merge_request.project.namespace.becomes(Namespace), @merge_request.project, @merge_request, { only_path: false }]) %>
+<%= url_for([@merge_request.project, @merge_request, { only_path: false }]) %>
 
-Assignee changed <%= "from #{@previous_assignee.name}" if @previous_assignee -%>
- to <%= "#{@merge_request.assignee_id ? @merge_request.assignee_name : 'Unassigned'}" %>
+<%- if @added_assignees.any? %>
+<%= html_escape(n_(s_('Notify|%{added} was added as an assignee.'), s_('Notify|%{added} were added as assignees.'), @added_assignees.length).html_safe % { added: added_names }) %>
+<% end -%>
+<%- if @removed_assignees.any? && @merge_request.assignees.any? %>
+<%= html_escape(n_(s_('Notify|%{removed} was removed as an assignee.'), s_('Notify|%{removed} were removed as assignees.'), @removed_assignees.length).html_safe % { removed: removed_names }) %>
+<% end -%>
+<%- if @removed_assignees.any? && @merge_request.assignees.empty? %>
+<%= html_escape(s_('Notify|All assignees were removed.')) %>
+<% end -%>

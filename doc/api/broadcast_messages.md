@@ -1,19 +1,52 @@
-# Broadcast Messages API
+---
+stage: Growth
+group: Acquisition
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Broadcast Messages API
+description: Manage broadcast messages with user role targeting, path filtering, and customizable themes.
+---
 
-> **Note:** This feature was introduced in GitLab 8.12.
+{{< details >}}
 
-The broadcast message API is only accessible to administrators. All requests by
-guests will respond with `401 Unauthorized`, and all requests by normal users
-will respond with `403 Forbidden`.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab Self-Managed, GitLab Dedicated
 
-## Get all broadcast messages
+{{< /details >}}
 
-```
+{{< history >}}
+
+- `target_access_levels` [introduced](https://gitlab.com/gitlab-org/growth/team-tasks/-/issues/461) in GitLab 14.8 [with a feature flag](../administration/feature_flags/_index.md) named `role_targeted_broadcast_messages`. Disabled by default.
+- `theme` [introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/498900) in GitLab 17.6.
+
+{{< /history >}}
+
+Use this API to interact with banners and notifications displayed in the UI. For more information, see [broadcast messages](../administration/broadcast_messages.md).
+
+GET requests do not require authentication. All other broadcast message API endpoints are accessible only to administrators. Non-GET requests by:
+
+- Guests result in `401 Unauthorized`.
+- Regular users result in `403 Forbidden`.
+
+## List all broadcast messages
+
+{{< details >}}
+
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
+
+{{< /details >}}
+
+Lists all broadcast messages.
+
+```plaintext
 GET /broadcast_messages
 ```
 
-```bash
-curl --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/broadcast_messages
+Example request:
+
+```shell
+curl --request GET \
+  --url "https://gitlab.example.com/api/v4/broadcast_messages"
 ```
 
 Example response:
@@ -24,26 +57,44 @@ Example response:
         "message":"Example broadcast message",
         "starts_at":"2016-08-24T23:21:16.078Z",
         "ends_at":"2016-08-26T23:21:16.080Z",
-        "color":"#E75E40",
         "font":"#FFFFFF",
         "id":1,
-        "active": false
+        "active": false,
+        "target_access_levels": [10,30],
+        "target_path": "*/welcome",
+        "broadcast_type": "banner",
+        "dismissable": false,
+        "theme": "indigo"
     }
 ]
 ```
 
-## Get a specific broadcast message
+## Retrieve a broadcast message
 
-```
+{{< details >}}
+
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
+
+{{< /details >}}
+
+Retrieves a specified broadcast message.
+
+```plaintext
 GET /broadcast_messages/:id
 ```
 
-| Attribute   | Type     | Required | Description               |
-| ----------- | -------- | -------- | ------------------------- |
-| `id`        | integer  | yes      | Broadcast message ID      |
+Parameters:
 
-```bash
-curl --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/broadcast_messages/1
+| Attribute | Type    | Required | Description                          |
+|:----------|:--------|:---------|:-------------------------------------|
+| `id`      | integer | yes      | ID of broadcast message to retrieve. |
+
+Example request:
+
+```shell
+curl --request GET \
+  --url "https://gitlab.example.com/api/v4/broadcast_messages/1"
 ```
 
 Example response:
@@ -53,29 +104,73 @@ Example response:
     "message":"Deploy in progress",
     "starts_at":"2016-08-24T23:21:16.078Z",
     "ends_at":"2016-08-26T23:21:16.080Z",
-    "color":"#cecece",
     "font":"#FFFFFF",
     "id":1,
-    "active":false
+    "active":false,
+    "target_access_levels": [10,30],
+    "target_path": "*/welcome",
+    "broadcast_type": "banner",
+    "dismissable": false,
+    "theme": "indigo"
 }
 ```
 
 ## Create a broadcast message
 
-```
+> [!warning]
+> Broadcast messages are publicly accessible through the API regardless of targeting settings. Do not include sensitive or confidential information, and do not use broadcast messages to communicate private information to specific groups or projects.
+
+Creates a broadcast message.
+
+```plaintext
 POST /broadcast_messages
 ```
 
-| Attribute   | Type     | Required | Description                                          |
-| ----------- | -------- | -------- | ---------------------------------------------------- |
-| `message`   | string   | yes      | Message to display                                   |
-| `starts_at` | datetime | no       | Starting time (defaults to current time)             |
-| `ends_at`   | datetime | no       | Ending time (defaults to one hour from current time) |
-| `color`     | string   | no       | Background color hex code                            |
-| `font`      | string   | no       | Foreground color hex code                            |
+Parameters:
 
-```bash
-curl --data "message=Deploy in progress&color=#cecece" --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/broadcast_messages
+| Attribute              | Type              | Required | Description |
+|:-----------------------|:------------------|:---------|:------------|
+| `message`              | string            | yes      | Message to display. |
+| `starts_at`            | datetime          | no       | Starting time (defaults to current time in UTC). Expected in ISO 8601 format (`2019-03-15T08:00:00Z`) |
+| `ends_at`              | datetime          | no       | Ending time (defaults to one hour from current time in UTC). Expected in ISO 8601 format (`2019-03-15T08:00:00Z`) |
+| `font`                 | string            | no       | Foreground color hex code. |
+| `target_access_levels` | array of integers | no       | Target access levels (roles) of the broadcast message. |
+| `target_path`          | string            | no       | Target path of the broadcast message. |
+| `broadcast_type`       | string            | no       | Appearance type (defaults to banner) |
+| `dismissable`          | boolean           | no       | Can the user dismiss the message? |
+| `theme`                | string            | no       | Color theme for the broadcast message (banners only). |
+
+The `target_access_levels` are defined in the `Gitlab::Access` module. The
+following levels are valid:
+
+- Guest (`10`)
+- Planner (`15`)
+- Reporter (`20`)
+- Security Manager (`25`)
+- Developer (`30`)
+- Maintainer (`40`)
+- Owner (`50`)
+
+The `theme` options are defined in the `System::BroadcastMessage` class. The following themes are valid:
+
+- `indigo` (default)
+- `light-indigo`
+- `blue`
+- `light-blue`
+- `green`
+- `light-green`
+- `red`
+- `light-red`
+- `dark`
+- `light`
+
+Example request:
+
+```shell
+curl --request POST \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --data "message=Deploy in progress&target_access_levels[]=10&target_access_levels[]=30&theme=red" \
+  --url "https://gitlab.example.com/api/v4/broadcast_messages"
 ```
 
 Example response:
@@ -85,30 +180,73 @@ Example response:
     "message":"Deploy in progress",
     "starts_at":"2016-08-26T00:41:35.060Z",
     "ends_at":"2016-08-26T01:41:35.060Z",
-    "color":"#cecece",
     "font":"#FFFFFF",
     "id":1,
-    "active": true
+    "active": true,
+    "target_access_levels": [10,30],
+    "target_path": "*/welcome",
+    "broadcast_type": "notification",
+    "dismissable": false,
+    "theme": "red"
 }
 ```
 
 ## Update a broadcast message
 
-```
+> [!warning]
+> Broadcast messages are publicly accessible through the API regardless of targeting settings. Do not include sensitive or confidential information, and do not use broadcast messages to communicate private information to specific groups or projects.
+
+Updates a specified broadcast message.
+
+```plaintext
 PUT /broadcast_messages/:id
 ```
 
-| Attribute   | Type     | Required | Description               |
-| ----------- | -------- | -------- | ------------------------- |
-| `id`        | integer  | yes      | Broadcast message ID      |
-| `message`   | string   | no       | Message to display        |
-| `starts_at` | datetime | no       | Starting time             |
-| `ends_at`   | datetime | no       | Ending time               |
-| `color`     | string   | no       | Background color hex code |
-| `font`      | string   | no       | Foreground color hex code |
+Parameters:
 
-```bash
-curl --request PUT --data "message=Update message&color=#000" --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/broadcast_messages/1
+| Attribute              | Type              | Required | Description |
+|:-----------------------|:------------------|:---------|:------------|
+| `id`                   | integer           | yes      | ID of broadcast message to update. |
+| `message`              | string            | no       | Message to display. |
+| `starts_at`            | datetime          | no       | Starting time (UTC). Expected in ISO 8601 format (`2019-03-15T08:00:00Z`) |
+| `ends_at`              | datetime          | no       | Ending time (UTC). Expected in ISO 8601 format (`2019-03-15T08:00:00Z`) |
+| `font`                 | string            | no       | Foreground color hex code. |
+| `target_access_levels` | array of integers | no       | Target access levels (roles) of the broadcast message. |
+| `target_path`          | string            | no       | Target path of the broadcast message. |
+| `broadcast_type`       | string            | no       | Appearance type (defaults to banner) |
+| `dismissable`          | boolean           | no       | Can the user dismiss the message? |
+| `theme`                | string            | no       | Color theme for the broadcast message (banners only). |
+
+The `target_access_levels` are defined in the `Gitlab::Access` module. The
+following levels are valid:
+
+- Guest (`10`)
+- Planner (`15`)
+- Reporter (`20`)
+- Developer (`30`)
+- Maintainer (`40`)
+- Owner (`50`)
+
+The `theme` options are defined in the `System::BroadcastMessage` class. The following themes are valid:
+
+- `indigo` (default)
+- `light-indigo`
+- `blue`
+- `light-blue`
+- `green`
+- `light-green`
+- `red`
+- `light-red`
+- `dark`
+- `light`
+
+Example request:
+
+```shell
+curl --request PUT \
+  --data "message=Update message" \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/broadcast_messages/1"
 ```
 
 Example response:
@@ -118,23 +256,35 @@ Example response:
     "message":"Update message",
     "starts_at":"2016-08-26T00:41:35.060Z",
     "ends_at":"2016-08-26T01:41:35.060Z",
-    "color":"#000",
     "font":"#FFFFFF",
     "id":1,
-    "active": true
+    "active": true,
+    "target_access_levels": [10,30],
+    "target_path": "*/welcome",
+    "broadcast_type": "notification",
+    "dismissable": false,
+    "theme": "indigo"
 }
 ```
 
 ## Delete a broadcast message
 
-```
+Deletes a specified broadcast message.
+
+```plaintext
 DELETE /broadcast_messages/:id
 ```
 
-| Attribute   | Type     | Required | Description               |
-| ----------- | -------- | -------- | ------------------------- |
-| `id`        | integer  | yes      | Broadcast message ID      |
+Parameters:
 
-```bash
-curl --request DELETE --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/broadcast_messages/1
+| Attribute | Type    | Required | Description                        |
+|:----------|:--------|:---------|:-----------------------------------|
+| `id`      | integer | yes      | ID of broadcast message to delete. |
+
+Example request:
+
+```shell
+curl --request DELETE \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/broadcast_messages/1"
 ```

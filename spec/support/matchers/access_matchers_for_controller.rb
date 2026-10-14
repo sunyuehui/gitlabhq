@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # AccessMatchersForController
 #
 # For testing authorize_xxx in controller.
@@ -5,7 +7,7 @@ module AccessMatchersForController
   extend RSpec::Matchers::DSL
   include Warden::Test::Helpers
 
-  EXPECTED_STATUS_CODE_ALLOWED = [200, 201, 302].freeze
+  EXPECTED_STATUS_CODE_ALLOWED = [200, 201, 204, 302].freeze
   EXPECTED_STATUS_CODE_DENIED = [401, 404].freeze
 
   def emulate_user(role, membership = nil)
@@ -24,7 +26,7 @@ module AccessMatchersForController
     when User
       user = role
       sign_in(user)
-    when *Gitlab::Access.sym_options_with_owner.keys # owner, master, developer, reporter, guest
+    when *Gitlab::Access.sym_options_with_owner.keys # owner, maintainer, developer, reporter, guest
       raise ArgumentError, "cannot emulate #{role} without membership parent" unless membership
 
       user = create_user_by_membership(role, membership)
@@ -43,6 +45,7 @@ module AccessMatchersForController
       user = create(:user)
       membership.public_send(:"add_#{role}", user)
     end
+
     user
   end
 

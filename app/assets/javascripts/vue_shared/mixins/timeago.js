@@ -1,18 +1,23 @@
-import '../../lib/utils/datetime_utility';
+import {
+  getTimeago,
+  localeDateFormat,
+  newDate,
+  timeagoLanguageCode,
+} from '~/lib/utils/datetime_utility';
 
 /**
  * Mixin with time ago methods used in some vue components
  */
 export default {
   methods: {
-    timeFormated(time) {
-      const timeago = gl.utils.getTimeago();
+    timeFormatted(time, format, { showDateWhenOverAYear = true } = {}) {
+      const timeago = getTimeago(format, { showDateWhenOverAYear });
 
-      return timeago.format(time);
+      return timeago.format(newDate(time), timeagoLanguageCode);
     },
 
     tooltipTitle(time) {
-      return gl.utils.formatDate(time);
+      return localeDateFormat.asDateTimeFullWithWeekday.format(newDate(time));
     },
   },
 };

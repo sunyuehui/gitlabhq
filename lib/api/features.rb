@@ -1,70 +1,140 @@
+# frozen_string_literal: true
+
 module API
-  class Features < Grape::API
+  class Features < ::API::Base
     before { authenticated_as_admin! }
 
-    helpers do
-      def gate_value(params)
-        case params[:value]
-        when 'true'
-          true
-        when '0', 'false'
-          false
-        else
-          params[:value].to_i
-        end
-      end
-
-      def gate_targets(params)
-        targets = []
-        targets << Feature.group(params[:feature_group]) if params[:feature_group]
-        targets << User.find_by_username(params[:user]) if params[:user]
-
-        targets
-      end
-    end
+    features_tags = %w[features]
+    feature_category :feature_flags
+    urgency :low
 
     resource :features do
-      desc 'Get a list of all features' do
+      desc 'List all feature flags' do
+        detail 'Lists all feature flags for the instance.'
         success Entities::Feature
+        is_array true
+        failure [
+          { code: 401, message: 'Unauthorized' },
+          { code: 403, message: 'Forbidden' }
+        ]
+        tags features_tags
       end
+      route_setting :authorization, permissions: :read_feature, boundary_type: :instance, assignable_when: [:admin]
       get do
         features = Feature.all
 
         present features, with: Entities::Feature, current_user: current_user
       end
 
-      desc 'Set the gate value for the given feature' do
+      desc 'List all feature flag definitions' do
+        detail 'Lists all feature flag definitions.'
+        success Entities::Feature::Definition
+        is_array true
+        failure [
+          { code: 401, message: 'Unauthorized' },
+          { code: 403, message: 'Forbidden' }
+        ]
+        tags features_tags
+      end
+      route_setting :authorization, permissions: :read_feature, boundary_type: :instance, assignable_when: [:admin]
+      get :definitions do
+        definitions = ::Feature::Definition.definitions.values.map(&:to_h)
+
+        present definitions, with: Entities::Feature::Definition, current_user: current_user
+      end
+
+      desc 'Create or update a feature flag' do
+        detail "Creates or updates a feature flag value. If a feature with the given name doesn't exist yet, " \
+          "the operation creates one. The value can be a boolean or an integer to indicate percentage of time."
         success Entities::Feature
+        failure [
+          { code: 400, message: 'Bad request' },
+          { code: 401, message: 'Unauthorized' },
+          { code: 403, message: 'Forbidden' }
+        ]
+        tags features_tags
       end
       params do
-        requires :value, type: String, desc: '`true` or `false` to enable/disable, an integer for percentage of time'
-        optional :feature_group, type: String, desc: 'A Feature group name'
-        optional :user, type: String, desc: 'A GitLab username'
+        requires :name, type: String, desc: 'Name of the feature flag.'
+        requires :value,
+          types: [String, Integer],
+          desc: 'Value to set for the feature flag. Use `true` or `false` to enable or disable it, or an integer for ' \
+            'the percentage of time it should be enabled.'
+        optional :key,
+          type: String,
+          values: %w[percentage_of_actors percentage_of_time],
+          desc: 'Rollout strategy for a percentage `value`. Omit it to apply the percentage to time'
+        optional :feature_group, type: String, desc: 'Name of the feature group.'
+        optional :user, type: String, desc: 'GitLab username or a comma-separated list of usernames.'
+        optional :group,
+          type: String,
+          desc: 'GitLab group path, for example `gitlab-org`, or a comma-separated list of group paths.'
+        optional :namespace,
+          type: String,
+          desc: 'GitLab group or user namespace path, for example `john-doe`, or a comma-separated list of namespace ' \
+            'paths. Introduced in GitLab 15.0.'
+        optional :project,
+          type: String,
+          desc: 'Project path, for example `gitlab-org/gitlab-foss`, or a comma-separated list of project paths.'
+        optional :organization,
+          type: String,
+          desc: 'Organization ID or path, for example `1` or `default`, or a comma-separated list of organization ' \
+            'IDs or paths.'
+        optional :repository,
+          type: String,
+          desc: 'Repository path, for example `gitlab-org/gitlab-test.git`, `gitlab-org/gitlab-test.wiki.git`, or ' \
+            '`snippets/21.git`. Use commas to separate multiple repository paths.'
+        optional :runner,
+          type: String,
+          desc: 'Runner ID or a comma-separated list of runner IDs.'
+        optional :endpoint,
+          type: String,
+          desc: 'Caller ID identifying a code path, for example `GET /api/v4/projects/:id` or ' \
+            '`ProjectsController#show`. Use a comma to separate multiple endpoint paths.'
+        optional :force, type: Boolean, desc: 'If `true`, skips feature flag validation checks, such as a YAML ' \
+                                          'definition.'
+
+        mutually_exclusive :key, :feature_group
+        mutually_exclusive :key, :user
+        mutually_exclusive :key, :group
+        mutually_exclusive :key, :namespace
+        mutually_exclusive :key, :project
+        mutually_exclusive :key, :organization
+        mutually_exclusive :key, :repository
+        mutually_exclusive :key, :runner
+        mutually_exclusive :key, :endpoint
       end
+      route_setting :authorization, permissions: :update_feature, boundary_type: :instance, assignable_when: [:admin]
       post ':name' do
-        feature = Feature.get(params[:name])
-        targets = gate_targets(params)
-        value = gate_value(params)
+        flag_params = declared_params(include_missing: false)
+        response = ::Admin::SetFeatureFlagService
+          .new(feature_flag_name: params[:name], params: flag_params)
+          .execute
 
-        case value
-        when true
-          if targets.present?
-            targets.each { |target| feature.enable(target) }
-          else
-            feature.enable
-          end
-        when false
-          if targets.present?
-            targets.each { |target| feature.disable(target) }
-          else
-            feature.disable
-          end
+        if response.success?
+          present response.payload[:feature_flag],
+            with: Entities::Feature, current_user: current_user
         else
-          feature.enable_percentage_of_time(value)
+          bad_request!(response.message)
         end
+      end
 
-        present feature, with: Entities::Feature, current_user: current_user
+      desc 'Delete a feature' do
+        detail 'Deletes a feature gate. Returns the same response if the feature gate does not exist.'
+        success code: 204, message: 'Resource deleted'
+        tags features_tags
+      end
+      params do
+        requires :name, type: String, desc: 'Name of the feature flag.'
+      end
+      route_setting :authorization, permissions: :delete_feature, boundary_type: :instance, assignable_when: [:admin]
+      delete ':name' do
+        Feature.remove(params[:name])
+
+        no_content!
       end
     end
   end
 end
+
+API::Features.prepend_mod_with('API::Features')

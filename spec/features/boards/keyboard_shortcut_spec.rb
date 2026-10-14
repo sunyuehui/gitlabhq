@@ -1,20 +1,42 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe 'Issue Boards shortcut', js: true do
-  let(:project) { create(:project) }
+require 'spec_helper'
 
-  before do
-    create(:board, project: project)
+RSpec.describe 'Issue Boards shortcut', :js, feature_category: :planning_views do
+  context 'issues are enabled' do
+    let(:project) { create(:project) }
 
-    sign_in(create(:admin))
+    before do
+      create(:board, project: project)
 
-    visit project_path(project)
+      admin = create(:admin)
+      sign_in(admin)
+      enable_admin_mode!(admin)
+
+      visit project_path(project)
+    end
+
+    it 'takes user to issue board index' do
+      find('body').native.send_keys('gb')
+      expect(page).to have_selector('.boards-list')
+    end
   end
 
-  it 'takes user to issue board index' do
-    find('body').native.send_keys('gb')
-    expect(page).to have_selector('.boards-list')
+  context 'issues are not enabled' do
+    let(:project) { create(:project, :issues_disabled) }
 
-    wait_for_requests
+    before do
+      admin = create(:admin)
+      sign_in(admin)
+      enable_admin_mode!(admin)
+
+      visit project_path(project)
+    end
+
+    it 'does not take user to the issue board index' do
+      find('body').native.send_keys('gb')
+
+      expect(page).to have_selector("body[data-page='projects:show']")
+    end
   end
 end

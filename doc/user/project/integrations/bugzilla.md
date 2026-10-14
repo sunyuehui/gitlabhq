@@ -1,31 +1,70 @@
-# Bugzilla Service
+---
+stage: Plan
+group: Work Items
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Bugzilla
+description: Configure the Bugzilla integration to link a GitLab project to a Bugzilla issue tracker and reference Bugzilla issues in GitLab.
+---
 
-Navigate to the [Integrations page](project_services.md#accessing-the-project-services),
-select the **Bugzilla** service and fill in the required details as described
-in the table below.
+{{< details >}}
 
-| Field | Description |
-| ----- | ----------- |
-| `description`   | A name for the issue tracker (to differentiate between instances, for example) |
-| `project_url`   | The URL to the project in Bugzilla which is being linked to this GitLab project. Note that the `project_url` requires PRODUCT_NAME to be updated with the product/project name in Bugzilla. |
-| `issues_url`    | The URL to the issue in Bugzilla project that is linked to this GitLab project. Note that the `issues_url` requires `:id` in the URL. This ID is used by GitLab as a placeholder to replace the issue number. |
-| `new_issue_url` | This is the URL to create a new issue in Bugzilla for the project linked to this GitLab project. Note that the `new_issue_url` requires PRODUCT_NAME to be updated with the product/project name in Bugzilla. |
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-Once you have configured and enabled Bugzilla:
+{{< /details >}}
 
-- the **Issues** link on the GitLab project pages takes you to the appropriate
-  Bugzilla product page
-- clicking **New issue** on the project dashboard takes you to Bugzilla for entering a new issue
+[Bugzilla](https://www.bugzilla.org/) is a web-based general-purpose bug tracking system and testing
+tool.
 
-## Referencing issues in Bugzilla
+You can configure Bugzilla as an
+[external issue tracker](../../../integration/external-issue-tracker.md) in GitLab.
 
-Issues in Bugzilla can be referenced in two alternative ways:
-1. `#<ID>` where `<ID>` is a number (example `#143`).
-2. `<PROJECT>-<ID>` where `<PROJECT>` starts with a capital letter which is
-  then followed by capital letters, numbers or underscores, and `<ID>` is
-  a number (example `API_32-143`).
+To turn on the Bugzilla integration in a project:
 
-We suggest using the longer format if you have both internal and external issue trackers enabled. If you use the shorter format and an issue with the same ID exists in the internal issue tracker the internal issue will be linked.
+1. In the top bar, select **Search or go to** and find your project.
+1. In the left sidebar, select **Settings** > **Integrations**.
+1. Select **Bugzilla**.
+1. Under **Enable integration**, select the **Active** checkbox.
+1. Fill in the required fields:
 
-Please note that `<PROJECT>` part is ignored and links always point to the
-address specified in `issues_url`.
+   - **Project URL**: The URL to the project in Bugzilla.
+     For example, for a product named "Fire Tanuki":
+     `https://bugzilla.example.org/describecomponents.cgi?product=Fire+Tanuki`.
+   - **Issue URL**: The URL to view an issue in the Bugzilla project.
+     The URL must contain `:id`. GitLab replaces `:id` with the issue number (for example,
+     `https://bugzilla.example.org/show_bug.cgi?id=:id`, which becomes
+     `https://bugzilla.example.org/show_bug.cgi?id=123`).
+   - **New issue URL**: The URL to create a new issue in the linked Bugzilla project.
+     For example, for a project named "My Cool App":
+     `https://bugzilla.example.org/enter_bug.cgi#h=dupes%7CMy+Cool+App`.
+
+1. Optional. Select **Test settings**.
+1. Select **Save changes**.
+
+After you configure and turn on Bugzilla, a link appears on the GitLab
+project pages. This link takes you to the appropriate Bugzilla project.
+
+You can also turn off [GitLab internal issue tracking](../issues/_index.md) in this project.
+For more information about the steps and consequences of turning off GitLab issues, see:
+
+- [Change project visibility](../../public_access.md#change-project-visibility).
+- [Configure project features and permissions](../settings/_index.md#configure-project-features-and-permissions).
+
+## Reference Bugzilla issues in GitLab
+
+You can reference issues in Bugzilla using:
+
+- `#<ID>`, where `<ID>` is a number (for example, `#143`).
+- `<PROJECT>-<ID>` (for example, `API_32-143`) where:
+  - `<PROJECT>` starts with a capital letter, followed by capital letters, numbers, or underscores.
+  - `<ID>` is a number.
+
+The `<PROJECT>` part is ignored in links, which always point to the address specified in **Issue URL**.
+
+Use the longer format (`<PROJECT>-<ID>`) if you have both internal and external issue
+trackers turned on. If you use the shorter format, and an issue with the same ID exists in the
+internal issue tracker, the internal issue is linked.
+
+## Troubleshooting
+
+For recent integration webhook deliveries, check the integration webhook logs.

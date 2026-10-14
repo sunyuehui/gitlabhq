@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 module Boards
   module Lists
-    class MoveService < BaseService
+    class MoveService < Boards::BaseService
       def execute(list)
         @board = list.board
         @old_position = list.position
@@ -20,8 +22,11 @@ module Boards
       attr_reader :board, :old_position, :new_position
 
       def valid_move?
-        new_position.present? && new_position != old_position &&
-          new_position >= 0 && new_position < board.lists.movable.size
+        new_position.present? && new_position != old_position && new_position.between?(0, max_position)
+      end
+
+      def max_position
+        board.lists.movable.maximum(:position)
       end
 
       def reorder_intermediate_lists
@@ -32,17 +37,21 @@ module Boards
         end
       end
 
+      # rubocop: disable CodeReuse/ActiveRecord
       def decrement_intermediate_lists
         board.lists.movable.where('position > ?',  old_position)
                            .where('position <= ?', new_position)
                            .update_all('position = position - 1')
       end
+      # rubocop: enable CodeReuse/ActiveRecord
 
+      # rubocop: disable CodeReuse/ActiveRecord
       def increment_intermediate_lists
         board.lists.movable.where('position >= ?', new_position)
                            .where('position < ?',  old_position)
                            .update_all('position = position + 1')
       end
+      # rubocop: enable CodeReuse/ActiveRecord
 
       def update_list_position(list)
         list.update_attribute(:position, new_position)

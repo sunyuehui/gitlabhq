@@ -1,239 +1,306 @@
-require './spec/support/sidekiq'
-require './spec/support/test_env'
+# frozen_string_literal: true
 
-class Gitlab::Seeder::CycleAnalytics
-  def initialize(project, perf: false)
-    @project = project
-    @user = User.order(:id).last
-    @issue_count = perf ? 1000 : 5
-    stub_git_pre_receive!
-  end
+require './spec/support/sidekiq_middleware'
+require './spec/support/helpers/test_env'
+require 'active_support/testing/time_helpers'
+require './spec/support/helpers/cycle_analytics_helpers'
+require './ee/db/seeds/shared/dora_metrics' if Gitlab.ee?
 
-  # The GitLab API needn't be running for the fixtures to be
-  # created. Since we're performing a number of git actions
-  # here (like creating a branch or committing a file), we need
-  # to disable the `pre_receive` hook in order to remove this
-  # dependency on the GitLab API.
-  def stub_git_pre_receive!
-    GitHooksService.class_eval do
-      def run_hook(name)
-        [true, '']
-      end
+# Usage:
+#
+# Simple invocation always creates a new project:
+#
+# FILTER=cycle_analytics SEED_VSA=1 bundle exec rake db:seed_fu
+#
+# Create more issues/MRs:
+#
+# VSA_ISSUE_COUNT=100 FILTER=cycle_analytics SEED_VSA=1 bundle exec rake db:seed_fu
+#
+# Run for an existing project
+#
+# VSA_SEED_PROJECT_ID=10 FILTER=cycle_analytics SEED_VSA=1 bundle exec rake db:seed_fu
+
+# rubocop:disable Rails/Output
+class Gitlab::Seeder::CycleAnalytics # rubocop:disable Style/ClassAndModuleChildren
+  include ActiveSupport::Testing::TimeHelpers
+  include CycleAnalyticsHelpers
+
+  attr_reader :project, :issues, :merge_requests, :developers
+
+  FLAG = 'SEED_VSA'
+  PERF_TEST = 'VSA_PERF_TEST'
+
+  MAX_DURATIONS = { # in hours
+    issue: 72,
+    plan: 48,
+    code: 72,
+    test: 5,
+    review: 72,
+    deployment: 48,
+    lead_time: 32
+  }.freeze
+
+  def self.seeder_based_on_env(project)
+    if ENV[FLAG]
+      new(project: project)
+    elsif ENV[PERF_TEST]
+      new(project: project, perf: true)
     end
   end
 
-  def seed_metrics!
-    @issue_count.times do |index|
-      # Issue
-      Timecop.travel 5.days.from_now
-      title = "#{FFaker::Product.brand}-#{FFaker::Product.brand}-#{rand(1000)}"
-      issue = Issue.create(project: @project, title: title, author: @user)
-      issue_metrics = issue.metrics
-
-      # Milestones / Labels
-      Timecop.travel 5.days.from_now
-      if index.even?
-        issue_metrics.first_associated_with_milestone_at = rand(6..12).hours.from_now
-      else
-        issue_metrics.first_added_to_board_at = rand(6..12).hours.from_now
-      end
-
-      # Commit
-      Timecop.travel 5.days.from_now
-      issue_metrics.first_mentioned_in_commit_at = rand(6..12).hours.from_now
-
-      # MR
-      Timecop.travel 5.days.from_now
-      branch_name = "#{FFaker::Product.brand}-#{FFaker::Product.brand}-#{rand(1000)}"
-      @project.repository.add_branch(@user, branch_name, 'master')
-      merge_request = MergeRequest.create(target_project: @project, source_project: @project, source_branch: branch_name, target_branch: 'master', title: branch_name, author: @user)
-      merge_request_metrics = merge_request.metrics
-
-      # MR closing issues
-      Timecop.travel 5.days.from_now
-      MergeRequestsClosingIssues.create!(issue: issue, merge_request: merge_request)
-
-      # Merge
-      Timecop.travel 5.days.from_now
-      merge_request_metrics.merged_at = rand(6..12).hours.from_now
-
-      # Start build
-      Timecop.travel 5.days.from_now
-      merge_request_metrics.latest_build_started_at = rand(6..12).hours.from_now
-
-      # Finish build
-      Timecop.travel 5.days.from_now
-      merge_request_metrics.latest_build_finished_at = rand(6..12).hours.from_now
-
-      # Deploy to production
-      Timecop.travel 5.days.from_now
-      merge_request_metrics.first_deployed_to_production_at = rand(6..12).hours.from_now
-
-      issue_metrics.save!
-      merge_request_metrics.save!
-
-      print '.'
-    end
+  def initialize(project: nil, perf: false)
+    @project = project || create_new_vsm_project
+    @issue_count = perf ? 1000 : ENV.fetch('VSA_ISSUE_COUNT', 5).to_i
+    @issues = []
+    @merge_requests = []
+    @developers = []
   end
 
   def seed!
-    Sidekiq::Testing.inline! do
-      issues = create_issues
-      puts '.'
+    unless project.repository_exists?
+      puts
+      puts 'WARNING'
+      puts '======='
+      puts "Seeding #{self.class} is not possible because the given project " \
+           "(#{project.full_path}) doesn't have a repository."
+      puts 'Try specifying a project with working repository or omit the VSA_SEED_PROJECT_ID parameter ' \
+           'so the seed script will automatically create one.'
+      puts
 
-      # Stage 1
-      Timecop.travel 5.days.from_now
-      add_milestones_and_list_labels(issues)
-      print '.'
-
-      # Stage 2
-      Timecop.travel 5.days.from_now
-      branches = mention_in_commits(issues)
-      print '.'
-
-      # Stage 3
-      Timecop.travel 5.days.from_now
-      merge_requests = create_merge_requests_closing_issues(issues, branches)
-      print '.'
-
-      # Stage 4
-      Timecop.travel 5.days.from_now
-      run_builds(merge_requests)
-      print '.'
-
-      # Stage 5
-      Timecop.travel 5.days.from_now
-      merge_merge_requests(merge_requests)
-      print '.'
-
-      # Stage 6 / 7
-      Timecop.travel 5.days.from_now
-      deploy_to_production(merge_requests)
-      print '.'
+      return
     end
 
-    print '.'
+    seed_data!
   end
 
   private
 
-  def create_issues
-    Array.new(@issue_count) do
-      issue_params = {
-        title: "Cycle Analytics: #{FFaker::Lorem.sentence(6)}",
-        description: FFaker::Lorem.sentence,
-        state: 'opened',
-        assignee: @project.team.users.sample
-      }
+  def seed_data!
+    Sidekiq::Worker.skipping_transaction_check do
+      create_developers!
+      create_issues!
 
-      Issues::CreateService.new(@project, @project.team.users.sample, issue_params).execute
-    end
-  end
+      seed_lead_time!
+      seed_issue_stage!
+      seed_plan_stage!
+      seed_code_stage!
+      seed_test_stage!
+      seed_review_stage!
+      seed_staging_stage!
 
-  def add_milestones_and_list_labels(issues)
-    issues.shuffle.map.with_index do |issue, index|
-      Timecop.travel 12.hours.from_now
-
-      if index.even?
-        issue.update(milestone: @project.milestones.sample)
-      else
-        label_name = "#{FFaker::Product.brand}-#{FFaker::Product.brand}-#{rand(1000)}"
-        list_label = FactoryGirl.create(:label, title: label_name, project: issue.project)
-        FactoryGirl.create(:list, board: FactoryGirl.create(:board, project: issue.project), label: list_label)
-        issue.update(labels: [list_label])
+      if Gitlab.ee?
+        create_vulnerabilities_count_report!
+        seed_dora_metrics!
+        create_custom_value_stream!
+        create_value_stream_aggregation(project.group)
       end
 
-      issue
+      puts "Successfully seeded '#{project.full_path}' for Value Stream Management!"
+      puts "URL: #{Rails.application.routes.url_helpers.project_url(project)}"
     end
   end
 
-  def mention_in_commits(issues)
-    issues.map do |issue|
-      Timecop.travel 12.hours.from_now
-
-      branch_name = filename = "#{FFaker::Product.brand}-#{FFaker::Product.brand}-#{rand(1000)}"
-
-      issue.project.repository.add_branch(@user, branch_name, 'master')
-
-      commit_sha = issue.project.repository.create_file(@user, filename, "content", message: "Commit for ##{issue.iid}", branch_name: branch_name)
-      issue.project.repository.commit(commit_sha)
-
-      GitPushService.new(issue.project,
-                         @user,
-                         oldrev: issue.project.repository.commit("master").sha,
-                         newrev: commit_sha,
-                         ref: 'refs/heads/master').execute
-
-      branch_name
+  def create_custom_value_stream!
+    [project.project_namespace.reload, project.group].each do |parent|
+      Analytics::CycleAnalytics::ValueStreams::CreateService.new(
+        current_user: admin,
+        namespace: parent,
+        params: { name: "vs #{suffix}", stages: Gitlab::Analytics::CycleAnalytics::DefaultStages.all }
+      ).execute
     end
   end
 
-  def create_merge_requests_closing_issues(issues, branches)
-    issues.zip(branches).map do |issue, branch|
-      Timecop.travel 12.hours.from_now
+  def seed_dora_metrics!
+    Gitlab::Seeder::DoraMetrics.new(project: project).execute
+  end
 
-      opts = {
-        title: 'Cycle Analytics merge_request',
-        description: "Fixes #{issue.to_reference}",
-        source_branch: branch,
-        target_branch: 'master'
-      }
+  def seed_issue_stage!
+    issues.each do |issue|
+      time = within_end_time(issue.created_at + rand(MAX_DURATIONS[:issue]).hours)
 
-      MergeRequests::CreateService.new(issue.project, @user, opts).execute
+      if issue.id.even?
+        issue.metrics.update!(first_associated_with_milestone_at: time)
+      else
+        issue.metrics.update!(first_added_to_board_at: time)
+      end
     end
   end
 
-  def run_builds(merge_requests)
+  def seed_plan_stage!
+    issues.each do |issue|
+      plan_stage_start = issue.metrics.first_associated_with_milestone_at || issue.metrics.first_added_to_board_at
+
+      first_mentioned_in_commit_at = within_end_time(plan_stage_start + rand(MAX_DURATIONS[:plan]).hours)
+      issue.metrics.update!(first_mentioned_in_commit_at: first_mentioned_in_commit_at)
+    end
+  end
+
+  def seed_code_stage!
+    issues.each do |issue|
+      merge_request = FactoryBot.create(
+        :merge_request,
+        target_project: project,
+        source_project: project,
+        source_branch: "#{issue.iid}-feature-branch",
+        target_branch: 'master',
+        author: developers.sample,
+        created_at: within_end_time(issue.metrics.first_mentioned_in_commit_at + rand(MAX_DURATIONS[:code]).hours)
+      )
+
+      @merge_requests << merge_request
+
+      MergeRequestIssue.create!(issue: issue, merge_request: merge_request)
+    end
+  end
+
+  def seed_test_stage!
     merge_requests.each do |merge_request|
-      Timecop.travel 12.hours.from_now
+      pipeline = FactoryBot.create(:ci_pipeline, :success, project: project,
+        partition_id: Ci::Pipeline.current_partition_value)
+      build = FactoryBot.create(:ci_build, pipeline: pipeline, project: project, user: developers.sample)
 
-      service = Ci::CreatePipelineService.new(merge_request.project,
-                                              @user,
-                                              ref: "refs/heads/#{merge_request.source_branch}")
-      pipeline = service.execute(:push, ignore_skip_ci: true, save_on_errors: false)
+      # Required because seeds run in a transaction and these are now
+      # created in an `after_commit` hook.
+      merge_request.ensure_metrics!
 
-      pipeline.run!
-      Timecop.travel rand(1..6).hours.from_now
-      pipeline.succeed!
-
-      PipelineMetricsWorker.new.perform(pipeline.id)
+      merge_request.metrics.update!(
+        latest_build_started_at: merge_request.created_at,
+        latest_build_finished_at: within_end_time(merge_request.created_at + MAX_DURATIONS[:test].hours),
+        pipeline_id: build.commit_id
+      )
     end
   end
 
-  def merge_merge_requests(merge_requests)
+  def seed_review_stage!
     merge_requests.each do |merge_request|
-      Timecop.travel 12.hours.from_now
-
-      MergeRequests::MergeService.new(merge_request.project, @user).execute(merge_request)
+      merge_request.metrics.update!(
+        merged_at: within_end_time(merge_request.created_at + MAX_DURATIONS[:review].hours)
+      )
     end
   end
 
-  def deploy_to_production(merge_requests)
+  def seed_staging_stage!
     merge_requests.each do |merge_request|
-      Timecop.travel 12.hours.from_now
-
-      job = merge_request.head_pipeline.builds.where.not(environment: nil).last
-
-      CreateDeploymentService.new(job).execute
+      first_deployed_to_production_at = merge_request.metrics.merged_at + MAX_DURATIONS[:deployment].hours
+      merge_request.metrics.update!(
+        first_deployed_to_production_at: within_end_time(first_deployed_to_production_at)
+      )
     end
+  end
+
+  def seed_lead_time!
+    issues.each do |issue|
+      created_at = issue.created_at - MAX_DURATIONS[:lead_time].hours
+      issue.update!(created_at: created_at, closed_at: Time.now)
+    end
+  end
+
+  def create_issues!
+    @issue_count.times do
+      travel_to(start_time + rand(5).days) do
+        title = "#{FFaker::Product.brand}-#{suffix}"
+        @issues << Issue.create!(project: project, title: title, author: developers.sample)
+      end
+    end
+  end
+
+  def create_vulnerabilities_count_report!
+    4.times do |i|
+      critical_count = rand(5..10)
+      high_count = rand(5..10)
+
+      [i.months.ago.end_of_month, i.months.ago.beginning_of_month].each do |date|
+        FactoryBot.create(:vulnerability_historical_statistic,
+          date: date,
+          total: critical_count + high_count,
+          critical: critical_count,
+          high: high_count,
+          project: project
+        )
+      end
+    end
+  end
+
+  def create_developers!
+    5.times do |i|
+      user =
+        ::User.create!(
+          username: "vsm-user-#{i}-#{suffix}",
+          name: "VSM User#{i}",
+          email: "vsm-user-#{i}@#{suffix}.com",
+          confirmed_at: DateTime.now,
+          password: ::User.random_password,
+          organization: project.organization
+        ) do |user|
+          user.assign_personal_namespace(project.organization)
+        end
+
+      project.group&.add_developer(user)
+      project.add_developer(user)
+
+      @developers << user
+    end
+
+    project.group&.add_developer(admin)
+    project.add_developer(admin)
+
+    AuthorizedProjectUpdate::ProjectRecalculateService.new(project).execute
+  end
+
+  def create_new_vsm_project
+    organization = admin.organization
+
+    namespace = FactoryBot.create(
+      :group,
+      name: "Value Stream Management Group #{suffix}",
+      path: "vsmg-#{suffix}",
+      organization: organization
+    )
+
+    project = FactoryBot.create(
+      :project,
+      :repository,
+      name: "Value Stream Management Project #{suffix}",
+      path: "vsmp-#{suffix}",
+      creator: admin,
+      namespace: namespace,
+      organization: organization
+    )
+    project.create_repository
+    project
+  end
+
+  def admin
+    @admin ||= Gitlab::DatabaseImporters::AdminOrganizationImporter.seeded_admin
+  end
+
+  def suffix
+    @suffix ||= Time.now.to_i
+  end
+
+  def start_time
+    @start_time ||= 25.days.ago
+  end
+
+  def end_time
+    @end_time ||= Time.now
+  end
+
+  def within_end_time(time)
+    [time, end_time].min
   end
 end
 
 Gitlab::Seeder.quiet do
-  flag = 'SEED_CYCLE_ANALYTICS'
+  project_id = ENV['VSA_SEED_PROJECT_ID']
+  project = Project.find(project_id) if project_id
 
-  if ENV[flag]
-    Project.all.each do |project|
-      seeder = Gitlab::Seeder::CycleAnalytics.new(project)
-      seeder.seed!
-    end
-  elsif ENV['CYCLE_ANALYTICS_PERF_TEST']
-    seeder = Gitlab::Seeder::CycleAnalytics.new(Project.order(:id).first, perf: true)
+  seeder = Gitlab::Seeder::CycleAnalytics.seeder_based_on_env(project)
+
+  if seeder
     seeder.seed!
-  elsif ENV['CYCLE_ANALYTICS_POPULATE_METRICS_DIRECTLY']
-    seeder = Gitlab::Seeder::CycleAnalytics.new(Project.order(:id).first, perf: true)
-    seeder.seed_metrics!
   else
-    puts "Skipped. Use the `#{flag}` environment variable to enable."
+    puts "Skipped. Use the `#{Gitlab::Seeder::CycleAnalytics::FLAG}` environment variable to enable."
   end
 end
+# rubocop:enable Rails/Output

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 namespace :gitlab do
   desc "GitLab | Update templates"
   task :update_templates do
@@ -5,22 +7,54 @@ namespace :gitlab do
   end
 
   desc "GitLab | Update project templates"
-  task :update_project_templates do
-    if Rails.env.production?
-      puts "This rake task is not meant fo production instances".red
-      exit(1)
+  task :update_project_templates, [] => :environment do |_task, args|
+    # we need an instance method from Gitlab::ImportExport::CommandLineUtil and don't
+    # want to include it in the task, as this would affect subsequent tasks as well
+    downloader = Class.new do
+      extend Gitlab::ImportExport::CommandLineUtil
+
+      def self.call(uploader, upload_path)
+        download_or_copy_upload(uploader, upload_path)
+      end
     end
-    admin = User.find_by(admin: true)
+
+    template_names = args.extras.to_set
+
+    if Rails.env.production?
+      raise "This rake task is not meant for production instances"
+    end
+
+    # Find an admin user with an SSH key
+    admin = User.where(admin: true).joins(:keys).where.not(keys: { id: nil }).take
 
     unless admin
-      puts "No admin user could be found".red
-      exit(1)
+      raise "No admin user with SSH key could be found"
     end
 
-    Gitlab::ProjectTemplate.all.each do |template|
+    tmp_organization_path = "tmp-organization-import-#{SecureRandom.hex(4)}"
+    puts "Creating temporary organization #{tmp_organization_path}"
+    tmp_organization = ::Organizations::Organization.create!(name: tmp_organization_path, path: tmp_organization_path)
+
+    tmp_namespace_path = "tmp-project-import-#{Time.now.to_i}"
+    puts "Creating temporary namespace #{tmp_namespace_path}"
+    tmp_namespace = Namespace.create!(
+      owner: admin,
+      name: tmp_namespace_path,
+      path: tmp_namespace_path,
+      type: Namespaces::UserNamespace.sti_name,
+      organization: tmp_organization
+    )
+
+    templates = if template_names.empty?
+                  Gitlab::ProjectTemplate.all
+                else
+                  Gitlab::ProjectTemplate.all.select { |template| template_names.include?(template.name) }
+                end
+
+    templates.each do |template|
       params = {
-        import_url: template.clone_url,
-        namespace_id: admin.namespace.id,
+        namespace_id: tmp_namespace.id,
+        organization_id: tmp_organization.id,
         path: template.name,
         skip_wiki: true
       }
@@ -29,33 +63,71 @@ namespace :gitlab do
       project = Projects::CreateService.new(admin, params).execute
 
       unless project.persisted?
-        puts project.errors.messages
-        exit(1)
+        raise "Failed to create project: #{project.errors.messages}"
       end
 
-      loop do
-        if project.finished?
-          puts "Import finished for #{template.name}"
-          break
+      uri_encoded_project_path = template.uri_encoded_project_path
+
+      # extract a concrete commit for signing off what we actually downloaded
+      # this way we do the right thing even if the repository gets updated in the meantime
+      get_commits_response = Gitlab::HTTP.get("#{template.project_host}/api/v4/projects/#{uri_encoded_project_path}/repository/commits",
+        query: { page: 1, per_page: 1 }
+      )
+      raise "Failed to retrieve latest commit for template '#{template.name}'" unless get_commits_response.success?
+
+      commit_sha = get_commits_response.parsed_response.dig(0, 'id')
+
+      project_archive_uri = "#{template.project_host}/api/v4/projects/#{uri_encoded_project_path}/repository/archive.tar.gz?sha=#{commit_sha}"
+      commit_message = <<~MSG
+        Initialized from '#{template.title}' project template
+
+        Template repository: #{template.preview}
+        Commit SHA: #{commit_sha}
+      MSG
+
+      local_remote = project.ssh_url_to_repo
+
+      Dir.mktmpdir do |tmpdir|
+        Dir.chdir(tmpdir) do
+          Gitlab::TaskHelpers.run_command!(['wget', project_archive_uri, '-O', 'archive.tar.gz'])
+          Gitlab::TaskHelpers.run_command!(['tar', 'xf', 'archive.tar.gz'])
+          extracted_project_basename = Dir['*/'].first
+          Dir.chdir(extracted_project_basename) do
+            Gitlab::TaskHelpers.run_command!(%w[git init --initial-branch=master])
+            Gitlab::TaskHelpers.run_command!(%W[git remote add origin #{local_remote}])
+            Gitlab::TaskHelpers.run_command!(%w[git add .])
+            Gitlab::TaskHelpers.run_command!(['git', 'commit', '--author', 'GitLab <root@localhost>', '--message', commit_message])
+            Gitlab::TaskHelpers.run_command!(['git', 'push', '-u', 'origin', 'master'])
+          end
         end
-
-        if project.failed?
-          puts "Failed to import from #{project_params[:import_url]}".red
-          exit(1)
-        end
-
-        puts "Waiting for the import to finish"
-
-        sleep(5)
-        project.reload
       end
+
+      project.reset
 
       Projects::ImportExport::ExportService.new(project, admin).execute
-      FileUtils.cp(project.export_project_path, template.archive_path)
-      Projects::DestroyService.new(admin, project).execute
+      downloader.call(project.export_file(admin), template.archive_path)
+
+      unless Projects::DestroyService.new(project, admin).execute
+        puts "Failed to destroy project #{template.name} (but namespace will be cleaned up later)"
+      end
+
       puts "Exported #{template.name}".green
     end
-    puts "Done".green
+
+    success = true
+  ensure
+    if tmp_namespace
+      puts "Destroying temporary namespace #{tmp_namespace_path}"
+      tmp_namespace.destroy
+    end
+
+    if tmp_organization
+      puts "Destroying temporary organization #{tmp_organization_path}"
+      tmp_organization.users.delete_all
+      tmp_organization.destroy
+    end
+
+    puts "Done".green if success
   end
 
   def update(template)
@@ -72,7 +144,7 @@ namespace :gitlab do
   end
 
   def clone_repository(url, directory)
-    FileUtils.rm_rf(directory) if Dir.exist?(directory)
+    FileUtils.rm_rf(directory)
 
     system("git clone #{url} --depth=1 --branch=master #{directory}")
   end
@@ -84,7 +156,7 @@ namespace :gitlab do
   # - Dir.entries returns also the entries '.' and '..'
   def remove_unneeded_files(directory, regex)
     Dir.foreach(directory) do |file|
-      FileUtils.rm_rf(File.join(directory, file)) unless file =~ regex
+      FileUtils.rm_rf(File.join(directory, file)) unless regex.match?(file)
     end
   end
 
@@ -95,10 +167,6 @@ namespace :gitlab do
     Template.new(
       "https://github.com/github/gitignore.git",
       /(\.{1,2}|LICENSE|Global|\.gitignore)\z/
-    ),
-    Template.new(
-      "https://gitlab.com/gitlab-org/gitlab-ci-yml.git",
-      /(\.{1,2}|LICENSE|CONTRIBUTING.md|Pages|autodeploy|\.gitlab-ci.yml)\z/
     ),
     Template.new(
       "https://gitlab.com/gitlab-org/Dockerfile.git",

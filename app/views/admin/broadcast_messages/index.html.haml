@@ -1,38 +1,13 @@
-- breadcrumb_title "Messages"
-- page_title "Broadcast Messages"
+- breadcrumb_title _("Messages")
+- page_title _("Broadcast Messages")
+- page_description = _('Use banners and notifications to notify your users about scheduled maintenance, recent upgrades, and more.')
 
-%h3.page-title
-  Broadcast Messages
-%p.light
-  Broadcast messages are displayed for every user and can be used to notify
-  users about scheduled maintenance, recent upgrades and more.
+= render ::Layouts::PageHeadingComponent.new(_("Broadcast Messages"), description: page_description, options: { data: { event_tracking_load: 'true', event_tracking: 'view_admin_broadcast_messages_pageload' } })
 
-= render 'form'
-
-%br.clearfix
-
-- if @broadcast_messages.any?
-  %table.table
-    %thead
-      %tr
-        %th Status
-        %th Preview
-        %th Starts
-        %th Ends
-        %th &nbsp;
-    %tbody
-      - @broadcast_messages.each do |message|
-        %tr
-          %td
-            = broadcast_message_status(message)
-          %td
-            = broadcast_message(message)
-          %td
-            = message.starts_at
-          %td
-            = message.ends_at
-          %td
-            = link_to icon('pencil-square-o'), edit_admin_broadcast_message_path(message), title: 'Edit', class: 'btn btn-xs'
-            = link_to icon('times'), admin_broadcast_message_path(message), method: :delete, remote: true, title: 'Remove', class: 'js-remove-tr btn btn-xs btn-danger'
-
-  = paginate @broadcast_messages, theme: 'gitlab'
+#js-broadcast-messages{ data: {
+  page: params[:page] || 1,
+  target_access_level_options: target_access_level_options.to_json,
+  messages_path: admin_broadcast_messages_path,
+  preview_path: preview_admin_broadcast_messages_path,
+  messages_count: @broadcast_messages.total_count,
+  messages: admin_broadcast_messages_data(@broadcast_messages) } }

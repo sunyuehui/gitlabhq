@@ -1,22 +1,26 @@
+# frozen_string_literal: true
+
 module Gitlab
   class PollingInterval
-    include Gitlab::CurrentSettings
-
-    HEADER_NAME = 'Poll-Interval'.freeze
+    HEADER_NAME = 'Poll-Interval'
 
     def self.set_header(response, interval:)
-      if polling_enabled?
-        multiplier = current_application_settings.polling_interval_multiplier
-        value = (interval * multiplier).to_i
-      else
-        value = -1
-      end
+      response.headers[HEADER_NAME] = polling_interval_value(interval).to_s
+    end
 
-      response.headers[HEADER_NAME] = value.to_s
+    def self.set_api_header(context, interval:)
+      context.header HEADER_NAME, polling_interval_value(interval).to_s
+    end
+
+    def self.polling_interval_value(interval)
+      return -1 unless polling_enabled?
+
+      multiplier = Gitlab::CurrentSettings.polling_interval_multiplier
+      (interval * multiplier).to_i
     end
 
     def self.polling_enabled?
-      !current_application_settings.polling_interval_multiplier.zero?
+      Gitlab::CurrentSettings.polling_interval_multiplier != 0
     end
   end
 end

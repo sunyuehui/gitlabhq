@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
       module Pipeline
         class Blocked < Status::Extended
           def text
-            s_('CiStatusText|blocked')
+            s_('CiStatusText|Blocked')
           end
 
           def label

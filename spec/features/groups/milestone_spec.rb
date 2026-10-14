@@ -1,21 +1,44 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-feature 'Group milestones', :js do
-  let(:group) { create(:group) }
-  let!(:project) { create(:project_empty_repo, group: group) }
-  let(:user) { create(:group_member, :master, user: create(:user), group: group ).user }
+require 'spec_helper'
+
+RSpec.describe 'Group milestones', feature_category: :team_planning do
+  let_it_be(:group) { create(:group) }
+  let_it_be_with_reload(:project) { create(:project_empty_repo, group: group) }
+  let_it_be_with_reload(:user) { create(:group_member, :maintainer, user: create(:user), group: group).user }
 
   around do |example|
-    Timecop.freeze { example.run }
+    freeze_time { example.run }
   end
 
   before do
     sign_in(user)
   end
 
-  context 'create a milestone' do
+  context 'create a milestone', :js do
     before do
       visit new_group_milestone_path(group)
+    end
+
+    it 'renders description preview' do
+      description = find('.note-textarea')
+
+      description.native.send_keys('')
+
+      click_button("Preview")
+
+      preview = find('.js-vue-md-preview')
+
+      expect(preview).to have_content('Nothing to preview.')
+
+      click_button("Continue editing")
+
+      description.native.send_keys(':+1: Nice')
+
+      click_button("Preview")
+
+      expect(preview).to have_css('gl-emoji')
+      expect(find('#milestone_description', visible: false)).not_to be_visible
     end
 
     it 'creates milestone with start date' do
@@ -28,60 +51,204 @@ feature 'Group milestones', :js do
 
       click_button 'Create milestone'
 
-      expect(find('.start_date')).to have_content(Date.today.at_beginning_of_month.strftime('%b %-d, %Y'))
+      # Clicking the submit button does not wait for the resulting navigation.
+      expect(page).to have_current_path(%r{/-/milestones/\d+\z})
+
+      expand_right_sidebar
+
+      page.within('.right-sidebar.right-sidebar-expanded') do
+        expect(find('.start_date')).to have_content(Date.today.at_beginning_of_month.strftime('%b %-d, %Y'))
+      end
+    end
+
+    it 'description input support autocomplete' do
+      description = find('.note-textarea')
+      description.native.send_keys('!')
+
+      expect(page).to have_selector('.atwho-view')
     end
   end
 
   context 'milestones list' do
-    let!(:other_project) { create(:project_empty_repo, group: group) }
-
-    let!(:active_project_milestone1) { create(:milestone, project: project, state: 'active', title: 'v1.0') }
-    let!(:active_project_milestone2) { create(:milestone, project: other_project, state: 'active', title: 'v1.0') }
-    let!(:closed_project_milestone1) { create(:milestone, project: project, state: 'closed', title: 'v2.0') }
-    let!(:closed_project_milestone2) { create(:milestone, project: other_project, state: 'closed', title: 'v2.0') }
-    let!(:active_group_milestone) { create(:milestone, group: group, state: 'active') }
-    let!(:closed_group_milestone) { create(:milestone, group: group, state: 'closed') }
-
-    before do
-      visit group_milestones_path(group)
+    context 'when no milestones' do
+      it 'renders no milestones text' do
+        visit group_milestones_path(group)
+        expect(page).to have_content('Use milestones to track issues and merge requests')
+      end
     end
 
-    it 'counts milestones correctly' do
-      expect(find('.top-area .active .badge').text).to eq("2")
-      expect(find('.top-area .closed .badge').text).to eq("2")
-      expect(find('.top-area .all .badge').text).to eq("4")
-    end
+    context 'when milestones exists', :js do
+      let_it_be(:other_project) { create(:project_empty_repo, group: group) }
 
-    it 'lists legacy group milestones and group milestones' do
-      legacy_milestone = GroupMilestone.build_collection(group, group.projects, { state: 'active' }).first
-
-      expect(page).to have_selector("#milestone_#{active_group_milestone.id}", count: 1)
-      expect(page).to have_selector("#milestone_#{legacy_milestone.milestones.first.id}", count: 1)
-    end
-
-    it 'updates milestone' do
-      page.within(".milestones #milestone_#{active_group_milestone.id}") do
-        click_link('Edit')
+      let_it_be_with_reload(:active_project_milestone1) do
+        create(
+          :milestone,
+          project: project,
+          state: 'active',
+          title: 'v1.0',
+          due_date: '2114-08-20',
+          description: 'Lorem Ipsum is simply dummy text'
+        )
       end
 
-      page.within('.milestone-form') do
-        fill_in 'milestone_title', with: 'new title'
-        click_button('Update milestone')
+      let_it_be(:active_project_milestone2) { create(:milestone, project: other_project, state: 'active', title: 'v1.1') }
+      let_it_be(:closed_project_milestone1) { create(:milestone, project: project, state: 'closed', title: 'v2.0') }
+      let_it_be(:closed_project_milestone2) { create(:milestone, project: other_project, state: 'closed', title: 'v2.0') }
+      let_it_be(:active_group_milestone) { create(:milestone, group: group, state: 'active', title: 'GL-113') }
+      let_it_be(:closed_group_milestone) { create(:milestone, group: group, state: 'closed') }
+      let_it_be_with_reload(:issue) do
+        create :issue, project: project, assignees: [user], author: user, milestone: active_project_milestone1
       end
 
-      expect(find('#content-body h2')).to have_content('new title')
+      before do
+        visit group_milestones_path(group)
+      end
+
+      it 'counts milestones correctly' do
+        within_testid 'milestones-filter' do
+          expect(page).to have_content('Open 3')
+          expect(page).to have_content('Closed 3')
+          expect(page).to have_content('All 6')
+        end
+      end
+
+      it 'lists group and project milestones' do
+        expect(page).to have_selector("#milestone_#{active_group_milestone.id}", count: 1)
+        expect(page).to have_selector("#milestone_#{active_project_milestone2.id}", count: 1)
+      end
+
+      it 'shows milestone detail and supports its edit' do
+        page.within(".milestones #milestone_#{active_group_milestone.id}") do
+          click_link(active_group_milestone.title)
+        end
+
+        page.within('.detail-page-header') do
+          find_by_testid('milestone-more-actions-dropdown-toggle').click
+          click_link('Edit')
+        end
+
+        expect(page).to have_selector('.milestone-form')
+      end
+
+      it 'shows milestone id' do
+        page.within(".milestones #milestone_#{active_group_milestone.id}") do
+          click_link(active_group_milestone.title)
+        end
+
+        page.within('.detail-page-header') do
+          find_by_testid('milestone-more-actions-dropdown-toggle').click
+        end
+
+        expect(page).to have_selector('[data-testid="copy-milestone-id"]')
+        expect(page).to have_content("Copy milestone ID: #{active_group_milestone.id}")
+      end
+
+      it 'delete a milestone' do
+        page.within(".milestones #milestone_#{active_group_milestone.id}") do
+          click_link(active_group_milestone.title)
+        end
+
+        page.within('.detail-page-header') do
+          find_by_testid('milestone-more-actions-dropdown-toggle').click
+          click_button('Delete')
+        end
+
+        click_button('Delete milestone')
+
+        expect(page).to have_selector('.milestones')
+        expect(page).not_to have_selector(".milestones #milestone_#{active_group_milestone.id}")
+      end
+
+      it 'renders milestones' do
+        expect(first('.milestone')).to have_link(
+          'v1.0',
+          href: project_milestone_path(project, active_project_milestone1)
+        )
+        expect(first('.milestone')).to have_content('0/1 complete')
+        expect(first('.milestone')).to have_content('0%')
+
+        expect(page).to have_content('v1.1')
+        expect(page).to have_content('GL-113')
+      end
     end
+  end
 
-    it 'shows milestone detail and supports its edit' do
-      page.within(".milestones #milestone_#{active_group_milestone.id}") do
-        click_link(active_group_milestone.title)
+  describe 'milestone tabs', :js do
+    context 'for a group milestone' do
+      let_it_be(:other_project) { create(:project_empty_repo, group: group) }
+      let_it_be(:milestone) { create(:milestone, group: group) }
+
+      let_it_be(:project_label) { create(:label, project: project) }
+      let_it_be(:other_project_label) { create(:label, project: other_project) }
+
+      let_it_be(:project_issue) { create(:labeled_issue, project: project, milestone: milestone, labels: [project_label], assignees: [create(:user)]) }
+      let_it_be(:other_project_issue) { create(:labeled_issue, project: other_project, milestone: milestone, labels: [other_project_label], assignees: [create(:user)]) }
+
+      let_it_be(:project_mr) { create(:merge_request, source_project: project, milestone: milestone) }
+      let_it_be(:other_project_mr) { create(:merge_request, source_project: other_project, milestone: milestone) }
+
+      before do
+        visit group_milestone_path(group, milestone)
       end
 
-      page.within('.detail-page-header') do
-        click_link('Edit')
+      it 'renders the issues tab' do
+        within('#tab-issues') do
+          expect(page).to have_content project_issue.title
+          expect(page).to have_content other_project_issue.title
+        end
       end
 
-      expect(page).to have_selector('.milestone-form')
+      it 'renders the merge requests tab' do
+        within('.js-milestone-tabs') do
+          click_link('Merge requests')
+        end
+
+        within('#tab-merge-requests') do
+          expect(page).to have_content project_mr.title
+          expect(page).to have_content other_project_mr.title
+        end
+      end
+
+      it 'renders the participants tab' do
+        within('.js-milestone-tabs') do
+          click_link('Participants')
+        end
+
+        within('#tab-participants') do
+          expect(page).to have_content project_issue.assignees.first.name
+          expect(page).to have_content other_project_issue.assignees.first.name
+        end
+      end
+
+      it 'renders the labels tab' do
+        within('.js-milestone-tabs') do
+          click_link('Labels')
+        end
+
+        within('#tab-labels') do
+          expect(page).to have_content project_label.title
+          expect(page).to have_content other_project_label.title
+        end
+      end
     end
+  end
+
+  private
+
+  def expand_right_sidebar
+    expect(page).to have_css('body[data-right-sidebar-initialized]')
+
+    execute_script(<<~JS)
+      const sidebar = document.querySelector('aside.right-sidebar');
+      const layoutPage = document.querySelector('.layout-page');
+      if (sidebar) {
+        sidebar.classList.remove('right-sidebar-collapsed');
+        sidebar.classList.add('right-sidebar-expanded');
+      }
+      if (layoutPage) {
+        layoutPage.classList.remove('right-sidebar-collapsed');
+        layoutPage.classList.add('right-sidebar-expanded');
+      }
+    JS
   end
 end

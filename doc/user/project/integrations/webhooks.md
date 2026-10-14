@@ -1,1072 +1,696 @@
-# Webhooks
-
->**Note:**
-Starting from GitLab 8.5:
-- the `repository` key is deprecated in favor of the `project` key
-- the `project.ssh_url` key is deprecated in favor of the `project.git_ssh_url` key
-- the `project.http_url` key is deprecated in favor of the `project.git_http_url` key
-
-Project webhooks allow you to trigger a URL if for example new code is pushed or
-a new issue is created. You can configure webhooks to listen for specific events
-like pushes, issues or merge requests. GitLab will send a POST request with data
-to the webhook URL.
-
-Webhooks can be used to update an external issue tracker, trigger CI jobs,
-update a backup mirror, or even deploy to your production server.
-
-Navigate to the webhooks page by going to your project's
-**Settings ➔ Integrations**.
-
-## Webhook endpoint tips
-
-If you are writing your own endpoint (web server) that will receive
-GitLab webhooks keep in mind the following things:
-
--   Your endpoint should send its HTTP response as fast as possible. If
-    you wait too long, GitLab may decide the hook failed and retry it.
--   Your endpoint should ALWAYS return a valid HTTP response. If you do
-    not do this then GitLab will think the hook failed and retry it.
-    Most HTTP libraries take care of this for you automatically but if
-    you are writing a low-level hook this is important to remember.
--   GitLab ignores the HTTP status code returned by your endpoint.
-
-## Secret token
-
-If you specify a secret token, it will be sent with the hook request in the
-`X-Gitlab-Token` HTTP header. Your webhook endpoint can check that to verify
-that the request is legitimate.
-
-## SSL verification
-
-By default, the SSL certificate of the webhook endpoint is verified based on
-an internal list of Certificate Authorities, which means the certificate cannot
-be self-signed.
-
-You can turn this off in the webhook settings in your GitLab projects.
-
-![SSL Verification](img/webhooks_ssl.png)
-
-## Events
-
-Below are described the supported events.
-
-### Push events
-
-Triggered when you push to the repository except when pushing tags.
-
-**Request header**:
-
-```
-X-Gitlab-Event: Push Hook
-```
-
-**Request body:**
-
-```json
-{
-  "object_kind": "push",
-  "before": "95790bf891e76fee5e1747ab589903a6a1f80f22",
-  "after": "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
-  "ref": "refs/heads/master",
-  "checkout_sha": "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
-  "user_id": 4,
-  "user_name": "John Smith",
-  "user_username": "jsmith",
-  "user_email": "john@example.com",
-  "user_avatar": "https://s.gravatar.com/avatar/d4c74594d841139328695756648b6bd6?s=8://s.gravatar.com/avatar/d4c74594d841139328695756648b6bd6?s=80",
-  "project_id": 15,
-  "project":{
-    "name":"Diaspora",
-    "description":"",
-    "web_url":"http://example.com/mike/diaspora",
-    "avatar_url":null,
-    "git_ssh_url":"git@example.com:mike/diaspora.git",
-    "git_http_url":"http://example.com/mike/diaspora.git",
-    "namespace":"Mike",
-    "visibility_level":0,
-    "path_with_namespace":"mike/diaspora",
-    "default_branch":"master",
-    "homepage":"http://example.com/mike/diaspora",
-    "url":"git@example.com:mike/diaspora.git",
-    "ssh_url":"git@example.com:mike/diaspora.git",
-    "http_url":"http://example.com/mike/diaspora.git"
-  },
-  "repository":{
-    "name": "Diaspora",
-    "url": "git@example.com:mike/diaspora.git",
-    "description": "",
-    "homepage": "http://example.com/mike/diaspora",
-    "git_http_url":"http://example.com/mike/diaspora.git",
-    "git_ssh_url":"git@example.com:mike/diaspora.git",
-    "visibility_level":0
-  },
-  "commits": [
-    {
-      "id": "b6568db1bc1dcd7f8b4d5a946b0b91f9dacd7327",
-      "message": "Update Catalan translation to e38cb41.",
-      "timestamp": "2011-12-12T14:27:31+02:00",
-      "url": "http://example.com/mike/diaspora/commit/b6568db1bc1dcd7f8b4d5a946b0b91f9dacd7327",
-      "author": {
-        "name": "Jordi Mallach",
-        "email": "jordi@softcatala.org"
-      },
-      "added": ["CHANGELOG"],
-      "modified": ["app/controller/application.rb"],
-      "removed": []
-    },
-    {
-      "id": "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
-      "message": "fixed readme",
-      "timestamp": "2012-01-03T23:36:29+02:00",
-      "url": "http://example.com/mike/diaspora/commit/da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
-      "author": {
-        "name": "GitLab dev user",
-        "email": "gitlabdev@dv6700.(none)"
-      },
-      "added": ["CHANGELOG"],
-      "modified": ["app/controller/application.rb"],
-      "removed": []
-    }
-  ],
-  "total_commits_count": 4
-}
-```
-
-### Tag events
-
-Triggered when you create (or delete) tags to the repository.
-
-**Request header**:
-
-```
-X-Gitlab-Event: Tag Push Hook
-```
-
-**Request body:**
-
-```json
-{
-  "object_kind": "tag_push",
-  "before": "0000000000000000000000000000000000000000",
-  "after": "82b3d5ae55f7080f1e6022629cdb57bfae7cccc7",
-  "ref": "refs/tags/v1.0.0",
-  "checkout_sha": "82b3d5ae55f7080f1e6022629cdb57bfae7cccc7",
-  "user_id": 1,
-  "user_name": "John Smith",
-  "user_avatar": "https://s.gravatar.com/avatar/d4c74594d841139328695756648b6bd6?s=8://s.gravatar.com/avatar/d4c74594d841139328695756648b6bd6?s=80",
-  "project_id": 1,
-  "project":{
-    "name":"Example",
-    "description":"",
-    "web_url":"http://example.com/jsmith/example",
-    "avatar_url":null,
-    "git_ssh_url":"git@example.com:jsmith/example.git",
-    "git_http_url":"http://example.com/jsmith/example.git",
-    "namespace":"Jsmith",
-    "visibility_level":0,
-    "path_with_namespace":"jsmith/example",
-    "default_branch":"master",
-    "homepage":"http://example.com/jsmith/example",
-    "url":"git@example.com:jsmith/example.git",
-    "ssh_url":"git@example.com:jsmith/example.git",
-    "http_url":"http://example.com/jsmith/example.git"
-  },
-  "repository":{
-    "name": "Example",
-    "url": "ssh://git@example.com/jsmith/example.git",
-    "description": "",
-    "homepage": "http://example.com/jsmith/example",
-    "git_http_url":"http://example.com/jsmith/example.git",
-    "git_ssh_url":"git@example.com:jsmith/example.git",
-    "visibility_level":0
-  },
-  "commits": [],
-  "total_commits_count": 0
-}
-```
-
-### Issues events
-
-Triggered when a new issue is created or an existing issue was updated/closed/reopened.
-
-**Request header**:
-
-```
-X-Gitlab-Event: Issue Hook
-```
-
-**Request body:**
-
-```json
-{
-  "object_kind": "issue",
-  "user": {
-    "name": "Administrator",
-    "username": "root",
-    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
-  },
-  "project":{
-    "name":"Gitlab Test",
-    "description":"Aut reprehenderit ut est.",
-    "web_url":"http://example.com/gitlabhq/gitlab-test",
-    "avatar_url":null,
-    "git_ssh_url":"git@example.com:gitlabhq/gitlab-test.git",
-    "git_http_url":"http://example.com/gitlabhq/gitlab-test.git",
-    "namespace":"GitlabHQ",
-    "visibility_level":20,
-    "path_with_namespace":"gitlabhq/gitlab-test",
-    "default_branch":"master",
-    "homepage":"http://example.com/gitlabhq/gitlab-test",
-    "url":"http://example.com/gitlabhq/gitlab-test.git",
-    "ssh_url":"git@example.com:gitlabhq/gitlab-test.git",
-    "http_url":"http://example.com/gitlabhq/gitlab-test.git"
-  },
-  "repository":{
-    "name": "Gitlab Test",
-    "url": "http://example.com/gitlabhq/gitlab-test.git",
-    "description": "Aut reprehenderit ut est.",
-    "homepage": "http://example.com/gitlabhq/gitlab-test"
-  },
-  "object_attributes": {
-    "id": 301,
-    "title": "New API: create/update/delete file",
-    "assignee_ids": [51],
-    "assignee_id": 51,
-    "author_id": 51,
-    "project_id": 14,
-    "created_at": "2013-12-03T17:15:43Z",
-    "updated_at": "2013-12-03T17:15:43Z",
-    "position": 0,
-    "branch_name": null,
-    "description": "Create new API for manipulations with repository",
-    "milestone_id": null,
-    "state": "opened",
-    "iid": 23,
-    "url": "http://example.com/diaspora/issues/23",
-    "action": "open"
-  },
-  "assignees": [{
-    "name": "User1",
-    "username": "user1",
-    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
-  }],
-  "assignee": {
-    "name": "User1",
-    "username": "user1",
-    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
-  },
-  "labels": [{
-    "id": 206,
-    "title": "API",
-    "color": "#ffffff",
-    "project_id": 14,
-    "created_at": "2013-12-03T17:15:43Z",
-    "updated_at": "2013-12-03T17:15:43Z",
-    "template": false,
-    "description": "API related issues",
-    "type": "ProjectLabel",
-    "group_id": 41
-  }]
-}
-```
-
-**Note**: `assignee` and `assignee_id` keys are deprecated and now show the first assignee only.
-
-### Comment events
-
-Triggered when a new comment is made on commits, merge requests, issues, and code snippets.
-The note data will be stored in `object_attributes` (e.g. `note`, `noteable_type`). The
-payload will also include information about the target of the comment. For example,
-a comment on a issue will include the specific issue information under the `issue` key.
-Valid target types:
-
-1. `commit`
-2. `merge_request`
-3. `issue`
-4. `snippet`
-
-#### Comment on commit
-
-**Request header**:
-
-```
-X-Gitlab-Event: Note Hook
-```
-
-**Request body:**
-
-```json
-{
-  "object_kind": "note",
-  "user": {
-    "name": "Administrator",
-    "username": "root",
-    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
-  },
-  "project_id": 5,
-  "project":{
-    "name":"Gitlab Test",
-    "description":"Aut reprehenderit ut est.",
-    "web_url":"http://example.com/gitlabhq/gitlab-test",
-    "avatar_url":null,
-    "git_ssh_url":"git@example.com:gitlabhq/gitlab-test.git",
-    "git_http_url":"http://example.com/gitlabhq/gitlab-test.git",
-    "namespace":"GitlabHQ",
-    "visibility_level":20,
-    "path_with_namespace":"gitlabhq/gitlab-test",
-    "default_branch":"master",
-    "homepage":"http://example.com/gitlabhq/gitlab-test",
-    "url":"http://example.com/gitlabhq/gitlab-test.git",
-    "ssh_url":"git@example.com:gitlabhq/gitlab-test.git",
-    "http_url":"http://example.com/gitlabhq/gitlab-test.git"
-  },
-  "repository":{
-    "name": "Gitlab Test",
-    "url": "http://example.com/gitlab-org/gitlab-test.git",
-    "description": "Aut reprehenderit ut est.",
-    "homepage": "http://example.com/gitlab-org/gitlab-test"
-  },
-  "object_attributes": {
-    "id": 1243,
-    "note": "This is a commit comment. How does this work?",
-    "noteable_type": "Commit",
-    "author_id": 1,
-    "created_at": "2015-05-17 18:08:09 UTC",
-    "updated_at": "2015-05-17 18:08:09 UTC",
-    "project_id": 5,
-    "attachment":null,
-    "line_code": "bec9703f7a456cd2b4ab5fb3220ae016e3e394e3_0_1",
-    "commit_id": "cfe32cf61b73a0d5e9f13e774abde7ff789b1660",
-    "noteable_id": null,
-    "system": false,
-    "st_diff": {
-      "diff": "--- /dev/null\n+++ b/six\n@@ -0,0 +1 @@\n+Subproject commit 409f37c4f05865e4fb208c771485f211a22c4c2d\n",
-      "new_path": "six",
-      "old_path": "six",
-      "a_mode": "0",
-      "b_mode": "160000",
-      "new_file": true,
-      "renamed_file": false,
-      "deleted_file": false
-    },
-    "url": "http://example.com/gitlab-org/gitlab-test/commit/cfe32cf61b73a0d5e9f13e774abde7ff789b1660#note_1243"
-  },
-  "commit": {
-    "id": "cfe32cf61b73a0d5e9f13e774abde7ff789b1660",
-    "message": "Add submodule\n\nSigned-off-by: Dmitriy Zaporozhets \u003cdmitriy.zaporozhets@gmail.com\u003e\n",
-    "timestamp": "2014-02-27T10:06:20+02:00",
-    "url": "http://example.com/gitlab-org/gitlab-test/commit/cfe32cf61b73a0d5e9f13e774abde7ff789b1660",
-    "author": {
-      "name": "Dmitriy Zaporozhets",
-      "email": "dmitriy.zaporozhets@gmail.com"
-    }
-  }
-}
-```
-
-#### Comment on merge request
-
-**Request header**:
-
-```
-X-Gitlab-Event: Note Hook
-```
-
-**Request body:**
-
-```json
-{
-  "object_kind": "note",
-  "user": {
-    "name": "Administrator",
-    "username": "root",
-    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
-  },
-  "project_id": 5,
-  "project":{
-    "name":"Gitlab Test",
-    "description":"Aut reprehenderit ut est.",
-    "web_url":"http://example.com/gitlab-org/gitlab-test",
-    "avatar_url":null,
-    "git_ssh_url":"git@example.com:gitlab-org/gitlab-test.git",
-    "git_http_url":"http://example.com/gitlab-org/gitlab-test.git",
-    "namespace":"Gitlab Org",
-    "visibility_level":10,
-    "path_with_namespace":"gitlab-org/gitlab-test",
-    "default_branch":"master",
-    "homepage":"http://example.com/gitlab-org/gitlab-test",
-    "url":"http://example.com/gitlab-org/gitlab-test.git",
-    "ssh_url":"git@example.com:gitlab-org/gitlab-test.git",
-    "http_url":"http://example.com/gitlab-org/gitlab-test.git"
-  },
-  "repository":{
-    "name": "Gitlab Test",
-    "url": "http://localhost/gitlab-org/gitlab-test.git",
-    "description": "Aut reprehenderit ut est.",
-    "homepage": "http://example.com/gitlab-org/gitlab-test"
-  },
-  "object_attributes": {
-    "id": 1244,
-    "note": "This MR needs work.",
-    "noteable_type": "MergeRequest",
-    "author_id": 1,
-    "created_at": "2015-05-17 18:21:36 UTC",
-    "updated_at": "2015-05-17 18:21:36 UTC",
-    "project_id": 5,
-    "attachment": null,
-    "line_code": null,
-    "commit_id": "",
-    "noteable_id": 7,
-    "system": false,
-    "st_diff": null,
-    "url": "http://example.com/gitlab-org/gitlab-test/merge_requests/1#note_1244"
-  },
-  "merge_request": {
-    "id": 7,
-    "target_branch": "markdown",
-    "source_branch": "master",
-    "source_project_id": 5,
-    "author_id": 8,
-    "assignee_id": 28,
-    "title": "Tempora et eos debitis quae laborum et.",
-    "created_at": "2015-03-01 20:12:53 UTC",
-    "updated_at": "2015-03-21 18:27:27 UTC",
-    "milestone_id": 11,
-    "state": "opened",
-    "merge_status": "cannot_be_merged",
-    "target_project_id": 5,
-    "iid": 1,
-    "description": "Et voluptas corrupti assumenda temporibus. Architecto cum animi eveniet amet asperiores. Vitae numquam voluptate est natus sit et ad id.",
-    "position": 0,
-    "source":{
-      "name":"Gitlab Test",
-      "description":"Aut reprehenderit ut est.",
-      "web_url":"http://example.com/gitlab-org/gitlab-test",
-      "avatar_url":null,
-      "git_ssh_url":"git@example.com:gitlab-org/gitlab-test.git",
-      "git_http_url":"http://example.com/gitlab-org/gitlab-test.git",
-      "namespace":"Gitlab Org",
-      "visibility_level":10,
-      "path_with_namespace":"gitlab-org/gitlab-test",
-      "default_branch":"master",
-      "homepage":"http://example.com/gitlab-org/gitlab-test",
-      "url":"http://example.com/gitlab-org/gitlab-test.git",
-      "ssh_url":"git@example.com:gitlab-org/gitlab-test.git",
-      "http_url":"http://example.com/gitlab-org/gitlab-test.git"
-    },
-    "target": {
-      "name":"Gitlab Test",
-      "description":"Aut reprehenderit ut est.",
-      "web_url":"http://example.com/gitlab-org/gitlab-test",
-      "avatar_url":null,
-      "git_ssh_url":"git@example.com:gitlab-org/gitlab-test.git",
-      "git_http_url":"http://example.com/gitlab-org/gitlab-test.git",
-      "namespace":"Gitlab Org",
-      "visibility_level":10,
-      "path_with_namespace":"gitlab-org/gitlab-test",
-      "default_branch":"master",
-      "homepage":"http://example.com/gitlab-org/gitlab-test",
-      "url":"http://example.com/gitlab-org/gitlab-test.git",
-      "ssh_url":"git@example.com:gitlab-org/gitlab-test.git",
-      "http_url":"http://example.com/gitlab-org/gitlab-test.git"
-    },
-    "last_commit": {
-      "id": "562e173be03b8ff2efb05345d12df18815438a4b",
-      "message": "Merge branch 'another-branch' into 'master'\n\nCheck in this test\n",
-      "timestamp": "2015-04-08T21: 00:25-07:00",
-      "url": "http://example.com/gitlab-org/gitlab-test/commit/562e173be03b8ff2efb05345d12df18815438a4b",
-      "author": {
-        "name": "John Smith",
-        "email": "john@example.com"
-      }
-    },
-    "work_in_progress": false,
-    "assignee": {
-      "name": "User1",
-      "username": "user1",
-      "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
-    }
-  }
-}
-```
-
-#### Comment on issue
-
-**Request header**:
-
-```
-X-Gitlab-Event: Note Hook
-```
-
-**Request body:**
-
-```json
-{
-  "object_kind": "note",
-  "user": {
-    "name": "Administrator",
-    "username": "root",
-    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
-  },
-  "project_id": 5,
-  "project":{
-    "name":"Gitlab Test",
-    "description":"Aut reprehenderit ut est.",
-    "web_url":"http://example.com/gitlab-org/gitlab-test",
-    "avatar_url":null,
-    "git_ssh_url":"git@example.com:gitlab-org/gitlab-test.git",
-    "git_http_url":"http://example.com/gitlab-org/gitlab-test.git",
-    "namespace":"Gitlab Org",
-    "visibility_level":10,
-    "path_with_namespace":"gitlab-org/gitlab-test",
-    "default_branch":"master",
-    "homepage":"http://example.com/gitlab-org/gitlab-test",
-    "url":"http://example.com/gitlab-org/gitlab-test.git",
-    "ssh_url":"git@example.com:gitlab-org/gitlab-test.git",
-    "http_url":"http://example.com/gitlab-org/gitlab-test.git"
-  },
-  "repository":{
-    "name":"diaspora",
-    "url":"git@example.com:mike/diaspora.git",
-    "description":"",
-    "homepage":"http://example.com/mike/diaspora"
-  },
-  "object_attributes": {
-    "id": 1241,
-    "note": "Hello world",
-    "noteable_type": "Issue",
-    "author_id": 1,
-    "created_at": "2015-05-17 17:06:40 UTC",
-    "updated_at": "2015-05-17 17:06:40 UTC",
-    "project_id": 5,
-    "attachment": null,
-    "line_code": null,
-    "commit_id": "",
-    "noteable_id": 92,
-    "system": false,
-    "st_diff": null,
-    "url": "http://example.com/gitlab-org/gitlab-test/issues/17#note_1241"
-  },
-  "issue": {
-    "id": 92,
-    "title": "test",
-    "assignee_ids": [],
-    "assignee_id": null,
-    "author_id": 1,
-    "project_id": 5,
-    "created_at": "2015-04-12 14:53:17 UTC",
-    "updated_at": "2015-04-26 08:28:42 UTC",
-    "position": 0,
-    "branch_name": null,
-    "description": "test",
-    "milestone_id": null,
-    "state": "closed",
-    "iid": 17
-  }
-}
-```
-
-**Note**: `assignee_id` field is deprecated and now shows the first assignee only.
-
-#### Comment on code snippet
-
-**Request header**:
-
-```
-X-Gitlab-Event: Note Hook
-```
-
-**Request body:**
-
-```json
-{
-  "object_kind": "note",
-  "user": {
-    "name": "Administrator",
-    "username": "root",
-    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
-  },
-  "project_id": 5,
-  "project":{
-    "name":"Gitlab Test",
-    "description":"Aut reprehenderit ut est.",
-    "web_url":"http://example.com/gitlab-org/gitlab-test",
-    "avatar_url":null,
-    "git_ssh_url":"git@example.com:gitlab-org/gitlab-test.git",
-    "git_http_url":"http://example.com/gitlab-org/gitlab-test.git",
-    "namespace":"Gitlab Org",
-    "visibility_level":10,
-    "path_with_namespace":"gitlab-org/gitlab-test",
-    "default_branch":"master",
-    "homepage":"http://example.com/gitlab-org/gitlab-test",
-    "url":"http://example.com/gitlab-org/gitlab-test.git",
-    "ssh_url":"git@example.com:gitlab-org/gitlab-test.git",
-    "http_url":"http://example.com/gitlab-org/gitlab-test.git"
-  },
-  "repository":{
-    "name":"Gitlab Test",
-    "url":"http://example.com/gitlab-org/gitlab-test.git",
-    "description":"Aut reprehenderit ut est.",
-    "homepage":"http://example.com/gitlab-org/gitlab-test"
-  },
-  "object_attributes": {
-    "id": 1245,
-    "note": "Is this snippet doing what it's supposed to be doing?",
-    "noteable_type": "Snippet",
-    "author_id": 1,
-    "created_at": "2015-05-17 18:35:50 UTC",
-    "updated_at": "2015-05-17 18:35:50 UTC",
-    "project_id": 5,
-    "attachment": null,
-    "line_code": null,
-    "commit_id": "",
-    "noteable_id": 53,
-    "system": false,
-    "st_diff": null,
-    "url": "http://example.com/gitlab-org/gitlab-test/snippets/53#note_1245"
-  },
-  "snippet": {
-    "id": 53,
-    "title": "test",
-    "content": "puts 'Hello world'",
-    "author_id": 1,
-    "project_id": 5,
-    "created_at": "2015-04-09 02:40:38 UTC",
-    "updated_at": "2015-04-09 02:40:38 UTC",
-    "file_name": "test.rb",
-    "expires_at": null,
-    "type": "ProjectSnippet",
-    "visibility_level": 0
-  }
-}
-```
-
-### Merge request events
-
-Triggered when a new merge request is created, an existing merge request was updated/merged/closed or a commit is added in the source branch.
-
-**Request header**:
-
-```
-X-Gitlab-Event: Merge Request Hook
-```
-
-**Request body:**
-
-```json
-{
-  "object_kind": "merge_request",
-  "user": {
-    "name": "Administrator",
-    "username": "root",
-    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
-  },
-  "object_attributes": {
-    "id": 99,
-    "target_branch": "master",
-    "source_branch": "ms-viewport",
-    "source_project_id": 14,
-    "author_id": 51,
-    "assignee_id": 6,
-    "title": "MS-Viewport",
-    "created_at": "2013-12-03T17:23:34Z",
-    "updated_at": "2013-12-03T17:23:34Z",
-    "st_commits": null,
-    "st_diffs": null,
-    "milestone_id": null,
-    "state": "opened",
-    "merge_status": "unchecked",
-    "target_project_id": 14,
-    "iid": 1,
-    "description": "",
-    "source":{
-      "name":"Awesome Project",
-      "description":"Aut reprehenderit ut est.",
-      "web_url":"http://example.com/awesome_space/awesome_project",
-      "avatar_url":null,
-      "git_ssh_url":"git@example.com:awesome_space/awesome_project.git",
-      "git_http_url":"http://example.com/awesome_space/awesome_project.git",
-      "namespace":"Awesome Space",
-      "visibility_level":20,
-      "path_with_namespace":"awesome_space/awesome_project",
-      "default_branch":"master",
-      "homepage":"http://example.com/awesome_space/awesome_project",
-      "url":"http://example.com/awesome_space/awesome_project.git",
-      "ssh_url":"git@example.com:awesome_space/awesome_project.git",
-      "http_url":"http://example.com/awesome_space/awesome_project.git"
-    },
-    "target": {
-      "name":"Awesome Project",
-      "description":"Aut reprehenderit ut est.",
-      "web_url":"http://example.com/awesome_space/awesome_project",
-      "avatar_url":null,
-      "git_ssh_url":"git@example.com:awesome_space/awesome_project.git",
-      "git_http_url":"http://example.com/awesome_space/awesome_project.git",
-      "namespace":"Awesome Space",
-      "visibility_level":20,
-      "path_with_namespace":"awesome_space/awesome_project",
-      "default_branch":"master",
-      "homepage":"http://example.com/awesome_space/awesome_project",
-      "url":"http://example.com/awesome_space/awesome_project.git",
-      "ssh_url":"git@example.com:awesome_space/awesome_project.git",
-      "http_url":"http://example.com/awesome_space/awesome_project.git"
-    },
-    "last_commit": {
-      "id": "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
-      "message": "fixed readme",
-      "timestamp": "2012-01-03T23:36:29+02:00",
-      "url": "http://example.com/awesome_space/awesome_project/commits/da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
-      "author": {
-        "name": "GitLab dev user",
-        "email": "gitlabdev@dv6700.(none)"
-      }
-    },
-    "work_in_progress": false,
-    "url": "http://example.com/diaspora/merge_requests/1",
-    "action": "open",
-    "assignee": {
-      "name": "User1",
-      "username": "user1",
-      "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=40\u0026d=identicon"
-    }
-  }
-}
-```
-
-### Wiki Page events
-
-Triggered when a wiki page is created, updated or deleted.
-
-**Request Header**:
-
-```
-X-Gitlab-Event: Wiki Page Hook
-```
-
-**Request Body**:
-
-```json
-{
-  "object_kind": "wiki_page",
-  "user": {
-    "name": "Administrator",
-    "username": "root",
-    "avatar_url": "http://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=80\u0026d=identicon"
-  },
-  "project": {
-    "name": "awesome-project",
-    "description": "This is awesome",
-    "web_url": "http://example.com/root/awesome-project",
-    "avatar_url": null,
-    "git_ssh_url": "git@example.com:root/awesome-project.git",
-    "git_http_url": "http://example.com/root/awesome-project.git",
-    "namespace": "root",
-    "visibility_level": 0,
-    "path_with_namespace": "root/awesome-project",
-    "default_branch": "master",
-    "homepage": "http://example.com/root/awesome-project",
-    "url": "git@example.com:root/awesome-project.git",
-    "ssh_url": "git@example.com:root/awesome-project.git",
-    "http_url": "http://example.com/root/awesome-project.git"
-  },
-  "wiki": {
-    "web_url": "http://example.com/root/awesome-project/wikis/home",
-    "git_ssh_url": "git@example.com:root/awesome-project.wiki.git",
-    "git_http_url": "http://example.com/root/awesome-project.wiki.git",
-    "path_with_namespace": "root/awesome-project.wiki",
-    "default_branch": "master"
-  },
-  "object_attributes": {
-    "title": "Awesome",
-    "content": "awesome content goes here",
-    "format": "markdown",
-    "message": "adding an awesome page to the wiki",
-    "slug": "awesome",
-    "url": "http://example.com/root/awesome-project/wikis/awesome",
-    "action": "create"
-  }
-}
-```
-
-### Pipeline events
-
-Triggered on status change of Pipeline.
-
-**Request Header**:
-
-```
-X-Gitlab-Event: Pipeline Hook
-```
-
-**Request Body**:
-
-```json
-{
-   "object_kind": "pipeline",
-   "object_attributes":{
-      "id": 31,
-      "ref": "master",
-      "tag": false,
-      "sha": "bcbb5ec396a2c0f828686f14fac9b80b780504f2",
-      "before_sha": "bcbb5ec396a2c0f828686f14fac9b80b780504f2",
-      "status": "success",
-      "stages":[
-         "build",
-         "test",
-         "deploy"
-      ],
-      "created_at": "2016-08-12 15:23:28 UTC",
-      "finished_at": "2016-08-12 15:26:29 UTC",
-      "duration": 63
-   },
-   "user":{
-      "name": "Administrator",
-      "username": "root",
-      "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
-   },
-   "project":{
-      "name": "Gitlab Test",
-      "description": "Atque in sunt eos similique dolores voluptatem.",
-      "web_url": "http://192.168.64.1:3005/gitlab-org/gitlab-test",
-      "avatar_url": null,
-      "git_ssh_url": "git@192.168.64.1:gitlab-org/gitlab-test.git",
-      "git_http_url": "http://192.168.64.1:3005/gitlab-org/gitlab-test.git",
-      "namespace": "Gitlab Org",
-      "visibility_level": 20,
-      "path_with_namespace": "gitlab-org/gitlab-test",
-      "default_branch": "master"
-   },
-   "commit":{
-      "id": "bcbb5ec396a2c0f828686f14fac9b80b780504f2",
-      "message": "test\n",
-      "timestamp": "2016-08-12T17:23:21+02:00",
-      "url": "http://example.com/gitlab-org/gitlab-test/commit/bcbb5ec396a2c0f828686f14fac9b80b780504f2",
-      "author":{
-         "name": "User",
-         "email": "user@gitlab.com"
-      }
-   },
-   "builds":[
-      {
-         "id": 380,
-         "stage": "deploy",
-         "name": "production",
-         "status": "skipped",
-         "created_at": "2016-08-12 15:23:28 UTC",
-         "started_at": null,
-         "finished_at": null,
-         "when": "manual",
-         "manual": true,
-         "user":{
-            "name": "Administrator",
-            "username": "root",
-            "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
-         },
-         "runner": null,
-         "artifacts_file":{
-            "filename": null,
-            "size": null
-         }
-      },
-      {
-         "id": 377,
-         "stage": "test",
-         "name": "test-image",
-         "status": "success",
-         "created_at": "2016-08-12 15:23:28 UTC",
-         "started_at": "2016-08-12 15:26:12 UTC",
-         "finished_at": null,
-         "when": "on_success",
-         "manual": false,
-         "user":{
-            "name": "Administrator",
-            "username": "root",
-            "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
-         },
-         "runner": null,
-         "artifacts_file":{
-            "filename": null,
-            "size": null
-         }
-      },
-      {
-         "id": 378,
-         "stage": "test",
-         "name": "test-build",
-         "status": "success",
-         "created_at": "2016-08-12 15:23:28 UTC",
-         "started_at": "2016-08-12 15:26:12 UTC",
-         "finished_at": "2016-08-12 15:26:29 UTC",
-         "when": "on_success",
-         "manual": false,
-         "user":{
-            "name": "Administrator",
-            "username": "root",
-            "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
-         },
-         "runner": null,
-         "artifacts_file":{
-            "filename": null,
-            "size": null
-         }
-      },
-      {
-         "id": 376,
-         "stage": "build",
-         "name": "build-image",
-         "status": "success",
-         "created_at": "2016-08-12 15:23:28 UTC",
-         "started_at": "2016-08-12 15:24:56 UTC",
-         "finished_at": "2016-08-12 15:25:26 UTC",
-         "when": "on_success",
-         "manual": false,
-         "user":{
-            "name": "Administrator",
-            "username": "root",
-            "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
-         },
-         "runner": null,
-         "artifacts_file":{
-            "filename": null,
-            "size": null
-         }
-      },
-      {
-         "id": 379,
-         "stage": "deploy",
-         "name": "staging",
-         "status": "created",
-         "created_at": "2016-08-12 15:23:28 UTC",
-         "started_at": null,
-         "finished_at": null,
-         "when": "on_success",
-         "manual": false,
-         "user":{
-            "name": "Administrator",
-            "username": "root",
-            "avatar_url": "http://www.gravatar.com/avatar/e32bd13e2add097461cb96824b7a829c?s=80\u0026d=identicon"
-         },
-         "runner": null,
-         "artifacts_file":{
-            "filename": null,
-            "size": null
-         }
-      }
-   ]
-}
-```
-
-### Build events
-
-Triggered on status change of a Build.
-
-**Request Header**:
-
-```
-X-Gitlab-Event: Build Hook
-```
-
-**Request Body**:
-
-```json
-{
-  "object_kind": "build",
-  "ref": "gitlab-script-trigger",
-  "tag": false,
-  "before_sha": "2293ada6b400935a1378653304eaf6221e0fdb8f",
-  "sha": "2293ada6b400935a1378653304eaf6221e0fdb8f",
-  "build_id": 1977,
-  "build_name": "test",
-  "build_stage": "test",
-  "build_status": "created",
-  "build_started_at": null,
-  "build_finished_at": null,
-  "build_duration": null,
-  "build_allow_failure": false,
-  "project_id": 380,
-  "project_name": "gitlab-org/gitlab-test",
-  "user": {
-    "id": 3,
-    "name": "User",
-    "email": "user@gitlab.com"
-  },
-  "commit": {
-    "id": 2366,
-    "sha": "2293ada6b400935a1378653304eaf6221e0fdb8f",
-    "message": "test\n",
-    "author_name": "User",
-    "author_email": "user@gitlab.com",
-    "status": "created",
-    "duration": null,
-    "started_at": null,
-    "finished_at": null
-  },
-  "repository": {
-    "name": "gitlab_test",
-    "git_ssh_url": "git@192.168.64.1:gitlab-org/gitlab-test.git",
-    "description": "Atque in sunt eos similique dolores voluptatem.",
-    "homepage": "http://192.168.64.1:3005/gitlab-org/gitlab-test",
-    "git_ssh_url": "git@192.168.64.1:gitlab-org/gitlab-test.git",
-    "git_http_url": "http://192.168.64.1:3005/gitlab-org/gitlab-test.git",
-    "visibility_level": 20
-  }
-}
-```
-
-## Testing webhooks
-
-You can trigger the webhook manually. Sample data from the project will be used.Sample data will take from the project. 
-> For example: for triggering `Push Events` your project should have at least one commit.
-
-![Webhook testing](img/webhook_testing.png)
-
-## Troubleshoot webhooks
-
-Gitlab stores each perform of the webhook.
-You can find records for last 2 days in "Recent Deliveries" section on the edit page of each webhook.
-
-![Recent deliveries](img/webhook_logs.png)
-
-In this section you can see HTTP status code (green for 200-299 codes, red for the others, `internal error` for failed deliveries ), triggered event, a time when the event was called, elapsed time of the request.
-
-If you need more information about execution, you can click `View details` link.
-On this page, you can see data that GitLab sends (request headers and body) and data that it received (response headers and body).
-
-From this page, you can repeat delivery with the same data by clicking `Resend Request` button.
-
->**Note:** If URL or secret token of the webhook were updated, data will be delivered to the new address.
-
-## Example webhook receiver
-
-If you want to see GitLab's webhooks in action for testing purposes you can use
-a simple echo script running in a console session. For the following script to
-work you need to have Ruby installed.
-
-Save the following file as `print_http_body.rb`:
+---
+stage: GitLab Dedicated
+group: Import
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Webhooks
+description: "Configure and manage project and group webhooks in GitLab."
+---
+
+{{< details >}}
+
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
+
+{{< /details >}}
+
+Webhooks connect GitLab to your other tools and systems through real-time notifications.
+When important events happen in GitLab, webhooks send that information directly to your external applications.
+Build automation workflows by reacting to merge requests, code pushes, and issue updates.
+
+With webhooks, your team stays synchronized as changes occur:
+
+- External issue trackers update automatically when GitLab issues change.
+- Chat applications notify team members about pipeline completions.
+- Custom scripts deploy applications when code reaches the main branch.
+- Monitoring systems track development activity across your entire organization.
+
+## Webhook events
+
+Various events in GitLab can trigger webhooks. For example:
+
+- Pushing code to a repository.
+- Posting a comment on an issue.
+- Creating a merge request.
+
+## Webhook limits
+
+GitLab.com enforces [webhook limits](../../gitlab_com/_index.md#webhooks), including:
+
+- Maximum number of webhooks per project or group.
+- Number of webhook calls per minute.
+- Webhook timeout duration.
+
+For GitLab Self-Managed, administrators can modify these limits.
+
+### Push event limits
+
+GitLab limits webhook triggers for push events that include multiple changes:
+
+- Default limit: 3 branches or tags per push.
+- Behavior when exceeded: No webhooks are triggered for the entire push event.
+- Applies to: Both project webhooks and system hooks.
+- Configuration: GitLab Self-Managed administrators can modify the `push_event_hooks_limit`
+  setting through the application settings API.
+
+If you frequently push multiple tags or branches simultaneously and need webhook
+notifications, contact your GitLab administrator to increase this limit.
+
+## Group webhooks
+
+{{< details >}}
+
+- Tier: Premium, Ultimate
+
+{{< /details >}}
+
+Group webhooks are custom HTTP callbacks that send notifications for events across all projects in a group and its subgroups.
+
+### Types of group webhook events
+
+You can configure group webhooks to listen for:
+
+- All events that occur in projects in the group and subgroups
+- Group-specific events, including group member events, project events, and subgroup events
+
+### Webhooks in both a project and a group
+
+If you configure identical webhooks in both a group and a project in that group,
+both webhooks are triggered for events in that project.
+This allows for flexible event handling at different levels of your GitLab organization.
+
+## Configure webhooks
+
+Create and configure webhooks in GitLab to integrate with your project's workflow.
+Use these features to set up webhooks that meet your specific requirements.
+
+### Create a webhook
+
+{{< history >}}
+
+- **Signing token** text box [introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/19367) in GitLab 19.0 [with a feature flag](../../../administration/feature_flags/_index.md) named `webhook_signing_token`. Enabled by default.
+- Feature flag `webhook_signing_token` [removed](https://gitlab.com/gitlab-org/gitlab/-/issues/596374) in GitLab 19.1.
+
+{{< /history >}}
+
+For new webhooks, use a signing token instead of a secret token. The signing token computes
+an HMAC-SHA256 signature over the payload, so your endpoint can verify both the authenticity
+and integrity of the request. The secret token only provides a plain-text value in a header,
+which offers weaker guarantees. The secret token is not recommended for new webhooks.
+
+Create a webhook to send notifications about events in your project or group.
+
+Prerequisites:
+
+- For project webhooks, you must have the Maintainer or Owner role for the project.
+- For group webhooks, you must have the Owner role for the group.
+
+To create a webhook:
+
+1. In the top bar, select **Search or go to** and find your project or group.
+1. In the left sidebar, select **Settings** > **Webhooks**.
+1. Select **Add new webhook**.
+1. In **URL**, enter the URL of the webhook endpoint.
+   Use percent-encoding for special characters.
+1. Optional. Enter a **Name** and **Description** for the webhook.
+1. Optional. Configure request authentication. Use a signing token for stronger security:
+   - **Signing token** (recommended): Select **Generate signing token**.
+     Copy and save the token now because it is displayed only once.
+     Your webhook endpoint can use this token to [verify the HMAC-SHA256 signature](#verify-the-signature).
+   - **Secret token** (not recommended): Enter a token in the **Secret token** field.
+     This token is sent as plain text in the `X-Gitlab-Token` HTTP header and provides weaker
+     security guarantees than a signing token. Use the signing token instead for new webhooks.
+1. In the **Trigger** section, select the events to trigger the webhook.
+1. Optional. To send GitLab Duo flow lifecycle events to this webhook, under
+   **GitLab Duo Agent Platform**, select the **Send Duo flow events to this webhook** checkbox.
+   This section appears only where
+   [GitLab Duo flow webhook callbacks](../../duo_agent_platform/flows/webhook_callbacks.md) are
+   available.
+1. Optional. To disable SSL verification, clear the **Enable SSL verification** checkbox.
+1. Select **Add webhook**.
+
+### Signing tokens
+
+{{< history >}}
+
+- [Introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/19367) in GitLab 19.0 [with a feature flag](../../../administration/feature_flags/_index.md) named `webhook_signing_token`. Enabled by default.
+- [Generally available](https://gitlab.com/gitlab-org/gitlab/-/issues/596374) in GitLab 19.1. Feature flag `webhook_signing_token` removed.
+
+{{< /history >}}
+
+Use a signing token to verify that webhook payloads originate from GitLab and have not been tampered with.
+Unlike the secret token, the signing token is
+used to compute an HMAC-SHA256 signature over the payload. This means recipients can independently verify
+both the authenticity and integrity of the received payload.
+
+GitLab webhook delivery follows the [Standard Webhooks](https://www.standardwebhooks.com/)
+specification. Every webhook request includes the `webhook-id` and `webhook-timestamp` headers.
+When a signing token is configured, GitLab also includes the `webhook-signature` header with the
+HMAC-SHA256 signature. Each signature has the format `v1,{base64_signature}`. The header might
+contain multiple space-separated signatures. GitLab currently sends one signature, but this
+might change in the future. The signature is computed over the string
+`{message_id}.{timestamp}.{body}`, where:
+
+- `{message_id}` is the value of the `webhook-id` header.
+- `{timestamp}` is the value of the `webhook-timestamp` header.
+- `{body}` is the raw JSON request body.
+
+#### Verify the signature
+
+To verify the signature in your webhook endpoint:
+
+1. Retrieve the `webhook-id`, `webhook-timestamp`, and `webhook-signature` header values.
+1. Split the `webhook-signature` value on spaces to get the list of signatures.
+1. Construct the message string: `"{message_id}.{timestamp}.{body}"`.
+1. Decode the signing token: strip the `whsec_` prefix, then base64-decode the remainder.
+1. Compute the HMAC-SHA256 digest using the decoded key.
+1. Encode the digest as base64 and prefix with `v1,`.
+1. Check whether the computed signature matches any entry in the signature list.
+   Use a constant-time comparison to prevent timing attacks.
+
+Example in Ruby:
 
 ```ruby
-require 'webrick'
+require 'base64'
+require 'openssl'
 
-server = WEBrick::HTTPServer.new(:Port => ARGV.first)
-server.mount_proc '/' do |req, res|
-  puts req.body
+def valid_signature?(signing_token, message_id, timestamp, body, received_signatures)
+  raw_key = Base64.strict_decode64(signing_token.delete_prefix('whsec_'))
+  message = "#{message_id}.#{timestamp}.#{body}"
+  digest = OpenSSL::HMAC.digest('sha256', raw_key, message)
+  expected = "v1,#{Base64.strict_encode64(digest)}"
+  received_signatures.split(' ').any? do |sig|
+    ActiveSupport::SecurityUtils.secure_compare(expected, sig)
+  end
 end
-
-trap 'INT' do
-  server.shutdown
-end
-server.start
 ```
 
-Pick an unused port (e.g. 8000) and start the script: `ruby print_http_body.rb
-8000`.  Then add your server as a webhook receiver in GitLab as
-`http://my.host:8000/`.
+Example in Python:
 
-When you press 'Test' in GitLab, you should see something like this in the
-console:
+```python
+import base64
+import hashlib
+import hmac
 
+def valid_signature(signing_token, message_id, timestamp, body, received_signatures):
+    raw_key = base64.b64decode(signing_token.removeprefix('whsec_'))
+    message = f"{message_id}.{timestamp}.{body}".encode('utf-8')
+    digest = hmac.new(raw_key, message, hashlib.sha256).digest()
+    expected = "v1," + base64.b64encode(digest).decode('utf-8')
+    return any(
+        hmac.compare_digest(expected, sig)
+        for sig in received_signatures.split(' ')
+    )
 ```
-{"before":"077a85dd266e6f3573ef7e9ef8ce3343ad659c4e","after":"95cd4a99e93bc4bbabacfa2cd10e6725b1403c60",<SNIP>}
-example.com - - [14/May/2014:07:45:26 EDT] "POST / HTTP/1.1" 200 0
-- -> /
+
+#### Backward compatibility
+
+The signing token works alongside the existing secret token. You can configure both on the same webhook:
+
+- The `X-Gitlab-Token` header is still sent if a secret token is configured.
+- The `webhook-signature` and `webhook-id` headers are sent if a signing token is configured.
+
+To migrate an existing webhook using the secret token to a signing token without downtime, configure both tokens on the same
+webhook during the transition. Update your receiver to verify the signature when `webhook-signature` is
+present and fall back to the secret token otherwise.
+
+Once your receiver handles signatures correctly, you can remove the secret token from the webhook settings.
+
+#### Security considerations
+
+To prevent replay attacks, validate that the timestamp in `webhook-timestamp` is recent before processing the payload.
+
+The signing token is never returned by the API.
+
+### Mask sensitive portions of webhook URLs
+
+Mask sensitive portions of webhook URLs to enhance security.
+Masked portions are replaced with configured values when webhooks are executed, are not logged, and
+are encrypted at rest in the database.
+
+To mask sensitive portions of a webhook URL:
+
+1. In the top bar, select **Search or go to** and find your project or group.
+1. In the left sidebar, select **Settings** > **Webhooks**.
+1. In **URL**, enter the full URL of the webhook.
+1. To define masked portions, select **Add URL masking**.
+1. In **Sensitive portion of URL**, enter the part of the URL you want to mask.
+1. In **How it looks in the UI**, enter the value to display instead of the masked portion.
+   Variable names must contain only lowercase letters (`a-z`), numbers (`0-9`), or underscores (`_`).
+1. Select **Save changes**.
+
+The masked values appear hidden in the UI.
+For example, if you've defined variables `path` and `value`, the webhook URL can look like this:
+
+```plaintext
+https://webhook.example.com/{path}?key={value}
 ```
+
+### Custom headers
+
+{{< history >}}
+
+- [Introduced](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/146702) in GitLab 16.11 [with a feature flag](../../../administration/feature_flags/_index.md) named `custom_webhook_headers`. Enabled by default.
+- [Generally available](https://gitlab.com/gitlab-org/gitlab/-/issues/448604) in GitLab 17.0. Feature flag `custom_webhook_headers` removed.
+
+{{< /history >}}
+
+Add custom headers to webhook requests for authentication to external services.
+You can configure up to 20 custom headers per webhook.
+
+Custom headers must:
+
+- Not override the values of delivery headers.
+- Contain only alphanumeric characters, periods, dashes, or underscores.
+- Start with a letter and end with a letter or number.
+- Have no consecutive periods, dashes, or underscores.
+
+Custom headers show in **Recent events** with masked values.
+
+### Custom webhook template
+
+{{< history >}}
+
+- [Introduced](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/142738) in GitLab 16.10 [with a feature flag](../../../administration/feature_flags/_index.md) named `custom_webhook_template`. Enabled by default.
+- [Generally available](https://gitlab.com/gitlab-org/gitlab/-/issues/439610) in GitLab 17.0. Feature flag `custom_webhook_template` removed.
+- JSON serialization of interpolated field values [introduced](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/197992) in GitLab 18.4 [with a feature flag](../../../administration/feature_flags/_index.md) named `custom_webhook_template_serialization`. Disabled by default.
+- JSON serialization of interpolated field values made [generally available](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/212407) in GitLab 18.6. Feature flag `custom_webhook_template_serialization` enabled by default.
+- Feature flag `custom_webhook_template_serialization` [removed](https://gitlab.com/gitlab-org/gitlab/-/work_items/580460) in GitLab 18.10.
+
+{{< /history >}}
+
+Create a custom payload template for your webhook to control the data sent in the request body.
+
+#### Create a custom webhook template
+
+- For project webhooks, you must have the Maintainer or Owner role for the project.
+- For group webhooks, you must have the Owner role for the group.
+
+To create a custom webhook template:
+
+1. Go to your webhook configuration.
+1. Set a custom webhook template.
+1. Ensure the template renders as valid JSON.
+
+Use fields from the payload of an event in your template. For example:
+
+- `{{build_name}}` for a job event
+- `{{deployable_url}}` for a deployment event
+
+To access nested properties, use periods to separate path segments.
+
+#### Example custom webhook template
+
+For this custom payload template:
+
+```json
+{
+  "event": "{{object_kind}}",
+  "project_name": "{{project.name}}"
+}
+```
+
+The resulting request payload for a `push` event is:
+
+```json
+{
+  "event": "push",
+  "project_name": "Example"
+}
+```
+
+Custom webhook templates cannot access properties in arrays.
+
+### Filter push events by branch
+
+Filter `push` events sent to your webhook endpoint by the branch name.
+Use one of these filtering options:
+
+- **All branches**: Receive push events from all branches.
+- **Wildcard pattern**: Receive push events from branches that match a wildcard pattern.
+- **Regular expression**: Receive push events from branches that match a regular expression (regex).
+
+#### Use a wildcard pattern
+
+To filter by using a wildcard pattern:
+
+1. In the webhook configuration, select **Wildcard pattern**.
+1. Enter a pattern.
+   For example:
+   - `*-stable` to match branches ending with `-stable`.
+   - `production/*` to match branches in the `production/` namespace.
+
+#### Use a regular expression
+
+To filter by using a regular expression:
+
+1. In the webhook configuration, select **Regular expression**.
+1. Enter a regex pattern that follows the [RE2 syntax](https://github.com/google/re2/wiki/Syntax).
+
+For example, to exclude the `main` branch, use:
+
+```plaintext
+^(?:.{0,3}|.{5,}|[^m].*|m[^a].*|ma[^i].*|mai[^n].*)$
+```
+
+### Configure webhooks to support mutual TLS
+
+{{< details >}}
+
+- Offering: GitLab Self-Managed
+
+{{< /details >}}
+
+Configure webhooks to support mutual TLS by setting a global client certificate in PEM format.
+
+Prerequisites:
+
+- You must be a GitLab administrator.
+
+To configure mutual TLS for webhooks:
+
+1. Prepare a client certificate in PEM format.
+1. Optional. Protect the certificate with a PEM passphrase.
+1. Configure GitLab to use the certificate.
+
+{{< tabs >}}
+
+{{< tab title="Linux package (Omnibus)" >}}
+
+1. Edit `/etc/gitlab/gitlab.rb`:
+
+   ```ruby
+   gitlab_rails['http_client']['tls_client_cert_file'] = '<PATH TO CLIENT PEM FILE>'
+   gitlab_rails['http_client']['tls_client_cert_password'] = '<OPTIONAL PASSWORD>'
+   ```
+
+1. Save the file and reconfigure GitLab:
+
+   ```shell
+   sudo gitlab-ctl reconfigure
+   ```
+
+{{< /tab >}}
+
+{{< tab title="Docker" >}}
+
+1. Edit `docker-compose.yml`:
+
+   ```yaml
+   version: "3.6"
+   services:
+     gitlab:
+       image: 'gitlab/gitlab-ee:latest'
+       restart: always
+       hostname: 'gitlab.example.com'
+       environment:
+         GITLAB_OMNIBUS_CONFIG: |
+            gitlab_rails['http_client']['tls_client_cert_file'] = '<PATH TO CLIENT PEM FILE>'
+            gitlab_rails['http_client']['tls_client_cert_password'] = '<OPTIONAL PASSWORD>'
+   ```
+
+1. Save the file and restart GitLab:
+
+   ```shell
+   docker compose up -d
+   ```
+
+{{< /tab >}}
+
+{{< tab title="Self-compiled (source)" >}}
+
+1. Edit `/home/git/gitlab/config/gitlab.yml`:
+
+   ```yaml
+   production: &base
+     http_client:
+       tls_client_cert_file: '<PATH TO CLIENT PEM FILE>'
+       tls_client_cert_password: '<OPTIONAL PASSWORD>'
+   ```
+
+1. Save the file and restart GitLab:
+
+   ```shell
+   # For systems running systemd
+   sudo systemctl restart gitlab.target
+
+   # For systems running SysV init
+   sudo service gitlab restart
+   ```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+After configuration, GitLab presents this certificate to the server during TLS handshakes for webhook connections.
+
+### Configure firewalls for webhook traffic
+
+Configure firewalls for webhook traffic based on how GitLab sends webhooks:
+
+- Asynchronously from Sidekiq nodes (most common)
+- Synchronously from Rails nodes (in specific cases)
+
+Webhooks are sent synchronously from Rails nodes when you test or retry a webhook in the UI.
+
+When configuring firewalls, ensure both Sidekiq and Rails nodes can send webhook traffic.
+
+## Manage webhooks
+
+Monitor and maintain your configured webhooks in GitLab.
+
+### View webhook request history
+
+View the history of webhook requests to monitor their performance and troubleshoot issues.
+
+Prerequisites:
+
+- For project webhooks, you must have the Maintainer or Owner role for the project.
+- For group webhooks, you must have the Owner role for the group.
+
+To view the request history for a webhook:
+
+1. In the top bar, select **Search or go to** and find your project or group.
+1. In the left sidebar, select **Settings** > **Webhooks**.
+1. Select **Edit** for the webhook.
+1. Go to the **Recent events** section.
+
+The **Recent events** section displays all requests made to a webhook in the last two days.
+The table includes:
+
+- HTTP status code:
+  - Green for `200`-`299` codes
+  - Red for other codes
+  - `internal error` for failed deliveries
+- Triggered event
+- Elapsed time of the request
+- Relative time the request was made
+
+![Webhook event log showing status codes and response times](img/webhook_logs_v14_4.png)
+
+#### Inspect request and response details
+
+Prerequisites:
+
+- For project webhooks, you must have the Maintainer or Owner role for the project.
+- For group webhooks, you must have the Owner role for the group.
+
+Each webhook request in **Recent events** has a **Request details** page.
+This page contains the body and headers of:
+
+- The response GitLab received from the webhook receiver endpoint
+- The webhook request GitLab sent
+
+To inspect the request and response details of a webhook event:
+
+1. In the top bar, select **Search or go to** and find your project or group.
+1. In the left sidebar, select **Settings** > **Webhooks**.
+1. Select **Edit** for the webhook.
+1. Go to the **Recent events** section.
+1. Select **View details** for the event.
+
+To send the request again with the same data and the same `Idempotency-Key` header, select **Resend Request**.
+If the webhook URL has changed, you cannot resend the request.
+You can also resend the request programmatically through the project webhooks API.
+
+### Test a webhook
+
+Test a webhook to ensure it's working properly or to re-enable a disabled webhook.
+
+Prerequisites:
+
+- For project webhooks, you must have the Maintainer or Owner role for the project.
+- For group webhooks, you must have the Owner role for the group.
+- To test `push events`, your project must have at least one commit.
+
+To test a webhook:
+
+1. In the top bar, select **Search or go to** and find your project or group.
+1. In the left sidebar, select **Settings** > **Webhooks** to see all webhooks for this project.
+1. To test a webhook directly from the list of configured webhooks:
+   1. Locate the webhook you want to test.
+   1. From the **Test** dropdown list, select the type of event to test.
+1. To test a webhook while editing it:
+   1. Locate the webhook you want to test, and select **Edit**.
+   1. Make your changes to the webhook.
+   1. Select the **Test** dropdown list, then select the type of event to test.
+
+Testing is not supported for some types of events for project and group webhooks.
+For more information, see [issue 379201](https://gitlab.com/gitlab-org/gitlab/-/issues/379201).
+
+## Webhook reference
+
+Use this technical reference to:
+
+- Understand how GitLab webhooks work.
+- Integrate webhooks with your systems.
+- Set up, troubleshoot, and optimize your webhook configurations.
+
+### Webhook receiver requirements
+
+Implement fast and stable webhook receiver endpoints to ensure reliable webhook delivery.
+
+Slow, unstable, or incorrectly configured receivers might be disabled automatically.
+Invalid HTTP responses are treated as failed requests.
+
+To optimize your webhook receivers:
+
+1. Respond quickly with a `200` or `201` status:
+   - Avoid processing webhooks in the same request.
+   - Use a queue to handle webhooks after receiving them.
+   - Respond before the timeout limit to prevent automatic disabling on GitLab.com.
+1. Handle potential duplicate events:
+   - Prepare for duplicate events if a webhook times out.
+   - Ensure your endpoint is consistently fast and stable.
+1. Minimize response headers and body:
+   - GitLab stores response headers and body for later inspection.
+   - Limit the number and size of returned headers.
+   - Consider responding with an empty body.
+1. Use appropriate status codes:
+   - Return client error status responses (`4xx` range) only for misconfigured webhooks.
+   - For unsupported events, return `400` or ignore the payload.
+   - Avoid `500` server error responses for handled events.
+
+### Auto-disabled webhooks
+
+{{< history >}}
+
+- [Introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/385902) for group webhooks in GitLab 15.10.
+- [Disabled on GitLab Self-Managed](https://gitlab.com/gitlab-org/gitlab/-/issues/390157) for project webhooks in GitLab 15.10 [with a feature flag](../../../administration/feature_flags/_index.md) named `auto_disabling_web_hooks`.
+- **Fails to connect** and **Failing to connect** [renamed](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/166329) to **Disabled** and **Temporarily disabled** in GitLab 17.11.
+- [Changed](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/166329) to become permanently disabled after 40 consecutive failures in GitLab 17.11.
+
+{{< /history >}}
+
+> [!flag]
+> The availability of this feature is controlled by a feature flag.
+> For more information, see the history.
+
+GitLab automatically disables project or group webhooks that fail four consecutive times.
+
+To view auto-disabled webhooks:
+
+1. In the top bar, select **Search or go to** and find your project or group.
+1. In the left sidebar, select **Settings** > **Webhooks**.
+
+In the webhook list, auto-disabled webhooks display as:
+
+- **Temporarily disabled** if they fail four consecutive times
+- **Disabled** if they fail 40 consecutive times
+
+![Webhook list showing disabled and temporarily disabled status badges.](img/failed_badges_v17_11.png)
+
+#### Temporarily disabled webhooks
+
+Webhooks are temporarily disabled if they fail four consecutive times.
+If webhooks fail 40 consecutive times, they become permanently disabled.
+
+Failure occurs when:
+
+- The webhook receiver returns a response code in the `4xx` or `5xx` range.
+- The webhook experiences a timeout when attempting to connect to the webhook receiver.
+- The webhook encounters other HTTP errors.
+
+Temporarily disabled webhooks are initially disabled for one minute,
+with the duration extending on subsequent failures up to 24 hours.
+After this period has elapsed, these webhooks are automatically re-enabled.
+
+#### Permanently disabled webhooks
+
+Webhooks are permanently disabled if they fail 40 consecutive times.
+Unlike temporarily disabled webhooks, these webhooks are not automatically re-enabled.
+
+Webhooks that were permanently disabled in GitLab 17.10 and earlier underwent a data migration.
+These webhooks might display four failures in **Recent events**
+even though the UI might state they have 40 failures.
+
+#### Re-enable disabled webhooks
+
+To re-enable a disabled webhook, send a test request.
+The webhook is re-enabled if the test request returns a response code in the `2xx` range.
+
+### Delivery headers
+
+{{< history >}}
+
+- `Idempotency-Key` header [introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/388692) in GitLab 17.4.
+- `webhook-id` and `webhook-timestamp` headers [introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/19367) in GitLab 19.0.
+- `webhook-signature` header [introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/19367) in GitLab 19.0 [with a feature flag](../../../administration/feature_flags/_index.md) named `webhook_signing_token`. Enabled by default.
+- Feature flag `webhook_signing_token` [removed](https://gitlab.com/gitlab-org/gitlab/-/issues/596374) in GitLab 19.1.
+
+{{< /history >}}
+
+GitLab includes the following headers in webhook requests to your endpoint.
+
+| Header                   | Description                                                                                                                                                     | Example |
+|:-------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------|
+| `Idempotency-Key`        | Unique ID consistent across webhook retries. Available for legacy reasons. Prefer `webhook-id`.                                                                 | `"f5e5f430-f57b-4e6e-9fac-d9128cd7232f"` |
+| `User-Agent`             | User agent in the format `"Gitlab/<VERSION>"`.                                                                                                                  | `"GitLab/15.5.0-pre"` |
+| `webhook-id`             | Unique message ID consistent across webhook retries. Equal to `Idempotency-Key`.                                                                                | `"f5e5f430-f57b-4e6e-9fac-d9128cd7232f"` |
+| `webhook-signature`      | Space-separated list of HMAC-SHA256 signatures, each in the format `v1,{base64_signature}`. Included only when a [signing token](#signing-tokens) is configured. | `"v1,abc123def456=="` |
+| `webhook-timestamp`      | Unix timestamp (seconds since epoch) when the request was generated.                                                                                            | `"1744578123"` |
+| `X-Gitlab-Event-UUID`    | Unique ID for non-recursive webhooks. Recursive webhooks (triggered by earlier webhooks) share the same value.                                                  | `"13792a34-cac6-4fda-95a8-c58e00a3954e"` |
+| `X-Gitlab-Event`         | Webhook type name. Corresponds to event types in the format `"<EVENT> Hook"`.                                                                                   | `"Push Hook"` |
+| `X-Gitlab-Instance`      | Hostname of the GitLab instance that sent the webhook.                                                                                                          | `"https://gitlab.com"` |
+| `X-Gitlab-Token`         | Secret token for the webhook, sent as plain text. Included only when a secret token is configured.                                                              | `"my-secret-token"` |
+| `X-Gitlab-Webhook-UUID`  | Unique ID for each webhook.                                                                                                                                     | `"02affd2d-2cba-4033-917d-ec22d5dc4b38"` |
+
+### Image URL display in webhook body
+
+GitLab rewrites relative image references to absolute URLs in webhook bodies.
+
+#### Image URL rewriting example
+
+If the original image reference in a merge request, comment, or wiki page is:
+
+```markdown
+![A Markdown image with a relative URL.](/uploads/$sha/image.png)
+```
+
+The rewritten image reference in the webhook body would be:
+
+```markdown
+![A Markdown image with an absolute URL.](https://gitlab.example.com/-/project/:id/uploads/<SHA>/image.png)
+```
+
+This example assumes:
+
+- GitLab is installed at `gitlab.example.com`.
+- The project ID is at `123`.
+
+#### Exceptions to image URL rewriting
+
+GitLab does not rewrite image URLs when:
+
+- They already use HTTP, HTTPS, or protocol-relative URLs.
+- They use advanced Markdown features, such as link labels.
+
+## Related topics
+
+- [Webhook events and JSON payloads](webhook_events.md)
+- [Webhook limits](../../gitlab_com/_index.md#webhooks)
+- [Project webhooks API](../../../api/project_webhooks.md)
+- [Group webhooks API](../../../api/group_webhooks.md)
+- [System hooks API](../../../api/system_hooks.md)
+- [Troubleshooting webhooks](webhooks_troubleshooting.md)
+- [Send SMS alerts with webhooks and Twilio](https://www.datadoghq.com/blog/send-alerts-sms-customizable-webhooks-twilio/)
+- [Applying GitLab labels automatically](https://about.gitlab.com/blog/applying-gitlab-labels-automatically/)

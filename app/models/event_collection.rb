@@ -1,9 +1,15 @@
+# frozen_string_literal: true
+
 # A collection of events to display in an event list.
 #
 # An EventCollection is meant to be used for displaying events to a user (e.g.
 # in a controller), it's not suitable for building queries that are used for
 # building other queries.
 class EventCollection
+  include Gitlab::Utils::StrongMemoize
+
+  attr_reader :filter
+
   # To prevent users from putting too much pressure on the database by cycling
   # through thousands of events we put a limit on the number of pages.
   MAX_PAGE = 10
@@ -11,61 +17,158 @@ class EventCollection
   # projects - An ActiveRecord::Relation object that returns the projects for
   #            which to retrieve events.
   # filter - An EventFilter instance to use for filtering events.
-  def initialize(projects, limit: 20, offset: 0, filter: nil)
+  # preserve_projects_order - If true, retains the :order clause for projects.
+  def initialize(
+    projects,
+    limit: 20,
+    offset: 0,
+    filter: nil,
+    groups: nil,
+    preserve_projects_order: false,
+    transfer_options: {}
+  )
     @projects = projects
     @limit = limit
     @offset = offset
-    @filter = filter
+    @filter = filter || EventFilter.new(EventFilter::ALL)
+    @groups = groups
+    @preserve_projects_order = preserve_projects_order
+    @current_group_id = transfer_options[:current_group_id]
+    @ancestor_group_ids = transfer_options[:ancestor_group_ids]
+    @exclude_transferred_events = transfer_options.fetch(:exclude_transferred_events, false)
   end
 
   # Returns an Array containing the events.
   def to_a
     return [] if current_page > MAX_PAGE
 
-    relation = if Gitlab::Database.join_lateral_supported?
-                 relation_with_join_lateral
+    relation = if groups
+                 project_and_group_events
+               elsif current_group_transfer_context?
+                 project_and_current_group_transfer_events
                else
-                 relation_without_join_lateral
+                 project_and_ancestor_group_transfer_events
                end
 
+    relation = exclude_transferred_events(relation) if @exclude_transferred_events
+    relation = paginate_events(relation)
     relation.with_associations.to_a
+  end
+
+  def all_project_events
+    Event.from_union([project_events]).recent
   end
 
   private
 
-  # Returns the events relation to use when JOIN LATERAL is not supported.
-  #
-  # This relation simply gets all the events for all authorized projects, then
-  # limits that set.
-  def relation_without_join_lateral
-    events = filtered_events.in_projects(projects)
-
-    paginate_events(events)
+  def project_events
+    materialize_event_rows(in_operator_optimized_relation('project_id', projects, Project))
   end
 
-  # Returns the events relation to use when JOIN LATERAL is supported.
-  #
-  # This relation is built using JOIN LATERAL, producing faster queries than a
-  # regular LIMIT + OFFSET approach.
-  def relation_with_join_lateral
-    projects_for_lateral = projects.select(:id).to_sql
-
-    lateral = filtered_events
-      .limit(limit_for_join_lateral)
-      .where('events.project_id = projects_for_lateral.id')
-      .to_sql
-
-    # The outer query does not need to re-apply the filters since the JOIN
-    # LATERAL body already takes care of this.
-    outer = base_relation
-      .from("(#{projects_for_lateral}) projects_for_lateral")
-      .joins("JOIN LATERAL (#{lateral}) AS #{Event.table_name} ON true")
-
-    paginate_events(outer)
+  def group_events
+    materialize_event_rows(in_operator_optimized_relation('group_id', groups, Namespace))
   end
 
-  def filtered_events
-    @filter ? @filter.apply_filter(base_relation) : base_relation
+  def project_and_group_events
+    if EventFilter::PROJECT_ONLY_EVENT_TYPES.include?(filter.filter)
+      project_events
+    else
+      Event.from_union([project_events, group_events]).recent
+    end
+  end
+
+  def project_and_ancestor_group_transfer_events
+    return project_events unless @ancestor_group_ids && filter.include_transferred_events?
+
+    Event.from_union([project_events, ancestor_group_transfer_events]).recent
+  end
+
+  def project_and_current_group_transfer_events
+    Event.from_union(
+      [
+        non_transferred_project_events,
+        transferred_direct_project_events,
+        current_group_transfer_events
+      ],
+      remove_duplicates: false
+    ).recent
+  end
+
+  def in_operator_optimized_relation(parent_column, parents, parent_model)
+    parent_id_column = parent_model.arel_table[:id]
+    scope_ids = parents.pluck(parent_id_column)
+
+    if filter.active?(EventFilter::ALL) && scope_ids.one?
+      return Event.where(parent_column => scope_ids.first).recent.limit(@limit + @offset)
+    end
+
+    array_data = {
+      scope_ids: scope_ids,
+      scope_model: parent_model,
+      mapping_column: parent_column
+    }
+    query_builder_params = filter.in_operator_query_builder_params(array_data)
+
+    Gitlab::Pagination::Keyset::InOperatorOptimization::QueryBuilder
+      .new(**query_builder_params)
+      .execute
+      .limit(@limit + @offset)
+  end
+
+  def materialize_event_rows(events)
+    Event.where(id: events.reselect(:id)).recent.limit(@limit + @offset)
+  end
+
+  def non_transferred_project_events
+    project_events.where.not(action: Event.actions[:transferred])
+      .recent
+  end
+
+  def exclude_transferred_events(events)
+    events.where.not(action: Event.actions[:transferred])
+  end
+
+  def ancestor_group_transfer_events
+    Event.transferred_action
+      .where(group_id: @ancestor_group_ids.select(:id))
+      .where(project_id: nil, target_type: Group.name)
+  end
+
+  def current_group_transfer_events
+    strong_memoize(:current_group_transfer_events) do
+      Event.transferred_action
+        .where(project_id: nil, group_id: current_group_and_direct_subgroups.select(:id))
+        .recent
+        .limit(@limit + @offset)
+    end
+  end
+
+  def transferred_direct_project_events
+    strong_memoize(:transferred_direct_project_events) do
+      Event.transferred_action
+        .for_project
+        .where(project_id: direct_projects_in_current_group.select(:id))
+        .recent
+        .limit(@limit + @offset)
+    end
+  end
+
+  def direct_projects_in_current_group
+    Project.where(namespace_id: @current_group_id)
+  end
+
+  def current_group_and_direct_subgroups
+    strong_memoize(:current_group_and_direct_subgroups) do
+      Group.where(id: @current_group_id).or(direct_subgroups_in_current_group)
+    end
+  end
+
+  def direct_subgroups_in_current_group
+    Group.where(parent_id: @current_group_id)
+  end
+
+  def current_group_transfer_context?
+    @current_group_id && filter.include_transferred_events?
   end
 
   def paginate_events(events)
@@ -78,21 +181,19 @@ class EventCollection
     Event.unscoped.recent
   end
 
-  def limit_for_join_lateral
-    # Applying the OFFSET on the inside of a JOIN LATERAL leads to incorrect
-    # results. To work around this we need to increase the inner limit for every
-    # page.
-    #
-    # This means that on page 1 we use LIMIT 20, and an outer OFFSET of 0. On
-    # page 2 we use LIMIT 40 and an outer OFFSET of 20.
-    @limit + @offset
-  end
-
   def current_page
     (@offset / @limit) + 1
   end
 
   def projects
-    @projects.except(:order)
+    @preserve_projects_order ? @projects : @projects.except(:order)
+  end
+
+  def groups
+    strong_memoize(:groups) do
+      @groups&.except(:order)
+    end
   end
 end
+
+EventCollection.prepend_mod

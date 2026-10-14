@@ -1,52 +1,92 @@
-class EmailReceiverWorker
-  include Sidekiq::Worker
-  include DedicatedSidekiqQueue
+# frozen_string_literal: true
+
+class EmailReceiverWorker # rubocop:disable Scalability/IdempotentWorker
+  include ApplicationWorker
+
+  data_consistency :always
+
+  sidekiq_options retry: 3
+
+  feature_category :team_planning
+  urgency :high
+  weight 2
+
+  attr_accessor :raw
 
   def perform(raw)
-    return unless Gitlab::IncomingEmail.enabled?
+    return unless should_perform?
 
-    begin
-      Gitlab::Email::Receiver.new(raw).execute
-    rescue => e
-      handle_failure(raw, e)
-    end
+    @raw = raw
+    execute_receiver
+  end
+
+  def should_perform?
+    Gitlab::Email::IncomingEmail.enabled?
   end
 
   private
 
-  def handle_failure(raw, e)
-    Rails.logger.warn("Email can not be processed: #{e}\n\n#{raw}")
+  def execute_receiver
+    receiver.execute
+    log_success
+  rescue StandardError => e
+    log_error(e)
+    handle_failure(e)
+  end
 
-    return unless raw.present?
+  def receiver
+    @receiver ||= Gitlab::Email::Receiver.new(raw)
+  end
 
-    can_retry = false
-    reason =
-      case e
-      when Gitlab::Email::UnknownIncomingEmail
-        "We couldn't figure out what the email is for. Please create your issue or comment through the web interface."
-      when Gitlab::Email::SentNotificationNotFoundError
-        "We couldn't figure out what the email is in reply to. Please create your comment through the web interface."
-      when Gitlab::Email::ProjectNotFound
-        "We couldn't find the project. Please check if there's any typo."
-      when Gitlab::Email::EmptyEmailError
-        can_retry = true
-        "It appears that the email is blank. Make sure your reply is at the top of the email, we can't process inline replies."
-      when Gitlab::Email::UserNotFoundError
-        "We couldn't figure out what user corresponds to the email. Please create your comment through the web interface."
-      when Gitlab::Email::UserBlockedError
-        "Your account has been blocked. If you believe this is in error, contact a staff member."
-      when Gitlab::Email::UserNotAuthorizedError
-        "You are not allowed to perform this action. If you believe this is in error, contact a staff member."
-      when Gitlab::Email::NoteableNotFoundError
-        "The thread you are replying to no longer exists, perhaps it was deleted? If you believe this is in error, contact a staff member."
-      when Gitlab::Email::InvalidNoteError,
-           Gitlab::Email::InvalidIssueError
-        can_retry = true
-        e.message
+  def logger
+    Sidekiq.logger
+  end
+
+  def log_success
+    logger.info(build_message('Successfully processed message', receiver.mail_metadata))
+  end
+
+  def log_error(error)
+    payload =
+      case error
+      # Unparsable e-mails don't have metadata we can use
+      when Gitlab::Email::EmailUnparsableError, Gitlab::Email::EmptyEmailError
+        {}
+      else
+        mail_metadata
       end
 
-    if reason
-      EmailRejectionMailer.rejection(reason, raw, can_retry).deliver_later
+    # We don't need the backtrace and more details if the e-mail couldn't be processed
+    if error.is_a?(Gitlab::Email::ProcessingError)
+      payload['exception.class'] = error.class.name
+    else
+      Gitlab::ExceptionLogFormatter.format!(error, payload)
+      Gitlab::ErrorTracking.track_exception(error)
     end
+
+    logger.error(build_message('Error processing message', payload))
+  end
+
+  def build_message(message, params = {})
+    {
+      class: self.class.name,
+      Labkit::Fields::CORRELATION_ID => Labkit::Correlation::CorrelationId.current_id,
+      message: message
+    }.merge(params)
+  end
+
+  def mail_metadata
+    receiver.mail_metadata
+  rescue StandardError => e
+    # We should never get here as long as we check EmailUnparsableError, but
+    # let's be defensive in case we did something wrong.
+    Gitlab::ErrorTracking.track_exception(e)
+    {}
+  end
+
+  def handle_failure(error)
+    return unless raw.present?
+
+    Gitlab::Email::FailureHandler.handle(receiver, error)
   end
 end

@@ -1,68 +1,31 @@
-%h3.page-title
-  New Merge Request
+= render ::Layouts::PageHeadingComponent.new(_('New merge request'))
 
-= form_for [@project.namespace.becomes(Namespace), @project, @merge_request], url: project_new_merge_request_path(@project), method: :get, html: { class: "merge-request-form form-inline js-requires-input" } do |f|
-  .hide.alert.alert-danger.mr-compare-errors
-  .merge-request-branches.js-merge-request-new-compare.row{ 'data-target-project-url': project_new_merge_request_update_branches_path(@source_project), 'data-source-branch-url': project_new_merge_request_branch_from_path(@source_project), 'data-target-branch-url': project_new_merge_request_branch_to_path(@source_project) }
-    .col-md-6
-      .panel.panel-default.panel-new-merge-request
-        .panel-heading
-          Source branch
-        .panel-body.clearfix
-          .merge-request-select.dropdown
-            = f.hidden_field :source_project_id
-            = dropdown_toggle @merge_request.source_project_path, { toggle: "dropdown", field_name: "#{f.object_name}[source_project_id]", disabled: @merge_request.persisted? }, { toggle_class: "js-compare-dropdown js-source-project" }
-            .dropdown-menu.dropdown-menu-selectable.dropdown-source-project
-              = dropdown_title("Select source project")
-              = dropdown_filter("Search projects")
-              = dropdown_content do
-                = render 'projects/merge_requests/dropdowns/project',
-                  projects: [@merge_request.source_project],
-                  selected: f.object.source_project_id
-          .merge-request-select.dropdown
-            = f.hidden_field :source_branch
-            = dropdown_toggle f.object.source_branch || "Select source branch", { toggle: "dropdown", field_name: "#{f.object_name}[source_branch]" }, { toggle_class: "js-compare-dropdown js-source-branch git-revision-dropdown-toggle" }
-            .dropdown-menu.dropdown-menu-selectable.dropdown-source-branch.git-revision-dropdown
-              = dropdown_title("Select source branch")
-              = dropdown_filter("Search branches")
-              = dropdown_content do
-                = render 'projects/merge_requests/dropdowns/branch',
-                  branches: @merge_request.source_branches,
-                  selected: f.object.source_branch
-        .panel-footer
-          .text-center= icon('spinner spin', class: 'js-source-loading')
-          %ul.list-unstyled.mr_source_commit
+- if @saml_groups.present?
+  = render Pajamas::AlertComponent.new(variant: :warning, dismissible: false) do |c|
+    - c.with_body do
+      = s_('GroupSAML|Some branches are inaccessible because your SAML session has expired. To access the branches, select the group’s path to reauthenticate.')
+    - c.with_actions do
+      .gl-flex.gl-flex-wrap
+        - @saml_groups.each do |group|
+          = render Pajamas::ButtonComponent.new(size: :small, href: sso_group_saml_providers_path(group, { token: group.saml_discovery_token, redirect: project_new_merge_request_branch_from_path(@source_project) }), button_options: { class: "gl-mr-3 gl-mb-3" }) do
+            = group.path
 
-    .col-md-6
-      .panel.panel-default.panel-new-merge-request
-        .panel-heading
-          Target branch
-        .panel-body.clearfix
-          - projects = target_projects(@project)
-          .merge-request-select.dropdown
-            = f.hidden_field :target_project_id
-            = dropdown_toggle f.object.target_project.full_path, { toggle: "dropdown", field_name: "#{f.object_name}[target_project_id]", disabled: @merge_request.persisted? }, { toggle_class: "js-compare-dropdown js-target-project" }
-            .dropdown-menu.dropdown-menu-selectable.dropdown-target-project
-              = dropdown_title("Select target project")
-              = dropdown_filter("Search projects")
-              = dropdown_content do
-                = render 'projects/merge_requests/dropdowns/project',
-                  projects: projects,
-                  selected: f.object.target_project_id
-          .merge-request-select.dropdown
-            = f.hidden_field :target_branch
-            = dropdown_toggle f.object.target_branch, { toggle: "dropdown", field_name: "#{f.object_name}[target_branch]" }, { toggle_class: "js-compare-dropdown js-target-branch git-revision-dropdown-toggle" }
-            .dropdown-menu.dropdown-menu-selectable.dropdown-target-branch.js-target-branch-dropdown.git-revision-dropdown
-              = dropdown_title("Select target branch")
-              = dropdown_filter("Search branches")
-              = dropdown_content do
-                = render 'projects/merge_requests/dropdowns/branch',
-                  branches: @merge_request.target_branches,
-                  selected: f.object.target_branch
-        .panel-footer
-          .text-center= icon('spinner spin', class: "js-target-loading")
-          %ul.list-unstyled.mr_target_commit
-
+= gitlab_ui_form_for [@project, @merge_request], url: project_new_merge_request_path(@project), method: :get, html: { class: "merge-request-form" } do |f|
+  - if params[:nav_source].present?
+    = hidden_field_tag(:nav_source, params[:nav_source])
   - if @merge_request.errors.any?
     = form_errors(@merge_request)
-  = f.submit 'Compare branches and continue', class: "btn btn-new mr-compare-btn"
+  .js-merge-request-new-compare.row{ data: mr_compare_form_data(@merge_request) }
+    .gl-col-lg-6
+      %div
+        %h2.gl-text-size-h2.gl-mt-0
+          = _('Source branch')
+        #js-source-project-dropdown{ data: { current_project: { value: f.object.source_project_id.to_s, text: f.object.source_project.full_path, refsUrl: refs_project_path(f.object.source_project) }.to_json, current_branch: { value: f.object.source_branch.presence, text: f.object.source_branch.presence }.to_json, branch_error_description_id: @merge_request.errors[:base].present? ? 'error_explanation' : nil } }
+    .gl-col-lg-6
+      %div
+        %h2.gl-text-size-h2.gl-mt-0
+          = _('Target branch')
+        #js-target-project-dropdown{ data: { target_projects_path: target_projects_project_json_compare_index_path(@project), current_project: { value: f.object.target_project_id.to_s, text: f.object.target_project.full_path, refsUrl: refs_project_path(f.object.target_project) }.to_json, current_branch: { value: f.object.target_branch.presence, text: f.object.target_branch.presence }.to_json, branch_error_description_id: @merge_request.errors[:base].present? ? 'error_explanation' : nil } }
+  .row
+    .gl-col-12
+      = f.submit _('Compare branches and continue'), class: 'js-compare-branches-button', data: { testid: 'compare-branches-button' }, pajamas_button: true

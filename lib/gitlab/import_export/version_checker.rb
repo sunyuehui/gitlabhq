@@ -1,8 +1,10 @@
+# frozen_string_literal: true
+
 module Gitlab
   module ImportExport
     class VersionChecker
-      def self.check!(*args)
-        new(*args).check!
+      def self.check!(*args, **kwargs)
+        new(*args, **kwargs).check!
       end
 
       def initialize(shared:)
@@ -12,7 +14,7 @@ module Gitlab
       def check!
         version = File.open(version_file, &:readline)
         verify_version!(version)
-      rescue => e
+      rescue StandardError => e
         @shared.error(e)
         false
       end
@@ -25,17 +27,21 @@ module Gitlab
 
       def verify_version!(version)
         if different_version?(version)
-          raise Gitlab::ImportExport::Error.new("Import version mismatch: Required #{Gitlab::ImportExport.version} but was #{version}")
+          raise Gitlab::ImportExport::Error, "Import version mismatch: Required #{Gitlab::ImportExport.version} but was #{version}"
         else
           true
         end
       end
 
       def different_version?(version)
-        Gem::Version.new(version) != Gem::Version.new(Gitlab::ImportExport.version)
-      rescue => e
-        Rails.logger.error("Import/Export error: #{e.message}")
-        raise Gitlab::ImportExport::Error.new('Incorrect VERSION format')
+        Gitlab::VersionInfo.parse(version) != Gitlab::VersionInfo.parse(Gitlab::ImportExport.version)
+      rescue StandardError => e
+        ::Import::Framework::Logger.error(
+          message: 'Import error',
+          error: e.message
+        )
+
+        raise Gitlab::ImportExport::Error, 'Incorrect VERSION format'
       end
     end
   end

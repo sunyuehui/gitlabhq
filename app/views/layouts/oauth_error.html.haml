@@ -1,37 +1,14 @@
 !!! 5
-%html{ lang: "en" }
+%html{ lang: I18n.locale }
   %head
-    %meta{ :content => "width=device-width, initial-scale=1, maximum-scale=1", :name => "viewport" }
+    %meta{ :content => "width=device-width, initial-scale=1", :name => "viewport" }
     %title= yield(:title)
+    - if vite_enabled?
+      = universal_stylesheet_link_tag 'errors'
+    - else
+      %style
+        = error_css
     :css
-      body {
-        color: #666;
-        text-align: center;
-        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-        margin: auto;
-        font-size: 16px;
-      }
-
-      .container {
-        margin: auto 20px;
-      }
-
-      h3 {
-        color: #456;
-        font-size: 22px;
-        font-weight: bold;
-        margin-bottom: 6px;
-      }
-
-      p {
-        max-width: 470px;
-        margin: 16px auto;
-      }
-
-      .subtitle {
-        margin: 0 auto 20px;
-      }
-
       svg {
         width: 280px;
         height: 280px;
@@ -80,47 +57,6 @@
         15% {opacity: .3;}
         20% {opacity: .5;}
         25% {opacity: 1;}
-      }
-
-      .light {
-        color: #8D8D8D;
-      }
-
-      hr {
-        max-width: 600px;
-        margin: 18px auto;
-        border: 0;
-        border-top: 1px solid #EEE;
-      }
-
-      .btn {
-        padding: 8px 14px;
-        border-radius: 3px;
-        border: 1px solid;
-        display: inline-block;
-        text-decoration: none;
-        margin: 4px 8px;
-        font-size: 14px;
-      }
-
-      .primary {
-        color: #fff;
-        background-color: #1aaa55;
-        border-color: #168f48;
-      }
-
-      .primary:hover {
-        background-color: #168f48;
-      }
-
-      .secondary {
-        color: #1aaa55;
-        background-color: #fff;
-        border-color: #1aaa55;
-      }
-
-      .secondary:hover {
-        background-color: #f3fff8;
       }
 
 %body

@@ -1,55 +1,93 @@
+# frozen_string_literal: true
+
 module API
-  class AwardEmoji < Grape::API
+  class AwardEmoji < ::API::Base
     include PaginationParams
+    include APIGuard
 
-    before { authenticate! }
-    AWARDABLES = [
-      { type: 'issue', find_by: :iid },
-      { type: 'merge_request', find_by: :iid },
-      { type: 'snippet', find_by: :id }
-    ].freeze
+    helpers ::API::Helpers::AwardEmoji
 
-    params do
-      requires :id, type: String, desc: 'The ID of a project'
+    AWARD_EMOJI_TAG = %w[award_emoji].freeze
+
+    # Keep `ai_workflows` award emoji access aligned with issue, merge request, and epic APIs.
+    # Snippet award emoji access requires separate approval.
+    AI_WORKFLOWS_AWARDABLE_PATH = %r{/(?:issues|merge_requests|epics)/[^/]+/(?:notes/[^/]+/)?award_emoji}
+
+    def self.ai_workflows_readable?(request)
+      (request.get? || request.head?) && request.path.match?(AI_WORKFLOWS_AWARDABLE_PATH)
     end
-    resource :projects, requirements: { id: %r{[^/]+} } do
-      AWARDABLES.each do |awardable_params|
+
+    allow_access_with_scope :ai_workflows, if: ->(request) { ai_workflows_readable?(request) }
+
+    Helpers::AwardEmoji.awardables.each do |awardable_params|
+      resource awardable_params[:resource], requirements: ::API::NAMESPACE_OR_PROJECT_REQUIREMENTS do
         awardable_string = awardable_params[:type].pluralize
         awardable_id_string = "#{awardable_params[:type]}_#{awardable_params[:find_by]}"
+        boundary_type = awardable_params[:resource].to_s.singularize.to_sym
 
         params do
-          requires :"#{awardable_id_string}", type: Integer, desc: "The ID of an Issue, Merge Request or Snippet"
+          requires :id, types: [String, Integer], desc: "The ID or URL-encoded path of the #{awardable_params[:resource] == :projects ? 'project' : 'group'}"
+          requires :"#{awardable_id_string}", type: Integer, desc: Helpers::AwardEmoji.awardable_id_desc
         end
 
         [
           ":id/#{awardable_string}/:#{awardable_id_string}/award_emoji",
           ":id/#{awardable_string}/:#{awardable_id_string}/notes/:note_id/award_emoji"
         ].each do |endpoint|
+          is_note_endpoint = endpoint.include?(':note_id')
+          permission_suffix = is_note_endpoint ? "#{awardable_params[:type]}_note_award_emoji" : "#{awardable_params[:type]}_award_emoji"
+          awardable_name = awardable_params[:type].humanize(capitalize: false)
+          awardable_article = awardable_name.match?(/\A[aeiou]/i) ? 'an' : 'a'
 
-          desc 'Get a list of project +awardable+ award emoji' do
-            detail 'This feature was introduced in 8.9'
+          if is_note_endpoint
+            params do
+              requires :note_id, type: Integer, desc: 'The ID of a note'
+            end
+          end
+
+          desc "List all emoji reactions for " \
+            "#{awardable_article} #{awardable_name}#{' comment' if is_note_endpoint}" do
+            detail "Lists all emoji reactions for a specified " \
+              "#{is_note_endpoint ? "comment on #{awardable_article} #{awardable_name}" : awardable_name}. " \
+              "This endpoint can be accessed without authentication if the " \
+              "#{is_note_endpoint ? 'comment' : awardable_name} is publicly accessible."
             success Entities::AwardEmoji
+            failure [{ code: 404, message: 'Not Found' }]
+            is_array true
+            tags AWARD_EMOJI_TAG
           end
           params do
             use :pagination
           end
-          get endpoint do
+          route_setting :tier, awardable_params[:tier] if awardable_params[:tier]
+          route_setting :authorization, permissions: :"read_#{permission_suffix}", boundary_type: boundary_type
+          get endpoint, feature_category: awardable_params[:feature_category] do
             if can_read_awardable?
               awards = awardable.award_emoji
+              # Batch load custom emoji URLs
+              awards.each(&:url)
               present paginate(awards), with: Entities::AwardEmoji
             else
               not_found!("Award Emoji")
             end
           end
 
-          desc 'Get a specific award emoji' do
-            detail 'This feature was introduced in 8.9'
+          desc "Retrieve an emoji reaction from " \
+            "#{awardable_article} #{awardable_name}#{' comment' if is_note_endpoint}" do
+            detail "Retrieves a specified emoji reaction from " \
+              "#{'a comment on ' if is_note_endpoint}#{awardable_article} #{awardable_name}. This endpoint " \
+              "can be accessed without authentication if the " \
+              "#{is_note_endpoint ? 'comment' : awardable_name} is publicly accessible."
             success Entities::AwardEmoji
+            failure [{ code: 404, message: 'Not Found' }]
+            tags AWARD_EMOJI_TAG
           end
           params do
-            requires :award_id, type: Integer, desc: 'The ID of the award'
+            requires :award_id, type: Integer, desc: 'ID of the emoji reaction.'
           end
-          get "#{endpoint}/:award_id" do
+          route_setting :tier, awardable_params[:tier] if awardable_params[:tier]
+          route_setting :authorization, permissions: :"read_#{permission_suffix}", boundary_type: boundary_type
+          get "#{endpoint}/:award_id", feature_category: awardable_params[:feature_category] do
             if can_read_awardable?
               present awardable.award_emoji.find(params[:award_id]), with: Entities::AwardEmoji
             else
@@ -57,39 +95,53 @@ module API
             end
           end
 
-          desc 'Award a new Emoji' do
-            detail 'This feature was introduced in 8.9'
+          desc "Add an emoji reaction to " \
+            "#{awardable_article} #{awardable_name}#{' comment' if is_note_endpoint}" do
+            detail "Adds an emoji reaction to " \
+              "#{'a comment on ' if is_note_endpoint}#{awardable_article} #{awardable_name}."
             success Entities::AwardEmoji
+            failure [{ code: 400, message: 'Bad Request' }, { code: 404, message: 'Not Found' }]
+            tags AWARD_EMOJI_TAG
           end
           params do
-            requires :name, type: String, desc: 'The name of a award_emoji (without colons)'
+            requires :name, type: String, desc: 'Name of the emoji without colons.'
           end
-          post endpoint do
+          route_setting :tier, awardable_params[:tier] if awardable_params[:tier]
+          route_setting :authorization, permissions: :"create_#{permission_suffix}", boundary_type: boundary_type
+          post endpoint, feature_category: awardable_params[:feature_category] do
             not_found!('Award Emoji') unless can_read_awardable? && can_award_awardable?
 
-            award = awardable.create_award_emoji(params[:name], current_user)
+            service = AwardEmojis::AddService.new(awardable, params[:name], current_user).execute
 
-            if award.persisted?
-              present award, with: Entities::AwardEmoji
+            if service[:status] == :success
+              present service[:award], with: Entities::AwardEmoji
             else
-              not_found!("Award Emoji #{award.errors.messages}")
+              not_found!("Award Emoji #{service[:message]}")
             end
           end
 
-          desc 'Delete a +awardables+ award emoji' do
-            detail 'This feature was introduced in 8.9'
-            success Entities::AwardEmoji
+          desc "Delete an emoji reaction from " \
+            "#{awardable_article} #{awardable_name}#{' comment' if is_note_endpoint}" do
+            detail "Deletes a specified emoji reaction from " \
+              "#{'a comment on ' if is_note_endpoint}#{awardable_article} #{awardable_name}. Only an " \
+              "administrator or the user who added the reaction can delete it."
+            success code: 204
+            failure [{ code: 401, message: 'Unauthorized' }, { code: 404, message: 'Not Found' }]
+            tags AWARD_EMOJI_TAG
           end
           params do
-            requires :award_id, type: Integer, desc: 'The ID of an award emoji'
+            requires :award_id, type: Integer, desc: 'ID of an emoji reaction.'
           end
-          delete "#{endpoint}/:award_id" do
+          route_setting :tier, awardable_params[:tier] if awardable_params[:tier]
+          route_setting :authorization, permissions: :"delete_#{permission_suffix}", boundary_type: boundary_type
+          delete "#{endpoint}/:award_id", feature_category: awardable_params[:feature_category] do
             award = awardable.award_emoji.find(params[:award_id])
 
-            unauthorized! unless award.user == current_user || current_user.admin?
+            unauthorized! unless award.user == current_user || current_user&.can_admin_all_resources?
 
-            status 204
-            award.destroy
+            destroy_conditionally!(award) do
+              AwardEmojis::DestroyService.new(awardable, award.name, award.user).execute
+            end
           end
         end
       end
@@ -101,30 +153,15 @@ module API
       end
 
       def can_award_awardable?
-        awardable.user_can_award?(current_user, params[:name])
-      end
-
-      def awardable
-        @awardable ||=
-          begin
-            if params.include?(:note_id)
-              note_id = params.delete(:note_id)
-
-              awardable.notes.find(note_id)
-            elsif params.include?(:issue_iid)
-              user_project.issues.find_by!(iid: params[:issue_iid])
-            elsif params.include?(:merge_request_iid)
-              user_project.merge_requests.find_by!(iid: params[:merge_request_iid])
-            else
-              user_project.snippets.find(params[:snippet_id])
-            end
-          end
+        awardable.user_can_award?(current_user)
       end
 
       def read_ability(awardable)
         case awardable
         when Note
-          read_ability(awardable.noteable)
+          awardable.issuable_ability_name
+        when Snippet, ProjectSnippet
+          :read_snippet
         else
           :"read_#{awardable.class.to_s.underscore}"
         end
@@ -132,3 +169,5 @@ module API
     end
   end
 end
+
+API::AwardEmoji.prepend_mod_with('API::AwardEmoji')

@@ -1,38 +1,57 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'projects/_home_panel' do
-  let(:project) { create(:project, :public) }
+RSpec.describe 'projects/_home_panel' do
+  include ProjectForksHelper
 
-  let(:notification_settings) do
-    user&.notification_settings_for(project)
-  end
+  describe 'home panel' do
+    let(:project) { build_stubbed(:project) }
 
-  before do
-    assign(:project, project)
-    assign(:notification_setting, notification_settings)
+    before do
+      assign(:project, project)
+    end
 
-    allow(view).to receive(:current_user).and_return(user)
-    allow(view).to receive(:can?).and_return(false)
-  end
-
-  context 'when user is signed in' do
-    let(:user) { create(:user) }
-
-    it 'makes it possible to set notification level' do
+    it 'renders Vue app root' do
       render
 
-      expect(view).to render_template('shared/notifications/_button')
-      expect(rendered).to have_selector('.notification-dropdown')
+      expect(rendered).to have_selector('#js-home-panel')
     end
   end
 
-  context 'when user is signed out' do
-    let(:user) { nil }
+  describe 'forks' do
+    let(:source_project) { create(:project) }
+    let(:project) { fork_project(source_project) }
+    let(:user) { build_stubbed(:user) }
 
-    it 'is not possible to set notification level' do
-      render
+    before do
+      assign(:project, project)
 
-      expect(rendered).not_to have_selector('.notification_dropdown')
+      allow(view).to receive(:current_user).and_return(user)
+    end
+
+    context 'when user can read fork source' do
+      before do
+        allow(view).to receive(:can?).with(user, :read_project, source_project).and_return(true)
+      end
+
+      it 'does not show the forked-from project' do
+        render
+
+        expect(rendered).not_to have_content("Forked from #{source_project.full_name}")
+      end
+    end
+
+    context 'when user cannot read fork source' do
+      before do
+        allow(view).to receive(:can?).with(user, :read_project, source_project).and_return(false)
+      end
+
+      it 'shows the message that forked project is inaccessible' do
+        render
+
+        expect(rendered).not_to have_content("Forked from an inaccessible project")
+      end
     end
   end
 end

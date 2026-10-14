@@ -1,28 +1,36 @@
-- @no_container = true
-- page_title 'Milestones'
+- page_title _('Milestones')
+- add_page_specific_style 'page_bundles/milestone'
 
-- if show_new_nav? && can?(current_user, :admin_milestone, @project)
-  - content_for :breadcrumbs_extra do
-    = link_to "New milestone", new_namespace_project_milestone_path(@project.namespace, @project), class: 'btn btn-new', title: 'New milestone'
+%h1.gl-sr-only= page_title
 
-= render "shared/mr_head"
-
-%div{ class: container_class }
+- if @milestone_states.any? { |name, count| count > 0 }
   .top-area
-    = render 'shared/milestones_filter', counts: milestone_counts(@project.milestones)
+    = render 'shared/milestones_filter', counts: @milestone_states
 
-    .nav-controls{ class: ("nav-controls-new-nav" if show_new_nav?) }
+    .nav-controls
+      = render 'shared/milestones/search_form'
       = render 'shared/milestones_sort_dropdown'
       - if can?(current_user, :admin_milestone, @project)
-        = link_to new_project_milestone_path(@project), class: "btn btn-new #{("visible-xs" if show_new_nav?)}", title: 'New milestone' do
-          New milestone
+        = link_button_to new_project_milestone_path(@project), class: 'gl-ml-3', data: { testid: "new-project-milestone-link" }, title: _('New milestone'), variant: :confirm do
+          = _('New milestone')
 
-  .milestones
-    %ul.content-list
-      = render @milestones
+  - if @milestones.blank?
+    = render 'shared/empty_states/milestones_tab' do
+      - if can?(current_user, :admin_milestone, @project)
+        = link_button_to new_project_milestone_path(@project), data: { testid: "new-project-milestone-link" }, title: _('New milestone'), variant: :confirm do
+          = _('New milestone')
 
-      - if @milestones.blank?
-        %li
-          .nothing-here-block No milestones to show
+  - else
+    .milestones
+      #js-delete-milestone-modal
+      #promote-milestone-modal
 
-    = paginate @milestones, theme: 'gitlab'
+      %ul.content-list
+        = render @milestones
+
+      = paginate @milestones, theme: 'gitlab'
+- else
+  = render 'shared/empty_states/milestones' do
+    - if can?(current_user, :admin_milestone, @project)
+      = link_button_to new_project_milestone_path(@project), data: { testid: "new-project-milestone-link" }, title: _('New milestone'), variant: :confirm do
+        = _('New milestone')

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Email
     module Message
@@ -45,12 +47,18 @@ module Gitlab
           @diffs ||= compare.diffs(max_files: 30, max_lines: 5000, expanded: true).diff_files
         end
 
+        def changed_files
+          return unless compare
+
+          @changed_files ||= compare.changed_paths
+        end
+
         def diffs_count
-          diffs&.size
+          changed_files&.size
         end
 
         def compare
-          @opts[:compare] if @opts[:compare]
+          @opts[:compare]
         end
 
         def diff_refs
@@ -77,11 +85,11 @@ module Gitlab
           @action_name ||=
             case @action
             when :create
-              'pushed new'
+              s_('Notify|pushed new')
             when :delete
-              'deleted'
+              s_('Notify|deleted')
             else
-              'pushed to'
+              s_('Notify|pushed to')
             end
         end
 
@@ -116,7 +124,7 @@ module Gitlab
         end
 
         def subject
-          subject_text = '[Git]'
+          subject_text = ['[Git]']
           subject_text << "[#{project.full_path}]"
           subject_text << "[#{ref_name}]" if @action == :push
           subject_text << ' '
@@ -134,6 +142,8 @@ module Gitlab
             subject_action[0] = subject_action[0].capitalize
             subject_text << "#{subject_action} #{ref_type} #{ref_name}"
           end
+
+          subject_text.join
         end
       end
     end

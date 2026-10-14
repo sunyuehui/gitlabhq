@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::PodspecLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::PodspecLinker, feature_category: :source_code_management do
   describe '.support?' do
     it 'supports *.podspec' do
       expect(described_class.support?('Reachability.podspec')).to be_truthy
@@ -39,11 +41,11 @@ describe Gitlab::DependencyLinker::PodspecLinker do
     subject { Gitlab::Highlight.highlight(file_name, file_content) }
 
     def link(name, url)
-      %{<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>}
+      %(<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>)
     end
 
-    it 'links the gem name' do
-      expect(subject).to include(link('Reachability', 'https://cocoapods.org/pods/Reachability'))
+    it 'does not link the pod name' do
+      expect(subject).not_to include(link('Reachability', 'https://cocoapods.org/pods/Reachability'))
     end
 
     it 'links the license' do
@@ -60,7 +62,7 @@ describe Gitlab::DependencyLinker::PodspecLinker do
       expect(subject).to include(link('https://github.com/tonymillion/Reachability.git', 'https://github.com/tonymillion/Reachability.git'))
     end
 
-    it 'links dependencies' do
+    it 'links dependencies', :aggregate_failures do
       expect(subject).to include(link('AFNetworking', 'https://cocoapods.org/pods/AFNetworking'))
       expect(subject).to include(link('RestKit/CoreData', 'https://cocoapods.org/pods/RestKit'))
       expect(subject).to include(link('MBProgressHUD', 'https://cocoapods.org/pods/MBProgressHUD'))

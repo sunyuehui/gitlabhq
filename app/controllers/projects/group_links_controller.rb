@@ -1,50 +1,72 @@
+# frozen_string_literal: true
+
 class Projects::GroupLinksController < Projects::ApplicationController
   layout 'project_settings'
-  before_action :authorize_admin_project!
+  before_action :authorize_admin_project!, except: [:destroy]
   before_action :authorize_admin_project_member!, only: [:update]
 
-  def index
-    redirect_to namespace_project_settings_members_path
-  end
-
-  def create
-    group = Group.find(params[:link_group_id]) if params[:link_group_id].present?
-
-    if group
-      return render_404 unless can?(current_user, :read_group, group)
-
-      project.project_group_links.create(
-        group: group,
-        group_access: params[:link_group_access],
-        expires_at: params[:expires_at]
-      )
-    else
-      flash[:alert] = 'Please select a group.'
-    end
-
-    redirect_to project_project_members_path(project)
-  end
+  feature_category :groups_and_projects
 
   def update
-    @group_link = @project.project_group_links.find(params[:id])
+    result = Projects::GroupLinks::UpdateService.new(group_link, current_user).execute(group_link_params)
 
-    @group_link.update_attributes(group_link_params)
+    if result.success?
+      if group_link.expires?
+        render json: {
+          expires_in: helpers.time_ago_with_tooltip(group_link.expires_at),
+          expires_soon: group_link.expires_soon?
+        }
+      else
+        render json: {}
+      end
+    else
+      render json: { message: result.message }, status: result.reason
+    end
   end
 
   def destroy
-    project.project_group_links.find(params[:id]).destroy
+    result = ::Projects::GroupLinks::DestroyService.new(project, current_user).execute(group_link)
 
-    respond_to do |format|
-      format.html do
-        redirect_to project_project_members_path(project), status: 302
+    if result.success?
+      respond_to do |format|
+        format.html do
+          message = s_('InviteMembersModal|Group invite removed. ' \
+            'It might take a few minutes for the changes to user access levels to take effect.')
+
+          if can?(current_user, :delete_group_link, group_link.group)
+            redirect_to group_path(group_link.group), status: :found, notice: message
+          elsif can?(current_user, :delete_group_link, group_link.project)
+            redirect_to project_project_members_path(project), status: :found, notice: message
+          end
+        end
+        format.js { head :ok }
       end
-      format.js { head :ok }
+    else
+      respond_to do |format|
+        format.html do
+          redirect_to project_project_members_path(project, tab: :groups), status: :found,
+            alert: _('The project-group link could not be removed.')
+        end
+
+        format.js do
+          render json: { message: result.message }, status: result.reason
+        end
+      end
     end
   end
 
-  protected
+  private
+
+  def id_param
+    params.permit(:id)[:id]
+  end
+
+  def group_link
+    @project.project_group_links.find(id_param)
+  end
+  strong_memoize_attr :group_link
 
   def group_link_params
-    params.require(:group_link).permit(:group_access, :expires_at)
+    params.require(:group_link).permit(:group_access, :expires_at, :member_role_id)
   end
 end

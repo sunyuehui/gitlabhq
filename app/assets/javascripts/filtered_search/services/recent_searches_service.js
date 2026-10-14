@@ -1,5 +1,5 @@
+import AccessorUtilities from '~/lib/utils/accessor';
 import RecentSearchesServiceError from './recent_searches_service_error';
-import AccessorUtilities from '../../lib/utils/accessor';
 
 class RecentSearchesService {
   constructor(localStorageKey = 'issuable-recent-searches') {
@@ -33,7 +33,7 @@ class RecentSearchesService {
   }
 
   static isAvailable() {
-    return AccessorUtilities.isLocalStorageAccessSafe();
+    return AccessorUtilities.canUseLocalStorage();
   }
 }
 

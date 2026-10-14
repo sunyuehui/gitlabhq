@@ -1,4 +1,4 @@
-require 'uri'
+# frozen_string_literal: true
 
 module Banzai
   module Filter
@@ -6,13 +6,29 @@ module Banzai
     # Rewrite rules are documented in the `WikiPipeline` spec.
     #
     # Context options:
-    #   :project_wiki
+    #   :wiki
     class WikiLinkFilter < HTML::Pipeline::Filter
-      def call
-        return doc unless project_wiki?
+      prepend Concerns::PipelineTimingCheck
+      include Gitlab::Utils::SanitizeNodeLink
 
-        doc.search('a:not(.gfm)').each do |el|
-          process_link_attr el.attribute('href')
+      CSS_A     = 'a:not(.gfm)'
+      XPATH_A   = Gitlab::Utils::Nokogiri.css_to_xpath(CSS_A).freeze
+      CSS_VA    = 'video, audio'
+      XPATH_VA  = Gitlab::Utils::Nokogiri.css_to_xpath(CSS_VA).freeze
+      CSS_IMG   = 'img'
+      XPATH_IMG = Gitlab::Utils::Nokogiri.css_to_xpath(CSS_IMG).freeze
+
+      def call
+        return doc unless wiki?
+
+        doc.xpath(XPATH_A).each { |el| process_link(el.attribute('href'), el) }
+
+        doc.xpath(XPATH_VA).each { |el| process_link(el.attribute('src'), el) }
+
+        doc.xpath(XPATH_IMG).each do |el|
+          attr = el.attribute('data-src') || el.attribute('src')
+
+          process_link(attr, el)
         end
 
         doc
@@ -20,20 +36,38 @@ module Banzai
 
       protected
 
-      def project_wiki?
-        !context[:project_wiki].nil?
+      def process_link(link_attr, node)
+        process_link_attr(link_attr, node)
+        remove_unsafe_links({ node: node }, remove_invalid_links: false)
       end
 
-      def process_link_attr(html_attr)
+      def wiki?
+        !context[:wiki].nil?
+      end
+
+      def process_link_attr(html_attr, node)
         return if html_attr.blank?
 
-        html_attr.value = apply_rewrite_rules(html_attr.value)
+        rewritten_value = apply_rewrite_rules(html_attr.value)
+
+        if html_attr.value != rewritten_value
+          preserve_original_link(html_attr, node)
+        end
+
+        html_attr.value = rewritten_value
       rescue URI::Error, Addressable::URI::InvalidURIError
         # noop
       end
 
+      def preserve_original_link(html_attr, node)
+        return if html_attr.blank?
+        return if node.key?('data-canonical-src')
+
+        node.set_attribute('data-canonical-src', html_attr.value)
+      end
+
       def apply_rewrite_rules(link_string)
-        Rewriter.new(link_string, wiki: context[:project_wiki], slug: context[:page_slug]).apply_rules
+        Rewriter.new(link_string, wiki: context[:wiki], slug: context[:page_slug]).apply_rules
       end
     end
   end

@@ -1,21 +1,47 @@
-require_relative '../support/repo_helpers'
+# frozen_string_literal: true
 
-FactoryGirl.define do
+require_relative '../support/helpers/repo_helpers'
+
+FactoryBot.define do
   factory :commit do
-    git_commit RepoHelpers.sample_commit
+    transient do
+      author { nil }
+    end
+
+    git_commit do
+      commit = RepoHelpers.sample_commit
+
+      if author
+        commit.author_email = author.email
+        commit.author_name = author.name
+      end
+
+      commit
+    end
+
     project
+
+    skip_create # Commits cannot be persisted
 
     initialize_with do
       new(git_commit, project)
     end
 
-    after(:build) do |commit|
-      allow(commit).to receive(:author).and_return build(:author)
+    after(:build) do |commit, evaluator|
+      author = evaluator.author || build_stubbed(:author)
+      stub_method(commit, :author) { author }
+      stub_method(commit, :parent_ids) { [] }
+    end
+
+    trait :merge_commit do
+      after(:build) do |commit|
+        stub_method(commit, :parent_ids) { Array.new(2) { SecureRandom.hex(20) } }
+      end
     end
 
     trait :without_author do
       after(:build) do |commit|
-        allow(commit).to receive(:author).and_return nil
+        stub_method(commit, :author) { nil }
       end
     end
   end

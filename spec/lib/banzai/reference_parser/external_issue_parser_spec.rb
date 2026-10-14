@@ -1,12 +1,15 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::ReferenceParser::ExternalIssueParser do
+RSpec.describe Banzai::ReferenceParser::ExternalIssueParser, feature_category: :markdown do
   include ReferenceParserHelpers
 
   let(:project) { create(:project, :public) }
   let(:user) { create(:user) }
-  subject { described_class.new(project, user) }
   let(:link) { empty_html_link }
+
+  subject { described_class.new(Banzai::RenderContext.new(project, user)) }
 
   describe '#nodes_visible_to_user' do
     context 'when the link has a data-issue attribute' do
@@ -18,7 +21,7 @@ describe Banzai::ReferenceParser::ExternalIssueParser do
 
       levels.each do |level|
         it "creates reference when the feature is #{level}" do
-          project.project_feature.update(issues_access_level: level)
+          project.project_feature.update!(issues_access_level: level)
 
           visible_nodes = subject.nodes_visible_to_user(user, [link])
 

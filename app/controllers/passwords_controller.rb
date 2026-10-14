@@ -1,10 +1,20 @@
-class PasswordsController < Devise::PasswordsController
-  include Gitlab::CurrentSettings
+# frozen_string_literal: true
 
+class PasswordsController < Devise::PasswordsController
+  include GitlabRecaptcha
+  include Gitlab::Tracking::Helpers::WeakPasswordErrorEvent
+
+  skip_before_action :require_no_authentication, only: [:edit, :update]
+
+  prepend_before_action :check_recaptcha, only: :create
+  before_action :load_recaptcha, only: :new
   before_action :resource_from_email, only: [:create]
   before_action :check_password_authentication_available, only: [:create]
-  before_action :throttle_reset,      only: [:create]
+  before_action :throttle_reset, only: [:create]
 
+  feature_category :system_access
+
+  # rubocop: disable CodeReuse/ActiveRecord
   def edit
     super
     reset_password_token = Devise.token_generator.digest(
@@ -15,36 +25,56 @@ class PasswordsController < Devise::PasswordsController
 
     unless reset_password_token.nil?
       user = User.where(
+        organization_id: Current.organization.id,
         reset_password_token: reset_password_token
       ).first_or_initialize
 
+      return redirect_blocked_user if user.blocked?
+
       unless user.reset_password_period_valid?
-        flash[:alert] = 'Your password reset token has expired.'
+        flash[:alert] = _('Your password reset token has expired.')
         redirect_to(new_user_password_url(user_email: user['email']))
       end
     end
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def update
+    user = resource_class.with_reset_password_token(resource_params[:reset_password_token])
+    return redirect_blocked_user if user&.blocked?
+
     super do |resource|
-      if resource.valid? && resource.require_password_creation?
-        resource.update_attribute(:password_automatically_set, false)
+      if resource.valid?
+        resource.password_automatically_set = false
+        resource.password_expires_at = nil
+        resource.save(validate: false) if resource.changed?
+      else
+        log_audit_reset_failure(resource)
+        track_weak_password_error(resource, self.class.name, 'create')
       end
     end
   end
 
   protected
 
+  # overridden in EE
+  def log_audit_reset_failure(_user); end
+
   def resource_from_email
-    email = resource_params[:email]
-    self.resource = resource_class.find_by_email(email)
+    self.resource = resource_class.find_by_email(resource_params[:email].to_s)
   end
 
   def check_password_authentication_available
-    return if current_application_settings.password_authentication_enabled? && (resource.nil? || resource.allow_password_authentication?)
+    return if Gitlab::CurrentSettings.password_authentication_enabled?
 
     redirect_to after_sending_reset_password_instructions_path_for(resource_name),
-      alert: "Password authentication is unavailable."
+      alert: _("Password authentication is unavailable.")
+  end
+
+  def check_recaptcha
+    return unless resource_params[:email].present?
+
+    super
   end
 
   def throttle_reset
@@ -55,4 +85,20 @@ class PasswordsController < Devise::PasswordsController
     redirect_to new_user_session_path,
       notice: I18n.t('devise.passwords.send_paranoid_instructions')
   end
+
+  def context_user
+    resource
+  end
+
+  def resource_params
+    super.permit(:email, :reset_password_token, :password, :password_confirmation)
+  end
+
+  private
+
+  def redirect_blocked_user
+    redirect_to new_user_session_path, alert: I18n.t('devise.failure.blocked')
+  end
 end
+
+PasswordsController.prepend_mod_with('PasswordsController')

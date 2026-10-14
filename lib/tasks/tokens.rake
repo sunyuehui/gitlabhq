@@ -1,48 +1,41 @@
-require_relative '../../app/models/concerns/token_authenticatable.rb'
+# frozen_string_literal: true
 
 namespace :tokens do
-  desc "Reset all GitLab user auth tokens"
-  task reset_all_auth: :environment do
-    reset_all_users_token(:reset_authentication_token!)
-  end
+  require_relative '../../app/models/concerns/token_authenticatable'
+  require_relative '../../lib/authn/token_field/base'
+  require_relative '../../lib/authn/token_field/insecure'
+  require_relative '../../lib/authn/token_field/digest'
 
-  desc "Reset all GitLab email tokens"
+  desc "Reset all GitLab incoming email tokens"
   task reset_all_email: :environment do
     reset_all_users_token(:reset_incoming_email_token!)
   end
 
-  desc "Reset all GitLab RSS tokens"
-  task reset_all_rss: :environment do
-    reset_all_users_token(:reset_rss_token!)
+  desc "Reset all GitLab feed tokens"
+  task reset_all_feed: :environment do
+    reset_all_users_token(:reset_feed_token!)
   end
 
   def reset_all_users_token(reset_token_method)
     TmpUser.find_in_batches do |batch|
       puts "Processing batch starting with user ID: #{batch.first.id}"
-      STDOUT.flush
+      $stdout.flush
 
       batch.each(&reset_token_method)
     end
   end
 end
 
-class TmpUser < ActiveRecord::Base
+class TmpUser < ActiveRecord::Base # rubocop:disable Rails/ApplicationRecord
   include TokenAuthenticatable
 
   self.table_name = 'users'
 
-  def reset_authentication_token!
-    write_new_token(:authentication_token)
-    save!(validate: false)
-  end
+  add_authentication_token_field :incoming_email_token, # rubocop:disable Gitlab/TokenWithoutPrefix -- prefix is assigned in token generator
+    insecure: true, token_generator: -> { User.generate_incoming_mail_token }
+  add_authentication_token_field :feed_token, insecure: true, format_with_prefix: :prefix_for_feed_token
 
-  def reset_incoming_email_token!
-    write_new_token(:incoming_email_token)
-    save!(validate: false)
-  end
-
-  def reset_rss_token!
-    write_new_token(:rss_token)
-    save!(validate: false)
+  def prefix_for_feed_token
+    User.prefix_for_feed_token
   end
 end

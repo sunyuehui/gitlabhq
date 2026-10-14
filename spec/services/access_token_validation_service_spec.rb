@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe AccessTokenValidationService do
+RSpec.describe AccessTokenValidationService, feature_category: :system_access do
   describe ".include_any_scope?" do
     let(:request) { double("request") }
 
@@ -30,6 +32,12 @@ describe AccessTokenValidationService do
       scopes = [:api, :read_user, :other_scope]
 
       expect(described_class.new(token, request: request).include_any_scope?(scopes)).to be(true)
+    end
+
+    it 'returns false when token is nil' do
+      scopes = [:api, :read_user]
+
+      expect(described_class.new(nil, request: request).include_any_scope?(scopes)).to be(false)
     end
 
     it 'returns true if the list of required scopes is blank' do
@@ -66,6 +74,44 @@ describe AccessTokenValidationService do
         scopes = [API::Scope.new(:api, if: ->(_) { true }), API::Scope.new(:read_user, if: ->(_) { false })]
 
         expect(described_class.new(token, request: request).include_any_scope?(scopes)).to be(true)
+      end
+    end
+  end
+
+  describe '#applicable_scopes' do
+    let(:request) { double('request') }
+    let(:token) { double('token', scopes: [:read_user]) }
+
+    it 'keeps the scopes whose `if` condition holds for the request and those without one' do
+      holds = API::Scope.new(:read_api, if: ->(passed) { passed == request })
+      fails = API::Scope.new(:read_user, if: ->(_) { false })
+
+      expect(described_class.new(token, request: request).applicable_scopes([:api, holds, fails]))
+        .to eq([:api, holds])
+    end
+  end
+
+  describe '#validate' do
+    context 'with an OAuth access token', feature_category: :permissions do
+      using RSpec::Parameterized::TableSyntax
+
+      subject(:result) { described_class.new(token, request: double('request')).validate(scopes: [:api]) }
+
+      let(:token) do
+        build_stubbed(:oauth_access_token, scopes: token_scopes, created_at: created_at, expires_in: 2.hours,
+          revoked_at: revoked_at)
+      end
+
+      where(:token_scopes, :created_at, :revoked_at, :expected) do
+        ['granular']  | 1.hour.ago  | nil        | described_class::VALID
+        ['granular']  | 3.hours.ago | nil        | described_class::EXPIRED
+        ['granular']  | 1.hour.ago  | 1.hour.ago | described_class::REVOKED
+        ['read_user'] | 1.hour.ago  | nil        | described_class::INSUFFICIENT_SCOPE
+        ['api']       | 1.hour.ago  | nil        | described_class::VALID
+      end
+
+      with_them do
+        it { is_expected.to eq(expected) }
       end
     end
   end

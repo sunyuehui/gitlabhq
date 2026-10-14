@@ -1,30 +1,38 @@
+# frozen_string_literal: true
+
 module Emails
   module Pipelines
-    def pipeline_success_email(pipeline, recipients)
-      pipeline_mail(pipeline, recipients, 'succeeded')
+    def pipeline_success_email(pipeline, recipient)
+      pipeline_mail(pipeline, recipient, 'Successful')
     end
 
-    def pipeline_failed_email(pipeline, recipients)
-      pipeline_mail(pipeline, recipients, 'failed')
+    def pipeline_failed_email(pipeline, recipient)
+      pipeline_mail(pipeline, recipient, 'Failed')
+    end
+
+    def pipeline_fixed_email(pipeline, recipient)
+      pipeline_mail(pipeline, recipient, 'Fixed')
     end
 
     private
 
-    def pipeline_mail(pipeline, recipients, status)
+    def pipeline_mail(pipeline, recipient, status)
+      raise ArgumentError if recipient.is_a?(Array)
+
       @project = pipeline.project
       @pipeline = pipeline
-      @merge_request = pipeline.merge_requests.first
+
+      @merge_request = if pipeline.merge_request?
+                         pipeline.merge_request
+                       else
+                         pipeline.merge_requests_as_head_pipeline.first
+                       end
+
       add_headers
 
-      # We use bcc here because we don't want to generate this emails for a
-      # thousand times. This could be potentially expensive in a loop, and
-      # recipients would contain all project watchers so it could be a lot.
-      mail(bcc: recipients,
-           subject: pipeline_subject(status),
-           skip_premailer: true) do |format|
-        format.html { render layout: 'mailer' }
-        format.text { render layout: 'mailer' }
-      end
+      email_with_layout(
+        to: recipient,
+        subject: subject(pipeline_subject(status)))
     end
 
     def add_headers
@@ -39,10 +47,12 @@ module Emails
     end
 
     def pipeline_subject(status)
-      commit = @pipeline.short_sha
-      commit << " in #{@merge_request.to_reference}" if @merge_request
+      subject = []
 
-      subject("Pipeline ##{@pipeline.id} has #{status} for #{@pipeline.ref}", commit)
+      subject << "#{status} pipeline for #{@pipeline.source_ref}"
+      subject << @pipeline.short_sha
+
+      subject.join(' | ')
     end
   end
 end

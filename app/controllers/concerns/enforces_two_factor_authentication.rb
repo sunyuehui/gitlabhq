@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # == EnforcesTwoFactorAuthentication
 #
 # Controller concern to enforce two-factor authentication requirements
@@ -9,41 +11,57 @@ module EnforcesTwoFactorAuthentication
   extend ActiveSupport::Concern
 
   included do
-    before_action :check_two_factor_requirement
-    helper_method :two_factor_grace_period_expired?, :two_factor_skippable?
+    before_action :check_two_factor_requirement, except: [:route_not_found]
+
+    # to include this in controllers inheriting from `ActionController::Metal`
+    # we need to add this block
+    helper_method :two_factor_grace_period_expired?, :two_factor_skippable? if respond_to?(:helper_method)
   end
 
   def check_two_factor_requirement
-    if two_factor_authentication_required? && current_user && !current_user.two_factor_enabled? && !skip_two_factor?
-      redirect_to profile_two_factor_auth_path
-    end
-  end
+    return unless respond_to?(:current_user)
 
-  def two_factor_authentication_required?
-    current_application_settings.require_two_factor_authentication? ||
-      current_user.try(:require_two_factor_authentication_from_group?)
-  end
-
-  def two_factor_authentication_reason(global: -> {}, group: -> {})
-    if two_factor_authentication_required?
-      if current_application_settings.require_two_factor_authentication?
-        global.call
+    if two_factor_authentication_required? && current_user_requires_two_factor?
+      case self
+      when GraphqlController
+        render_error(
+          format(
+            _("Authentication error: enable 2FA in your profile settings to continue using GitLab: %{mfa_help_page}"),
+            mfa_help_page: mfa_help_page_url
+          ),
+          status: :unauthorized
+        )
       else
-        groups = current_user.expanded_groups_requiring_two_factor_authentication.reorder(name: :asc)
-        group.call(groups)
+        redirect_to profile_two_factor_auth_path
       end
     end
   end
 
+  def two_factor_authentication_required?
+    two_factor_verifier.two_factor_authentication_required?
+  end
+
+  def current_user_requires_two_factor?
+    two_factor_verifier.current_user_needs_to_setup_two_factor? && !skip_two_factor?
+  end
+
+  # rubocop: disable CodeReuse/ActiveRecord
+  def execute_action_for_2fa_reason(actions)
+    reason = two_factor_verifier.two_factor_authentication_reason
+    groups_enforcing_two_factor = Authn::Users::TwoFactorGroupsFinder
+                                    .new(current_user, source_only: true)
+                                    .execute
+                                    .reorder(name: :asc)
+    actions[reason].call(groups_enforcing_two_factor)
+  end
+  # rubocop: enable CodeReuse/ActiveRecord
+
   def two_factor_grace_period
-    periods = [current_application_settings.two_factor_grace_period]
-    periods << current_user.two_factor_grace_period if current_user.try(:require_two_factor_authentication_from_group?)
-    periods.min
+    two_factor_verifier.two_factor_grace_period
   end
 
   def two_factor_grace_period_expired?
-    date = current_user.otp_grace_period_started_at
-    date && (date + two_factor_grace_period.hours) < Time.current
+    two_factor_verifier.two_factor_grace_period_expired?
   end
 
   def two_factor_skippable?
@@ -53,6 +71,19 @@ module EnforcesTwoFactorAuthentication
   end
 
   def skip_two_factor?
-    session[:skip_two_factor] && session[:skip_two_factor] > Time.current
+    session[:skip_two_factor] && session[:skip_two_factor].future?
+  end
+
+  def two_factor_verifier
+    @two_factor_verifier ||= Gitlab::Auth::TwoFactorAuthVerifier.new(current_user, request)
+  end
+
+  def mfa_help_page_url
+    Rails.application.routes.url_helpers.help_page_url(
+      'user/profile/account/two_factor_authentication.md',
+      anchor: 'enable-two-factor-authentication'
+    )
   end
 end
+
+EnforcesTwoFactorAuthentication.prepend_mod_with('EnforcesTwoFactorAuthentication')

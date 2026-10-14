@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
       class Pending < Status::Core
         def text
-          s_('CiStatusText|pending')
+          s_('CiStatusText|Pending')
         end
 
         def label
@@ -11,11 +13,15 @@ module Gitlab
         end
 
         def icon
-          'icon_status_pending'
+          'status_pending'
         end
 
         def favicon
           'favicon_status_pending'
+        end
+
+        def details_path
+          nil
         end
       end
     end

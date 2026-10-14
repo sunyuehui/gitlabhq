@@ -1,35 +1,35 @@
+# frozen_string_literal: true
+
 module RuboCop
   module Cop
-    class ProjectPathHelper < RuboCop::Cop::Cop
+    class ProjectPathHelper < RuboCop::Cop::Base
+      extend RuboCop::Cop::AutoCorrector
+
       MSG = 'Use short project path helpers without explicitly passing the namespace: ' \
         '`foo_project_bar_path(project, bar)` instead of ' \
-        '`foo_namespace_project_bar_path(project.namespace, project, bar)`.'.freeze
+        '`foo_namespace_project_bar_path(project.namespace, project, bar)`.'
 
-      METHOD_NAME_PATTERN = /\A([a-z_]+_)?namespace_project(?:_[a-z_]+)?_(?:url|path)\z/.freeze
+      METHOD_NAME_PATTERN = /\A([a-z_]+_)?namespace_project(?:_[a-z_]+)?_(?:url|path)\z/
 
       def on_send(node)
-        return unless method_name(node).to_s =~ METHOD_NAME_PATTERN
+        return unless METHOD_NAME_PATTERN.match?(method_name(node).to_s)
 
         namespace_expr, project_expr = arguments(node)
         return unless namespace_expr && project_expr
 
-        return unless namespace_expr.type == :send
+        return unless namespace_expr.send_type?
         return unless method_name(namespace_expr) == :namespace
         return unless receiver(namespace_expr) == project_expr
 
-        add_offense(node, :selector)
-      end
+        add_offense(node.loc.selector) do |corrector|
+          helper_name = method_name(node).to_s.sub('namespace_project', 'project')
 
-      def autocorrect(node)
-        helper_name = method_name(node).to_s.sub('namespace_project', 'project')
+          arguments = arguments(node)
+          arguments.shift # Remove namespace argument
 
-        arguments = arguments(node)
-        arguments.shift # Remove namespace argument
+          replacement = "#{helper_name}(#{arguments.map(&:source).join(', ')})"
 
-        replacement = "#{helper_name}(#{arguments.map(&:source).join(', ')})"
-
-        lambda do |corrector|
-          corrector.replace(node.source_range, replacement)
+          corrector.replace(node, replacement)
         end
       end
 
@@ -44,7 +44,7 @@ module RuboCop
       end
 
       def arguments(node)
-        node.children[2..-1]
+        node.children[2..]
       end
     end
   end

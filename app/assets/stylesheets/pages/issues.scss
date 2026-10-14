@@ -1,22 +1,48 @@
-@import "./issues/issue_count_badge";
+.issue-token-link {
+  &[href] {
+    color: $blue-600;
+  }
 
-.issues-list {
-  .issue {
-    padding: 10px 0 10px $gl-padding;
-    position: relative;
+  &:hover,
+  &:focus-visible {
+    outline: none;
+    text-decoration: none;
+  }
+}
 
-    .title {
-      margin-bottom: 2px;
-    }
+.issue-token-reference {
+  margin-right: 1px;
+  @apply gl-bg-subtle;
+  transition: background $general-hover-transition-duration $general-hover-transition-curve, color $general-hover-transition-duration $general-hover-transition-curve;
 
-    .issue-labels {
-      display: inline-block;
-    }
+  .issue-token:hover &,
+  .issue-token-link:focus-visible > & {
+    @apply gl-bg-strong;
+    color: $blue-800;
+    text-decoration: none;
+  }
+}
 
-    .icon-merge-request-unmerged {
-      height: 13px;
-      margin-bottom: 3px;
-     }
+.issue-token-title {
+  @apply gl-bg-strong;
+  transition: background $general-hover-transition-duration $general-hover-transition-curve;
+
+  .issue-token:hover &,
+  .issue-token-link:focus-visible > & {
+    background-color: $gray-100;
+  }
+}
+
+.issue-token-remove-button {
+  @apply gl-bg-strong;
+  transition: background $general-hover-transition-duration $general-hover-transition-curve;
+
+  &:hover,
+  &:focus-visible,
+  .issue-token:hover &,
+  .issue-token-link:focus-visible + & {
+    background-color: $gray-100;
+    outline: none;
   }
 }
 
@@ -29,151 +55,37 @@
   opacity: 1;
 }
 
-.check-all-holder {
-  line-height: 36px;
-  float: left;
-  margin-right: 15px;
-}
-
-.issues_content {
-  .title {
-    height: 40px;
-  }
-
-  form {
-    margin: 0;
-  }
-}
-
-form.edit-issue {
-  margin: 0;
-}
-
-ul.related-merge-requests > li {
-  display: -ms-flexbox;
-  display: -webkit-flex;
-  display: flex;
-  align-items: center;
-
-  .merge-request-id {
-    flex-shrink: 0;
-  }
-
-  .merge-request-info {
-    margin-left: 5px;
-  }
-
-  .row_title {
-    vertical-align: bottom;
-  }
-
-  gl-emoji {
-    font-size: 1em;
-  }
-}
-
-.merge-requests-title,
-.related-branches-title {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.merge-request-id {
-  display: inline-block;
+ul.related-merge-requests > li gl-emoji {
+  font-size: 1em;
 }
 
 .merge-request-status {
-  font-size: 13px;
-  padding: 0 5px;
-  color: $white-light;
-  height: 20px;
-  border-radius: 3px;
-  line-height: 18px;
-
   &.merged {
-    background: $blue-500;
+    color: $blue-500;
   }
 
   &.closed {
-    background: $red-500;
+    @apply gl-text-danger;
   }
 
   &.open {
-    background: $green-500;
+    @apply gl-text-success;
   }
 }
 
 .merge-request,
 .issue {
-  &.today {
-    background: $issues-today-bg;
-    border-color: $issues-today-border;
-  }
-
-  &.closed {
-    background: $gray-light;
-    border-color: $border-color;
-  }
-
+  &.closed,
   &.merged {
-    background: $gray-light;
-    border-color: $border-color;
+    @apply gl-bg-subtle;
   }
 }
 
-.merge-request-ci-status,
-.related-merge-requests {
-  .ci-status-link {
-    display: block;
-    margin-right: 5px;
-  }
-
-  svg {
-    display: block;
-  }
-}
-
-@media (max-width: $screen-xs-max) {
-  .issue-btn-group {
-    width: 100%;
-
-    .btn {
-      width: 100%;
+@include gl-container-width-down(sm, panel) {
+  .detail-page-header {
+    .issuable-meta {
+      line-height: 18px;
     }
-  }
-}
-
-.issue-form .select2-container {
-  width: 250px !important;
-}
-
-.issues-footer {
-  padding-top: $gl-padding;
-  padding-bottom: 37px;
-}
-
-.issue-email-modal-btn {
-  padding: 0;
-  color: $gl-link-color;
-  background-color: transparent;
-  border: 0;
-  outline: 0;
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
-.email-modal-input-group {
-  margin-bottom: 10px;
-
-  .form-control {
-    background-color: $white-light;
-  }
-
-  .btn {
-    background-color: $gray-light;
-    border: 1px solid $border-gray-normal;
   }
 }
 
@@ -182,88 +94,162 @@ ul.related-merge-requests > li {
 }
 
 .new-branch-col {
-  padding-top: 10px;
+  .discussion-filter-container {
+    &:not(:last-child) {
+      margin-right: $gl-spacing-scale-3;
+    }
+  }
+
+  @include gl-container-width-down(sm, panel) {
+    width: 100%;
+
+    > div:not(:last-child) {
+      margin-bottom: $gl-spacing-scale-3;
+    }
+  }
 }
 
 .create-mr-dropdown-wrap {
-  .btn-group:not(.hide) {
-    display: flex;
+  .ref::selection {
+    color: $gl-text-color-tertiary;
   }
 
+  .dropdown {
+    .dropdown-menu-toggle {
+      min-width: 285px;
+    }
+
+    .dropdown-select {
+      width: 285px;
+    }
+  }
+
+  .btn-group:not(.hidden) {
+    display: flex;
+
+    @include gl-container-width-down(sm, panel) {
+      .btn.btn-confirm {
+        justify-content: flex-start;
+
+        &.dropdown-toggle {
+          flex-grow: 0;
+        }
+      }
+    }
+  }
+
+  // stylelint-disable-next-line gitlab/no-js-class
   .js-create-merge-request {
     flex-grow: 1;
     flex-shrink: 0;
   }
 
-  .dropdown-menu {
-    width: 300px;
+  .create-merge-request-dropdown-menu {
     opacity: 1;
     visibility: visible;
     transform: translateY(0);
     display: none;
-  }
-
-  .dropdown-toggle {
-    .fa-caret-down {
-      pointer-events: none;
-      color: inherit;
-      margin-left: 0;
-    }
-  }
-
-  li:not(.divider) {
-    padding: 6px;
-    cursor: pointer;
-
-    &:hover,
-    &:focus {
-      background-color: $dropdown-hover-color;
-      color: $white-light;
-    }
-
-    &.droplab-item-selected {
-      .icon-container {
-        i {
-          visibility: visible;
-        }
-      }
-    }
-
-    .icon-container {
-      float: left;
-      padding-left: 6px;
-
-      i {
-        visibility: hidden;
-      }
-    }
-
-    .description {
-      padding-left: 30px;
-      font-size: 13px;
-
-      strong {
-        display: block;
-        font-weight: 600;
-      }
-    }
+    margin-top: 4px;
   }
 }
 
-@media (min-width: $screen-sm-min) {
+.discussion-reply-holder,
+.note-edit-form {
+  display: block;
+}
+
+@include gl-container-width-up(sm, panel) {
   .emoji-block .row {
     display: flex;
 
     .new-branch-col {
-      padding-top: 0;
-      text-align: right;
-      align-self: center;
-    }
-
-    .create-mr-dropdown-wrap {
-      .btn-group:not(.hide) {
-        display: inline-block;
-      }
+      padding-bottom: 0;
+      align-self: flex-end;
     }
   }
+
+  .create-mr-dropdown-wrap {
+    .btn-group:not(.hidden) {
+      display: inline-flex;
+    }
+  }
+}
+
+@include gl-container-width-up(lg, panel) {
+  .new-branch-col {
+    text-align: right;
+  }
+}
+
+.issue-sticky-header {
+  left: 0;
+  right: var(--application-bar-right);
+  width: auto;
+  top: 0;
+
+  .right-sidebar-collapsed & {
+    padding-right: $right-sidebar-collapsed-width;
+  }
+
+  .right-sidebar-expanded & {
+    padding-right: $right-sidebar-width;
+  }
+}
+
+.limit-container-width {
+  .issue-sticky-header-text {
+    max-width: $limited-layout-width;
+  }
+}
+
+.issue-sticky-header-text {
+  padding: 0 var(--container-padding-x);
+}
+
+// These are composite classes for use with Vue Transition
+// https://vuejs.org/guide/built-ins/transition
+.issuable-header-slide-enter-active,
+.issuable-header-slide-leave-active {
+  @apply gl-transition-all;
+}
+
+.issuable-header-slide-enter,
+.issuable-header-slide-leave-to {
+  transform: translateY(-100%);
+}
+
+.issuable-sticky-header-visible {
+  --issuable-sticky-header-height: 40px;
+}
+
+.md-header-preview {
+  z-index: 1;
+  position: sticky;
+  // note: only either --layout-sticky-header-height or
+  // --issuable-sticky-header-height will be defined.
+  // --issuable-sticky-header-height is maintained for incidents, all other
+  // work items use --layout-sticky-header-height.
+  top: calc(#{$calc-application-header-height} + var(--layout-sticky-header-height, 0px) + var(--issuable-sticky-header-height, 0px) - 2px);
+  margin-left: 1px;
+  @apply gl-bg-default;
+}
+
+.detail-page-description .md-header {
+  top: $calc-application-header-height;
+}
+
+// stylelint-disable-next-line gitlab/no-gl-class
+.gl-drawer .md-header {
+  top: 0;
+}
+
+// stylelint-disable-next-line gitlab/no-gl-class
+.gl-modal .md-header {
+  top: -$gl-padding-8;
+}
+
+// Issue markdown header if no sticky header is present
+// stylelint-disable-next-line gitlab/no-has -- scoped to work-item-detail element
+.work-item-detail:not(:has(.issue-sticky-header)) .md-header {
+  top: 0;
 }

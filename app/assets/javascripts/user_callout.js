@@ -1,25 +1,41 @@
-import Cookies from 'js-cookie';
+import { getCookie, setCookie } from '~/lib/utils/common_utils';
 
 export default class UserCallout {
-  constructor(className = 'user-callout') {
-    this.userCalloutBody = $(`.${className}`);
-    this.cookieName = this.userCalloutBody.data('uid');
-    this.isCalloutDismissed = Cookies.get(this.cookieName);
+  constructor(options = {}) {
+    this.options = options;
+
+    const className = this.options.className || 'user-callout';
+
+    this.userCalloutBody = document.querySelector(`.${className}`);
+    if (!this.userCalloutBody) return;
+
+    this.cookieName = this.userCalloutBody.dataset.uid;
+    this.isCalloutDismissed = getCookie(this.cookieName);
     this.init();
   }
 
   init() {
     if (!this.isCalloutDismissed || this.isCalloutDismissed === 'false') {
-      $('.js-close-callout').on('click', e => this.dismissCallout(e));
+      this.userCalloutBody
+        .querySelectorAll('.js-close-callout')
+        .forEach((el) => el.addEventListener('click', (e) => this.dismissCallout(e)));
     }
   }
 
   dismissCallout(e) {
-    const $currentTarget = $(e.currentTarget);
+    const { currentTarget } = e;
+    const cookieOptions = {};
 
-    Cookies.set(this.cookieName, 'true', { expires: 365 });
+    if (!currentTarget.classList.contains('js-close-session')) {
+      cookieOptions.expires = 365;
+    }
+    if (this.options.setCalloutPerProject) {
+      cookieOptions.path = this.userCalloutBody.dataset.projectPath;
+    }
 
-    if ($currentTarget.hasClass('close')) {
+    setCookie(this.cookieName, 'true', cookieOptions);
+
+    if (currentTarget.classList.contains('close') || currentTarget.classList.contains('js-close')) {
       this.userCalloutBody.remove();
     }
   }

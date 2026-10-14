@@ -1,6 +1,18 @@
+<% note = local_assigns.fetch(:note, @note) -%>
+<% show_no_diff_preview_message = false -%>
+<% unless @note.nil? -%>
+<%   discussion = local_assigns.fetch(:discussion) { note.discussion } if note.part_of_discussion? -%>
+<%   project = local_assigns.fetch(:project, @project) -%>
+<%   show_no_diff_preview_message = discussion&.diff_discussion? && discussion.on_text? && !project.show_diff_preview_in_email? -%>
+<% end -%>
+<%= text_header_message %>
+
 <%= yield -%>
 
----
+-- <%# signature marker %>
+<%  if show_no_diff_preview_message -%>
+<%=   "This project does not include diff previews in email notifications.\n" -%>
+<%  end -%>
 <%  if @target_url -%>
 <%    if @reply_by_email -%>
 <%=     "Reply to this email directly or view it on GitLab: #{@target_url}" -%>
@@ -9,4 +21,7 @@
 <%    end -%>
 <%  end -%>
 
-You're receiving this email because of your account on <%= Gitlab.config.gitlab.host %>.
+<%= notification_reason_text(reason: @reason, show_manage_notifications_link: !@labels_url, show_help_link: true, manage_label_subscriptions_url: @labels_url, unsubscribe_url: @unsubscribe_url, format: :text) %>
+<%= render_if_exists 'layouts/mailer/additional_text' %>
+
+<%= text_footer_message -%>

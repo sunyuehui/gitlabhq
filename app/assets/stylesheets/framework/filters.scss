@@ -1,29 +1,25 @@
 .filter-item {
   vertical-align: top;
 
-  &.reset-filters {
-    padding: 7px;
-  }
-
   &.update-issues-btn {
     float: right;
     margin-right: 0;
 
-    @media (max-width: $screen-xs-max) {
+    @include gl-container-width-down(md, panel) {
       float: none;
     }
   }
 }
 
-.filters-section {
-  @media (max-width: $screen-xs-max) {
-    display: inline-block;
-  }
-}
-
-@media (min-width: $screen-sm-min) {
+@include gl-container-width-up(sm, panel) {
   .filter-item:not(:last-child) {
     margin-right: 6px;
+  }
+
+  .bulk-update {
+    .filter-item {
+      margin-right: 0;
+    }
   }
 
   .sort-filter {
@@ -37,35 +33,26 @@
   }
 }
 
-@media (max-width: $screen-xs-max) {
+@include gl-container-width-down(md, panel) {
   .filter-item {
     display: block;
     margin: 0 0 10px;
   }
 
-  .dropdown-menu-toggle,
+  .dropdown-menu-toggle.dropdown-menu-toggle,
   .update-issues-btn .btn {
     width: 100%;
   }
 }
 
 .filtered-search-wrapper {
-  display: -webkit-flex;
-  display: flex;
-
-  @media (max-width: $screen-xs-min) {
-    -webkit-flex-direction: column;
-    flex-direction: column;
-  }
-
   .tokens-container {
-    display: -webkit-flex;
     display: flex;
     flex: 1;
-    -webkit-flex: 1;
-    padding-left: 30px;
+    padding-left: 12px;
     position: relative;
     margin-bottom: 0;
+    width: 1px;
   }
 
   .input-token {
@@ -73,7 +60,7 @@
     padding: 0;
 
     &:hover,
-    &:focus {
+    &:focus-visible {
       background-color: inherit;
       color: inherit;
     }
@@ -82,44 +69,64 @@
   .input-token:only-child,
   .input-token:last-child {
     flex: 1;
-    -webkit-flex: 1;
     max-width: inherit;
   }
 }
 
 .filtered-search-token,
 .filtered-search-term {
-  display: -webkit-flex;
   display: flex;
   flex-shrink: 0;
-  margin-top: 5px;
-  margin-bottom: 5px;
+  margin-top: 2px;
+  margin-bottom: 2px;
 
   .selectable {
-    display: -webkit-flex;
     display: flex;
   }
 
   .name,
+  .operator,
   .value {
     display: inline-block;
     padding: 2px 7px;
+    @apply gl-text-sm;
+  }
+
+  .name,
+  .operator,
+  .value-container {
+    color: var(--gl-token-foreground-color);
+  }
+
+  .name,
+  .operator,
+  .value-container,
+  .value {
+    display: inline-flex;
+    align-self: center;
+    align-items: center;
+    height: 24px;
   }
 
   .name {
-    background-color: $filter-name-resting-color;
-    color: $filter-name-text-color;
+    background-color: var(--gl-filtered-search-token-type-background-color-default);
     border-radius: 2px 0 0 2px;
     margin-right: 1px;
     text-transform: capitalize;
   }
 
+  .operator {
+    background-color: var(--gl-filtered-search-token-operator-background-color-default);
+    margin-right: 1px;
+  }
+
   .value-container {
-    background-color: $white-normal;
-    color: $filter-value-text-color;
+    display: flex;
+    align-items: center;
+    background-color: var(--gl-filtered-search-token-data-background-color-default);
     border-radius: 0 2px 2px 0;
-    margin-right: 5px;
-    padding-right: 8px;
+    margin-right: 4px;
+    padding-right: 4px;
   }
 
   .value {
@@ -127,25 +134,27 @@
   }
 
   .remove-token {
-    display: inline-block;
-    padding-left: 4px;
+    display: inline-flex;
+    align-self: center;
+    padding-left: 8px;
     padding-right: 0;
 
-    .fa-close {
-      color: $gl-text-color-secondary;
+    .close-icon {
+      color: var(--gl-icon-color-subtle);
     }
 
-    &:hover .fa-close {
-      color: $gl-text-color;
+    &:hover .close-icon {
+      color: var(--gl-icon-color-default);
     }
 
     &.inverted {
-      .fa-close {
-        color: $gl-text-color-secondary-inverted;
+      .close-icon {
+        color: var(--gl-color-neutral-0);
+        opacity: 0.85;
       }
 
-      &:hover .fa-close {
-        color: $gl-text-color-inverted;
+      &:hover .close-icon {
+        color: var(--gl-color-neutral-0);
       }
     }
   }
@@ -155,28 +164,22 @@
 .filtered-search-token .selected,
 .filtered-search-term .selected {
   .name {
-    background-color: $filter-name-selected-color;
+    background-color: var(--gl-filtered-search-token-type-background-color-hover);
+  }
+
+  .operator {
+    background-color: var(--gl-filtered-search-token-operator-background-color-hover);
   }
 
   .value-container {
-    box-shadow: inset 0 0 0 100px $filtered-search-term-shadow-color;
-  }
-}
-
-.droplab-dropdown li.filtered-search-token {
-  padding: 0;
-
-  &:hover,
-  &:focus {
-    background-color: inherit;
-    color: inherit;
+    background-color: var(--gl-filtered-search-token-data-background-color-hover);
   }
 }
 
 .filtered-search-term {
   .name {
     background-color: inherit;
-    color: $black;
+    color: var(--gl-token-foreground-color);
     text-transform: none;
   }
 
@@ -186,7 +189,6 @@
 }
 
 .scroll-container {
-  display: -webkit-flex;
   display: flex;
   overflow-x: auto;
   white-space: nowrap;
@@ -196,68 +198,45 @@
 .filtered-search-box {
   position: relative;
   flex: 1;
-  display: -webkit-flex;
   display: flex;
   width: 100%;
   min-width: 0;
-  border: 1px solid $border-color;
-  background-color: $white-light;
-
-  @media (max-width: $screen-xs-min) {
-    -webkit-flex: 1 1 auto;
-    flex: 1 1 auto;
-    margin-bottom: 10px;
-  }
-
-  &:hover {
-    @extend .form-control:hover;
-  }
+  border: 1px solid var(--gl-control-border-color-default);
+  @apply gl-bg-default;
+  border-radius: var(--gl-control-border-radius);
 
   &.focus,
   &.focus:hover {
-    border-color: $dropdown-input-focus-border;
-    box-shadow: 0 0 4px $search-input-focus-shadow-color;
+    @apply gl-focus;
   }
 
-  &.focus .fa-filter {
-    color: $common-gray-dark;
+  gl-emoji {
+    display: inline-block;
+    font-family: inherit;
+    font-size: inherit;
+    vertical-align: inherit;
+
+    img {
+      height: $default-icon-size;
+      width: $default-icon-size;
+    }
   }
 
   .form-control {
     position: relative;
     min-width: 200px;
-    padding: 5px 25px 6px 0;
-    border-color: transparent;
+    padding-right: 25px;
+    padding-left: 0;
+    height: #{$input-height - 2px};
+    background-color: transparent;
+    line-height: inherit;
 
-    &:focus,
+    &,
+    &:focus-visible,
     &:hover {
       outline: none;
       border-color: transparent;
       box-shadow: none;
-    }
-  }
-
-  .fa-filter {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    color: $gray-darkest;
-  }
-
-  .fa-times {
-    right: 10px;
-    color: $gray-darkest;
-  }
-
-  .clear-search {
-    width: 35px;
-    background-color: $white-light;
-    border: none;
-    outline: none;
-    z-index: 1;
-
-    &:hover .fa-times {
-      color: $common-gray-dark;
     }
   }
 }
@@ -265,21 +244,18 @@
 .filtered-search-box-input-container {
   flex: 1;
   position: relative;
-  // Fix PhantomJS not supporting `flex: 1;` properly.
-  // This is important because it can change the expected `e.target` when clicking things in tests.
-  // See https://gitlab.com/gitlab-org/gitlab-ce/blob/b54acba8b732688c59fe2f38510c469dc86ee499/spec/features/issues/filtered_search/visual_tokens_spec.rb#L61
-  // - With `width: 100%`: `e.target` = `.tokens-container`, https://i.imgur.com/jGq7wbx.png
-  // - Without `width: 100%`: `e.target` = `.filtered-search`, https://i.imgur.com/cNI2CyT.png
-  width: 100%;
   min-width: 0;
+  height: #{$input-height - 2px};
+  background-color: var(--gl-control-background-color-default);
+  border-radius: var(--gl-control-border-radius);
 }
 
 .filtered-search-input-dropdown-menu {
-  max-height: 225px;
+  max-height: $dropdown-max-height-lg;
   max-width: 280px;
   overflow: auto;
 
-  @media (max-width: $screen-xs-min) {
+  @include gl-container-width-down(md, panel) {
     width: auto;
     left: 0;
     right: 0;
@@ -294,48 +270,19 @@
   flex-direction: column;
 }
 
-.filtered-search-history-dropdown-toggle-button {
+.filtered-search-history-dropdown-toggle-button.gl-button {
+  $filtered-search-inner-border-radius: calc(var(--gl-control-border-radius) - 1px);
+  border-radius: $filtered-search-inner-border-radius 0 0 $filtered-search-inner-border-radius;
+  margin: -1px 0 -1px -1px;
   flex: 1;
-  width: auto;
-  border-radius: 0;
-  border: 0;
-  border-right: 1px solid $border-color;
-  color: $gl-text-color-secondary;
   transition: color 0.1s linear;
-
-  &:hover,
-  &:focus {
-    color: $gl-text-color;
-    border-color: $dropdown-input-focus-border;
-    outline: none;
-
-    svg {
-      fill: $gl-text-color;
-    }
-  }
-
-  svg {
-    height: 14px;
-    width: 14px;
-    fill: $gl-text-color-secondary;
-    vertical-align: middle;
-  }
-
-  .dropdown-toggle-text {
-    display: inline-block;
-    color: inherit;
-
-    .fa {
-      vertical-align: middle;
-      color: inherit;
-    }
-  }
+  width: auto;
 }
 
 .filtered-search-history-dropdown {
   width: 40%;
 
-  @media (max-width: $screen-xs-min) {
+  @include gl-container-width-down(md, panel) {
     left: 0;
     right: 0;
     max-width: none;
@@ -344,21 +291,12 @@
 
 .filtered-search-history-dropdown-content {
   max-height: none;
-}
 
-.filtered-search-history-dropdown-item,
-.filtered-search-history-clear-button {
-  @include dropdown-link;
-
-  overflow: hidden;
-  width: 100%;
-  margin: 0.5em 0;
-
-  background-color: transparent;
-  border: 0;
-  text-align: left;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  .filtered-search-history-dropdown-item,
+  .filtered-search-history-clear-button {
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
 }
 
 .filtered-search-history-dropdown-token {
@@ -369,114 +307,78 @@
   }
 
   > .value {
-    font-weight: 600;
+    font-weight: $gl-font-weight-bold;
   }
 }
 
-.filter-dropdown-container {
-  display: -webkit-flex;
-  display: flex;
-
-  .dropdown-toggle {
-    line-height: 22px;
-  }
+.issues-details-filters,
+.epics-details-filters {
+  @apply gl-pt-3;
+  @apply gl-px-[--container-padding-x];
+  @apply gl-bg-transparent;
 }
 
-@media (max-width: $screen-xs-max) {
-  .issues-details-filters {
-    padding: 0 0 10px;
-    background-color: $white-light;
-    border-top: 0;
+@include gl-container-width-down(md, panel) {
+  .issues-details-filters,
+  .epics-details-filters {
+    @apply gl-py-3;
+    @apply gl-bg-default;
   }
-}
 
-@media (max-width: $screen-xs) {
   .filter-dropdown-container {
-    .dropdown-toggle,
-    .dropdown,
-    .dropdown-menu {
-      width: 100%;
+    > div {
+      margin: 0;
+
+      > .btn {
+        margin: 0 0 $gl-input-padding;
+        width: 100%;
+      }
     }
-
-    .dropdown {
-      margin-left: 0;
-    }
-
-    .fa-chevron-down {
-      position: absolute;
-      right: 10px;
-      top: 10px;
-    }
-  }
-}
-
-%filter-dropdown-item-btn-hover {
-  background-color: $dropdown-hover-color;
-  color: $white-light;
-  text-decoration: none;
-  outline: 0;
-
-  .avatar {
-    border-color: $white-light;
   }
 }
 
 .droplab-dropdown .dropdown-menu .filter-dropdown-item {
-  padding: 0;
-
   .btn {
-    border: none;
-    width: 100%;
-    text-align: left;
-    padding: 8px 16px;
     text-overflow: ellipsis;
-    overflow: hidden;
-    border-radius: 0;
 
-    .fa {
-      width: 15px;
-      line-height: $line-height-base;
+    svg {
+      margin-right: $gl-padding-8;
     }
 
     .dropdown-label-box {
-      border-color: $white-light;
+      border-color: var(--gl-background-color-default);
       border-style: solid;
       border-width: 1px;
       width: 17px;
       height: 17px;
-    }
-
-    &:hover,
-    &:focus {
-      @extend %filter-dropdown-item-btn-hover;
+      top: 0;
     }
   }
-
-  .dropdown-light-content {
-    font-size: 14px;
-    font-weight: 400;
-  }
-
-  .dropdown-user {
-    display: flex;
-  }
-
-  .dropdown-user-details {
-    display: flex;
-    flex-direction: column;
-
-    > span {
-      white-space: normal;
-      word-break: break-all;
-    }
-  }
-}
-
-.filter-dropdown-item.droplab-item-active .btn {
-  @extend %filter-dropdown-item-btn-hover;
 }
 
 .filter-dropdown-loading {
   padding: 8px 16px;
   text-align: center;
+}
+
+.vue-filtered-search-bar-container {
+  .gl-search-box-by-click {
+    // This enforces width of flex items to be
+    // calculated in advance so that content
+    // does not overflow.
+
+    min-width: 0;
+  }
+
+  @include gl-container-width-up(md, panel) {
+    .sort-dropdown-container {
+      margin-left: 10px;
+    }
+  }
+
+  @include gl-container-width-down(md, panel) {
+    .sort-dropdown-container {
+      margin-top: 10px;
+    }
+  }
 }

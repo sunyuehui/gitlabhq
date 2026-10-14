@@ -1,18 +1,18 @@
+# frozen_string_literal: true
+
+# Silence logger output for tests and disable colorization
+ENV["QA_LOG_LEVEL"] = "FATAL"
+ENV["COLORIZED_LOGS"] = "false"
+require 'rainbow'
+Rainbow.enabled = false
+
 require_relative '../qa'
+
+require_relative 'scenario_shared_examples'
+require_relative('../../jh/qa/spec/spec_helper') if GitlabEdition.jh?
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|
-    expectations.include_chain_clauses_in_custom_matcher_descriptions = true
+    expectations.max_formatted_output_length = nil
   end
-
-  config.mock_with :rspec do |mocks|
-    mocks.verify_partial_doubles = true
-  end
-
-  config.shared_context_metadata_behavior = :apply_to_host_groups
-  config.disable_monkey_patching!
-  config.expose_dsl_globally = true
-  config.profile_examples = 10
-  config.order = :random
-  Kernel.srand config.seed
 end

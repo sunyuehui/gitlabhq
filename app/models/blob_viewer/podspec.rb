@@ -1,8 +1,10 @@
+# frozen_string_literal: true
+
 module BlobViewer
   class Podspec < DependencyManager
     include ServerSide
 
-    self.file_types = %i(podspec)
+    self.file_types = %i[podspec]
 
     def manager_name
       'CocoaPods'

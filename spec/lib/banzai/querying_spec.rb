@@ -1,6 +1,8 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
-describe Banzai::Querying do
+require 'fast_spec_helper'
+
+RSpec.describe Banzai::Querying, feature_category: :markdown do
   describe '.css' do
     it 'optimizes queries for elements with classes' do
       document = double(:document)

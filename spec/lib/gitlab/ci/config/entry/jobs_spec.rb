@@ -1,7 +1,44 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
-describe Gitlab::Ci::Config::Entry::Jobs do
+require 'fast_spec_helper'
+
+RSpec.describe Gitlab::Ci::Config::Entry::Jobs, feature_category: :pipeline_composition do
   let(:entry) { described_class.new(config) }
+
+  let(:config) do
+    {
+      ".hidden_job": { script: 'something' },
+      ".hidden_bridge": { trigger: 'my/project' },
+      regular_job: { script: 'something' },
+      my_trigger: { trigger: 'my/project' }
+    }
+  end
+
+  describe '.all_types' do
+    subject { described_class.all_types }
+
+    it { is_expected.to include(::Gitlab::Ci::Config::Entry::Hidden) }
+    it { is_expected.to include(::Gitlab::Ci::Config::Entry::Job) }
+    it { is_expected.to include(::Gitlab::Ci::Config::Entry::Bridge) }
+  end
+
+  describe '.find_type' do
+    using RSpec::Parameterized::TableSyntax
+
+    where(:name, :type) do
+      :'.hidden_job'    | ::Gitlab::Ci::Config::Entry::Hidden
+      :'.hidden_bridge' | ::Gitlab::Ci::Config::Entry::Hidden
+      :regular_job      | ::Gitlab::Ci::Config::Entry::Job
+      :my_trigger       | ::Gitlab::Ci::Config::Entry::Bridge
+      :invalid_job      | nil
+    end
+
+    subject { described_class.find_type(name, config[name]) }
+
+    with_them do
+      it { is_expected.to eq(type) }
+    end
+  end
 
   describe 'validations' do
     before do
@@ -9,8 +46,6 @@ describe Gitlab::Ci::Config::Entry::Jobs do
     end
 
     context 'when entry config value is correct' do
-      let(:config) { { rspec: { script: 'rspec' } } }
-
       describe '#valid?' do
         it 'is valid' do
           expect(entry).to be_valid
@@ -29,66 +64,89 @@ describe Gitlab::Ci::Config::Entry::Jobs do
           end
         end
 
-        context 'when job is unspecified' do
-          let(:config) { { rspec: nil } }
+        context 'when job is invalid' do
+          let(:config) { { rspec_Mix_UPPER: nil } }
 
           it 'reports error' do
-            expect(entry.errors).to include "rspec config can't be blank"
+            expect(entry.errors)
+              .to include 'jobs rspec_mix_upper config should implement the script:, run:, or trigger: keyword'
+          end
+
+          context 'when the job name cannot be cast directly to a symbol' do
+            let(:config) { { true => nil } }
+
+            it 'properly parses the job name without raising a NoMethodError' do
+              expect(entry.errors).to include 'jobs true config should implement the script:, run:, or trigger: keyword'
+            end
           end
         end
 
         context 'when no visible jobs present' do
-          let(:config) { { '.hidden'.to_sym => { script: [] } } }
+          let(:config) { { ".hidden": { script: [] } } }
 
           it 'returns error about no visible jobs defined' do
             expect(entry.errors)
               .to include 'jobs config should contain at least one visible job'
+          end
+
+          # Guards the coupling relied on by YamlProcessor::Result#only_no_visible_jobs_error?,
+          # which matches the composed error by its NO_VISIBLE_JOBS_MESSAGE suffix.
+          it 'composes an error ending with NO_VISIBLE_JOBS_MESSAGE' do
+            expect(entry.errors)
+              .to include(a_string_ending_with(described_class::NO_VISIBLE_JOBS_MESSAGE))
           end
         end
       end
     end
   end
 
-  context 'when valid job entries composed' do
-    before do
-      entry.compose!
-    end
-
-    let(:config) do
-      { rspec: { script: 'rspec' },
-        spinach: { script: 'spinach' },
-        '.hidden'.to_sym => {} }
-    end
-
-    describe '#value' do
-      it 'returns key value' do
-        expect(entry.value).to eq(
-          rspec: { name: :rspec,
-                   script: %w[rspec],
-                   commands: 'rspec',
-                   ignore: false,
-                   stage: 'test' },
-          spinach: { name: :spinach,
-                     script: %w[spinach],
-                     commands: 'spinach',
-                     ignore: false,
-                     stage: 'test' })
+  describe '.compose!' do
+    context 'when valid job entries composed' do
+      before do
+        entry.compose!
       end
-    end
 
-    describe '#descendants' do
-      it 'creates valid descendant nodes' do
-        expect(entry.descendants.count).to eq 3
-        expect(entry.descendants.first(2))
-          .to all(be_an_instance_of(Gitlab::Ci::Config::Entry::Job))
-        expect(entry.descendants.last)
-          .to be_an_instance_of(Gitlab::Ci::Config::Entry::Hidden)
+      describe '#value' do
+        it 'returns key value' do
+          expect(entry.value).to eq(
+            my_trigger: {
+              ignore: false,
+              name: :my_trigger,
+              only: { refs: %w[branches tags] },
+              stage: 'test',
+              trigger: { project: 'my/project' },
+              job_variables: {},
+              root_variables_inheritance: true,
+              scheduling_type: :stage
+            },
+            regular_job: {
+              ignore: false,
+              name: :regular_job,
+              only: { refs: %w[branches tags] },
+              script: ['something'],
+              stage: 'test',
+              job_variables: {},
+              root_variables_inheritance: true,
+              scheduling_type: :stage
+            })
+        end
       end
-    end
 
-    describe '#value' do
-      it 'returns value of visible jobs only' do
-        expect(entry.value.keys).to eq [:rspec, :spinach]
+      describe '#descendants' do
+        it 'creates valid descendant nodes' do
+          expect(entry.descendants.map(&:class)).to eq [
+            Gitlab::Ci::Config::Entry::Hidden,
+            Gitlab::Ci::Config::Entry::Hidden,
+            Gitlab::Ci::Config::Entry::Job,
+            Gitlab::Ci::Config::Entry::Bridge
+          ]
+        end
+      end
+
+      describe '#value' do
+        it 'returns value of visible jobs only' do
+          expect(entry.value.keys).to eq [:regular_job, :my_trigger]
+        end
       end
     end
   end

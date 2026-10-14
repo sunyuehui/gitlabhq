@@ -1,78 +1,116 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Groups > Members > Request access' do
+RSpec.describe 'Groups > Members > Request access', feature_category: :groups_and_projects do
+  include Spec::Support::Helpers::ModalHelpers
+
   let(:user) { create(:user) }
   let(:owner) { create(:user) }
-  let(:group) { create(:group, :public, :access_requestable) }
+  let(:group) { create(:group, :public, owners: [owner]) }
   let!(:project) { create(:project, :private, namespace: group) }
-
-  background do
-    group.add_owner(owner)
-    sign_in(user)
-    visit group_path(group)
+  let(:more_actions_dropdown) do
+    find('#group-more-action-dropdown [data-testid="groups-list-item-actions"]')
   end
 
-  scenario 'request access feature is disabled' do
-    group.update_attributes(request_access_enabled: false)
-    visit group_path(group)
+  context 'when user has no existing access request' do
+    before do
+      sign_in(user)
+    end
 
-    expect(page).not_to have_content 'Request Access'
-  end
+    it 'request access feature is disabled', :js do
+      group.update!(request_access_enabled: false)
+      visit group_path(group)
+      more_actions_dropdown.click
 
-  scenario 'user can request access to a group' do
-    perform_enqueued_jobs { click_link 'Request Access' }
+      expect(page).not_to have_content 'Request access'
+    end
 
-    expect(ActionMailer::Base.deliveries.last.to).to eq [owner.notification_email]
-    expect(ActionMailer::Base.deliveries.last.subject).to match "Request to join the #{group.name} group"
+    it 'user can request access to a group', :js do
+      visit group_path(group)
 
-    expect(group.requesters.exists?(user_id: user)).to be_truthy
-    expect(page).to have_content 'Your request for access has been queued for review.'
+      more_actions_dropdown.click
+      request_access
 
-    expect(page).to have_content 'Withdraw Access Request'
-    expect(page).not_to have_content 'Leave group'
-  end
+      more_actions_dropdown.click
 
-  scenario 'user does not see private projects' do
-    perform_enqueued_jobs { click_link 'Request Access' }
+      expect(page).to have_content 'Withdraw access request'
+      expect(page).not_to have_content 'Leave group'
+    end
 
-    expect(page).not_to have_content project.name
-  end
+    it 'user does not see private projects', :js do
+      visit group_path(group)
 
-  scenario 'user does not see group in the Dashboard > Groups page' do
-    perform_enqueued_jobs { click_link 'Request Access' }
+      more_actions_dropdown.click
+      request_access
 
-    visit dashboard_groups_path
+      expect(page).not_to have_content project.name
+    end
 
-    expect(page).not_to have_content group.name
-  end
+    it 'user does not see group in the Dashboard > Groups page', :js do
+      visit group_path(group)
 
-  scenario 'user is not listed in the group members page' do
-    click_link 'Request Access'
+      more_actions_dropdown.click
+      request_access
 
-    expect(group.requesters.exists?(user_id: user)).to be_truthy
+      visit dashboard_groups_path
 
-    click_link 'Members'
-
-    page.within('.content') do
-      expect(page).not_to have_content(user.name)
+      expect(page).not_to have_content group.name
     end
   end
 
-  scenario 'user can withdraw its request for access' do
-    click_link 'Request Access'
+  context 'when user has request for access', :js do
+    let!(:access_request) { create(:group_member, :access_request, group: group, user: user) }
 
-    expect(group.requesters.exists?(user_id: user)).to be_truthy
+    before do
+      sign_in(user)
+      visit group_path(group)
+    end
 
-    click_link 'Withdraw Access Request'
+    it 'user is not listed in the group members page' do
+      within_testid 'super-sidebar' do
+        click_button 'Manage'
+        first(:link, 'Members').click
+      end
 
-    expect(group.requesters.exists?(user_id: user)).to be_falsey
-    expect(page).to have_content 'Your access request to the group has been withdrawn.'
+      page.within('.content') do
+        expect(page).not_to have_content(user.name)
+      end
+    end
+
+    it 'user can withdraw request' do
+      more_actions_dropdown.click
+      withdraw_access
+
+      expect(page).to have_content 'Your access request to the group has been withdrawn.'
+    end
   end
 
-  scenario 'member does not see the request access button' do
-    group.add_owner(user)
-    visit group_path(group)
+  context 'when user is already a member' do
+    let!(:access_request) { create(:group_member, :maintainer, group: group, user: user) }
 
-    expect(page).not_to have_content 'Request Access'
+    before do
+      sign_in(user)
+      visit group_path(group)
+    end
+
+    it 'does not see the request access button', :js do
+      more_actions_dropdown.click
+
+      expect(page).not_to have_content 'Request access'
+    end
+  end
+
+  def request_access
+    find_by_testid('request-access-link').click
+
+    expect(page).to have_content 'Your request for access has been queued for review.'
+  end
+
+  def withdraw_access
+    find_by_testid('withdraw-access-link').click
+    accept_gl_confirm
+
+    expect(page).to have_content 'Your access request to the group has been withdrawn.'
   end
 end

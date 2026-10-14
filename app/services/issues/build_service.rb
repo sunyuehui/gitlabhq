@@ -1,10 +1,16 @@
+# frozen_string_literal: true
+
 module Issues
   class BuildService < Issues::BaseService
     include ResolveDiscussions
 
-    def execute
+    def execute(initialize_callbacks: true)
       filter_resolve_discussion_params
-      @issue = project.issues.new(issue_params)
+
+      @issue = model_klass.new(issue_params.merge(container_param)).tap do |issue|
+        set_work_item_type(issue)
+        initialize_callbacks!(issue) if initialize_callbacks
+      end
     end
 
     def issue_params_with_info_from_discussions
@@ -19,13 +25,13 @@ module Issues
 
     def description_for_discussions
       if discussions_to_resolve.empty?
-        return "There are no unresolved discussions. "\
-               "Review the conversation in #{merge_request_to_resolve_discussions_of.to_reference}"
+        return "There are no unresolved discussions. " \
+          "Review the conversation in #{merge_request_to_resolve_discussions_of.to_reference}"
       end
 
-      description = "The following #{'discussion'.pluralize(discussions_to_resolve.size)} "\
-                    "from #{merge_request_to_resolve_discussions_of.to_reference} "\
-                    "should be addressed:"
+      description = "The following #{'discussion'.pluralize(discussions_to_resolve.size)} " \
+        "from #{merge_request_to_resolve_discussions_of.to_reference} " \
+        "should be addressed:"
 
       [description, *items_for_discussions].join("\n\n")
     end
@@ -44,26 +50,100 @@ module Issues
 
       other_note_count = discussion.notes.size - 1
 
-      discussion_info = "- [ ] #{first_note_to_resolve.author.to_reference} #{action} a [discussion](#{note_url}): "
-      discussion_info << " (+#{other_note_count} #{'comment'.pluralize(other_note_count)})" if other_note_count > 0
+      discussion_info = ["- [ ] #{first_note_to_resolve.author.to_reference} #{action} a [discussion](#{note_url}): "]
+      discussion_info << "(+#{other_note_count} #{'comment'.pluralize(other_note_count)})" if other_note_count > 0
 
-      note_without_block_quotes = Banzai::Filter::BlockquoteFenceFilter.new(first_note_to_resolve.note).call
       spaces = ' ' * 4
-      quote = note_without_block_quotes.lines.map { |line| "#{spaces}> #{line}" }.join
+      quote = first_note_to_resolve.note.lines.map { |line| "#{spaces}> #{line}" }.join
 
-      [discussion_info, quote].join("\n\n")
+      [discussion_info.join(' '), quote].join("\n\n")
     end
 
     def issue_params
-      @issue_params ||= issue_params_with_info_from_discussions.merge(whitelisted_issue_params)
+      @issue_params ||= build_issue_params
     end
 
-    def whitelisted_issue_params
-      if can?(current_user, :admin_issue, project)
-        params.slice(:title, :description, :milestone_id)
+    private
+
+    def container_param
+      case container
+      when Project, Namespaces::ProjectNamespace
+        {
+          project: container.owner_entity,
+          namespace: container.owner_entity.namespace
+        }
       else
-        params.slice(:title, :description)
+        { namespace: container }
       end
+    end
+
+    def set_work_item_type(issue)
+      explicit_type_requested = params[:work_item_type_id].present? || params[:work_item_type].present?
+      work_item_type = resolve_work_item_type(skip_visibility_check: issue.importing?)
+
+      issue.work_item_type = work_item_type || work_item_type_provider.default_issue_type
+
+      return unless explicit_type_requested && work_item_type.nil?
+
+      issue.errors.add(:work_item_type, s_('WorkItem|could not be found or is not accessible.'))
+    end
+
+    def resolve_work_item_type(skip_visibility_check: false)
+      work_item_type = work_item_type_provider.fetch_work_item_type(extract_work_item_type_param)
+
+      # We need to support the legacy input params[:issue_type] even if we don't have the issue_type column anymore.
+      # In the future only params[:work_item_type] should be provided
+      base_type = work_item_type&.base_type || params[:issue_type]
+
+      return unless create_issue_type_allowed?(container, base_type)
+
+      resolved_type = work_item_type || work_item_type_provider.find_by_base_type(base_type)
+
+      # Enforce visibility controls (disabled via namespace settings, or archived).
+      # Intentionally does NOT use enabled? because that also checks visible_in_context?
+      # which rejects group-only types (e.g. Epic) in project context - already gated
+      # by create_issue_type_allowed? and Provider filtering above. Imports are exempt.
+      return if !skip_visibility_check && resolved_type && (!resolved_type.enabled || resolved_type.archived?)
+
+      resolved_type
+    end
+
+    def extract_work_item_type_param
+      # Prioritize work_item_type_id over work_item_type
+      if params[:work_item_type_id].present?
+        params.delete(:work_item_type) # Clean up unused param
+        params.delete(:work_item_type_id)
+      else
+        params.delete(:work_item_type)
+      end
+    end
+
+    def model_klass
+      ::Issue
+    end
+
+    def public_params
+      # Additional params may be assigned later (in a CreateService for example)
+      public_issue_params = [
+        :title,
+        :description,
+        :confidential
+      ]
+
+      params.slice(*public_issue_params)
+    end
+
+    def build_issue_params
+      { author: }
+        .merge(issue_params_with_info_from_discussions)
+        .merge(public_params)
+        .with_indifferent_access
+    end
+
+    def author
+      Gitlab::Auth::Identity.resolve_composite_identity_actor(current_user)
     end
   end
 end
+
+Issues::BuildService.prepend_mod_with('Issues::BuildService')

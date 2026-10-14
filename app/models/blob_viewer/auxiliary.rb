@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module BlobViewer
   module Auxiliary
     extend ActiveSupport::Concern
@@ -11,7 +13,7 @@ module BlobViewer
       self.size_limit = 100.kilobytes
     end
 
-    def visible_to?(current_user)
+    def visible_to?(current_user, ref)
       true
     end
   end

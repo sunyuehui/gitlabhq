@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Diff::ParallelDiff do
+RSpec.describe Gitlab::Diff::ParallelDiff, feature_category: :source_code_management do
   include RepoHelpers
 
   let(:project) { create(:project, :repository) }
@@ -9,6 +11,7 @@ describe Gitlab::Diff::ParallelDiff do
   let(:diffs) { commit.raw_diffs }
   let(:diff) { diffs.first }
   let(:diff_file) { Gitlab::Diff::File.new(diff, diff_refs: commit.diff_refs, repository: repository) }
+
   subject { described_class.new(diff_file) }
 
   describe '#parallelize' do
@@ -56,6 +59,15 @@ describe Gitlab::Diff::ParallelDiff do
       ]
 
       expect(subject.parallelize).to eq(expected)
+    end
+
+    it 'works as a static method' do
+      diff_lines = [Gitlab::Diff::Line.new("", 'match', nil, 1, 1)]
+      expect(described_class.parallelize(diff_lines)).to eq([
+        {
+          left: diff_lines[0], right: diff_lines[0]
+        }
+      ])
     end
   end
 end

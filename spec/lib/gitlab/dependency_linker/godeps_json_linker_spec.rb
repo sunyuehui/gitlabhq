@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::GodepsJsonLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::GodepsJsonLinker do
   describe '.support?' do
     it 'supports Godeps.json' do
       expect(described_class.support?('Godeps.json')).to be_truthy
@@ -59,7 +61,7 @@ describe Gitlab::DependencyLinker::GodepsJsonLinker do
     subject { Gitlab::Highlight.highlight(file_name, file_content) }
 
     def link(name, url)
-      %{<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>}
+      %(<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>)
     end
 
     it 'links the package name' do
@@ -73,8 +75,8 @@ describe Gitlab::DependencyLinker::GodepsJsonLinker do
     end
 
     it 'links GitLab projects' do
-      expect(subject).to include(link('gitlab.com/group/project/path', 'https://gitlab.com/group/project/tree/master/path'))
-      expect(subject).to include(link('gitlab.com/group/subgroup/project.git/path', 'https://gitlab.com/group/subgroup/project/tree/master/path'))
+      expect(subject).to include(link('gitlab.com/group/project/path', 'https://gitlab.com/group/project/-/tree/master/path'))
+      expect(subject).to include(link('gitlab.com/group/subgroup/project.git/path', 'https://gitlab.com/group/subgroup/project/-/tree/master/path'))
     end
 
     it 'links Golang packages' do

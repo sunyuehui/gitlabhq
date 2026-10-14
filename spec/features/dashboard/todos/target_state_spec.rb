@@ -1,60 +1,64 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-feature 'Dashboard > Todo target states' do
-  let(:user)    { create(:user) }
-  let(:author)  { create(:user) }
-  let(:project) { create(:project, :public) }
+# covered by ./accessibility_spec.rb
+
+require 'spec_helper'
+
+RSpec.describe 'Dashboard > Todo target states', :js, feature_category: :team_planning do
+  let_it_be(:user)    { create(:user) }
+  let_it_be(:author)  { create(:user) }
+  let_it_be(:project) { create(:project, :public, developers: user) }
 
   before do
     sign_in(user)
   end
 
-  scenario 'on a closed issue todo has closed label' do
-    issue_closed = create(:issue, state: 'closed')
+  it 'on a closed issue todo has closed label' do
+    issue_closed = create(:issue, state: 'closed', project: project)
     create_todo issue_closed
     visit dashboard_todos_path
 
-    page.within '.todos-list' do
+    within_testid 'todo-item-list-container' do
       expect(page).to have_content('Closed')
     end
   end
 
-  scenario 'on an open issue todo does not have an open label' do
-    issue_open = create(:issue)
+  it 'on an open issue todo does not have an open label' do
+    issue_open = create(:issue, project: project)
     create_todo issue_open
     visit dashboard_todos_path
 
-    page.within '.todos-list' do
+    within_testid 'todo-item-list-container' do
       expect(page).not_to have_content('Open')
     end
   end
 
-  scenario 'on a merged merge request todo has merged label' do
-    mr_merged = create(:merge_request, :simple, :merged, author: user)
+  it 'on a merged merge request todo has merged label' do
+    mr_merged = create(:merge_request, :simple, :merged, author: user, source_project: project)
     create_todo mr_merged
     visit dashboard_todos_path
 
-    page.within '.todos-list' do
+    within_testid 'todo-item-list-container' do
       expect(page).to have_content('Merged')
     end
   end
 
-  scenario 'on a closed merge request todo has closed label' do
-    mr_closed = create(:merge_request, :simple, :closed, author: user)
+  it 'on a closed merge request todo has closed label' do
+    mr_closed = create(:merge_request, :simple, :closed, author: user, source_project: project)
     create_todo mr_closed
     visit dashboard_todos_path
 
-    page.within '.todos-list' do
+    within_testid 'todo-item-list-container' do
       expect(page).to have_content('Closed')
     end
   end
 
-  scenario 'on an open merge request todo does not have an open label' do
-    mr_open = create(:merge_request, :simple, author: user)
+  it 'on an open merge request todo does not have an open label' do
+    mr_open = create(:merge_request, :simple, author: user, source_project: project)
     create_todo mr_open
     visit dashboard_todos_path
 
-    page.within '.todos-list' do
+    within_testid 'todo-item-list-container' do
       expect(page).not_to have_content('Open')
     end
   end

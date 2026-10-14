@@ -1,106 +1,107 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::GollumTagsFilter do
+RSpec.describe Banzai::Filter::GollumTagsFilter, feature_category: :wiki do
   include FilterSpecHelper
 
-  let(:project) { create(:project) }
-  let(:user) { double }
-  let(:project_wiki) { ProjectWiki.new(project, user) }
+  shared_examples 'gollum tag parsing' do
+    context 'when tag is only a page name or url' do
+      it 'creates a link' do
+        tag = '[[page name or url]]'
+        doc = filter("See #{tag}", context)
 
-  describe 'validation' do
-    it 'ensure that a :project_wiki key exists in context' do
-      expect { filter("See [[images/image.jpg]]", {}) }.to raise_error ArgumentError, "Missing context keys for Banzai::Filter::GollumTagsFilter: :project_wiki"
+        expect(doc.at_css('a').text).to eq 'page name or url'
+        expect(doc.at_css('a')['href']).to eq 'page%20name%20or%20url'
+        expect(doc.at_css('a')['data-wikilink']).to eq 'true'
+      end
+    end
+
+    context 'when tag is link text and a page name or url' do
+      it 'creates a link' do
+        tag = '[[link-text|http://example.com/pdfs/gollum.pdf]]'
+        doc = filter("See #{tag}", context)
+
+        expect(doc.at_css('a').text).to eq 'link-text'
+        expect(doc.at_css('a')['href']).to eq 'http://example.com/pdfs/gollum.pdf'
+        expect(doc.at_css('a')['data-wikilink']).to eq 'true'
+      end
+    end
+
+    it 'inside back ticks will be exempt from linkification' do
+      doc = filter('<code>[[link-in-backticks]]</code>', context)
+
+      expect(doc.at_css('code').text).to eq '[[link-in-backticks]]'
+    end
+
+    it 'leaves other text content untouched' do
+      doc = filter('This is [[a link|link]]', context)
+
+      expect(doc.to_html).to eq 'This is <a href="link" data-wikilink="true">a link</a>'
+    end
+
+    context 'sanitization of HTML entities' do
+      it 'does not unescape HTML entities' do
+        doc = filter('This is [[a link|&lt;script&gt;alert(0)&lt;/script&gt;]]', context)
+
+        expect(doc.to_html).to eq_html 'This is <a href="&lt;script&gt;alert(0)&lt;/script&gt;" data-wikilink="true">a link</a>'
+      end
+
+      it 'does not unescape HTML entities in the link text' do
+        doc = filter('This is [[&lt;script&gt;alert(0)&lt;/script&gt;|link]]', context)
+
+        expect(doc.to_html).to eq_html 'This is <a href="link" data-wikilink="true">&lt;script&gt;alert(0)&lt;/script&gt;</a>'
+      end
+
+      it 'does not unescape HTML entities outside the link text' do
+        doc = filter('This is &lt;script&gt;alert(0)&lt;/script&gt; [[a link|link]]', context)
+
+        expect(doc.to_html).to eq_html 'This is &lt;script&gt;alert(0)&lt;/script&gt; <a href="link" data-wikilink="true">a link</a>'
+      end
+    end
+
+    it 'sanitizes the href attribute (case 1)' do
+      tag = '[[a|http:\'"injected=attribute&gt;&lt;img/src="0"onerror="alert(0)"&gt;https://gitlab.com/gitlab-org/gitlab/-/issues/1]]'
+      doc = filter("See #{tag}", context)
+
+      expect(doc.at_css('a').to_html).to eq_html '<a href="http:\'%22injected=attribute&gt;&lt;img/src=%220%22onerror=%22alert(0)%22&gt;https://gitlab.com/gitlab-org/gitlab/-/issues/1" data-wikilink="true">a</a>'
+    end
+
+    it 'sanitizes the href attribute (case 2)' do
+      tag = '<i>[[a|\'"&gt;&lt;svg&gt;&lt;i/class=gl-show-field-errors&gt;&lt;input/title="&lt;script&gt;alert(0)&lt;/script&gt;"/&gt;&lt;/svg&gt;https://gitlab.com/gitlab-org/gitlab/-/issues/1]]'
+      doc = filter("See #{tag}", context)
+
+      expect(doc.at_css('i a').to_html).to eq_html "<a href=\"'%22&gt;&lt;svg&gt;&lt;i/class=gl-show-field-errors&gt;&lt;input/title=%22&lt;script&gt;alert(0)&lt;/script&gt;%22/&gt;&lt;/svg&gt;https://gitlab.com/gitlab-org/gitlab/-/issues/1\" data-wikilink=\"true\">a</a>"
+    end
+
+    it 'protects against malicious input' do
+      text = "]#{'[[a' * 200000}[]"
+
+      expect do
+        Timeout.timeout(BANZAI_FILTER_TIMEOUT_MAX) { filter(text, context) }
+      end.not_to raise_error
     end
   end
 
-  context 'linking internal images' do
-    it 'creates img tag if image exists' do
-      file = Gollum::File.new(project_wiki.wiki)
-      expect(file).to receive(:path).and_return('images/image.jpg')
-      expect(project_wiki).to receive(:find_file).with('images/image.jpg').and_return(file)
+  it_behaves_like 'gollum tag parsing' do
+    let_it_be(:context) { { pipeline: :ascii_doc } }
+  end
 
-      tag = '[[images/image.jpg]]'
-      doc = filter("See #{tag}", project_wiki: project_wiki)
+  context 'when parsing default markdown' do
+    let_it_be(:context) { {} }
 
-      expect(doc.at_css('img')['data-src']).to eq "#{project_wiki.wiki_base_path}/images/image.jpg"
-    end
+    it 'ignores the tag' do
+      tag = '[[page name or url]]'
+      doc = filter("See #{tag}", context)
 
-    it 'does not creates img tag if image does not exist' do
-      expect(project_wiki).to receive(:find_file).with('images/image.jpg').and_return(nil)
-
-      tag = '[[images/image.jpg]]'
-      doc = filter("See #{tag}", project_wiki: project_wiki)
-
-      expect(doc.css('img').size).to eq 0
+      expect(doc.at_css('a')).to be_nil
     end
   end
 
-  context 'linking external images' do
-    it 'creates img tag for valid URL' do
-      tag = '[[http://example.com/image.jpg]]'
-      doc = filter("See #{tag}", project_wiki: project_wiki)
+  it_behaves_like 'pipeline timing check'
 
-      expect(doc.at_css('img')['data-src']).to eq "http://example.com/image.jpg"
-    end
-
-    it 'does not creates img tag for invalid URL' do
-      tag = '[[http://example.com/image.pdf]]'
-      doc = filter("See #{tag}", project_wiki: project_wiki)
-
-      expect(doc.css('img').size).to eq 0
-    end
-  end
-
-  context 'linking external resources' do
-    it "the created link's text will be equal to the resource's text" do
-      tag = '[[http://example.com]]'
-      doc = filter("See #{tag}", project_wiki: project_wiki)
-
-      expect(doc.at_css('a').text).to eq 'http://example.com'
-      expect(doc.at_css('a')['href']).to eq 'http://example.com'
-    end
-
-    it "the created link's text will be link-text" do
-      tag = '[[link-text|http://example.com/pdfs/gollum.pdf]]'
-      doc = filter("See #{tag}", project_wiki: project_wiki)
-
-      expect(doc.at_css('a').text).to eq 'link-text'
-      expect(doc.at_css('a')['href']).to eq 'http://example.com/pdfs/gollum.pdf'
-    end
-  end
-
-  context 'linking internal resources' do
-    it "the created link's text includes the resource's text and wiki base path" do
-      tag = '[[wiki-slug]]'
-      doc = filter("See #{tag}", project_wiki: project_wiki)
-      expected_path = ::File.join(project_wiki.wiki_base_path, 'wiki-slug')
-
-      expect(doc.at_css('a').text).to eq 'wiki-slug'
-      expect(doc.at_css('a')['href']).to eq expected_path
-    end
-
-    it "the created link's text will be link-text" do
-      tag = '[[link-text|wiki-slug]]'
-      doc = filter("See #{tag}", project_wiki: project_wiki)
-      expected_path = ::File.join(project_wiki.wiki_base_path, 'wiki-slug')
-
-      expect(doc.at_css('a').text).to eq 'link-text'
-      expect(doc.at_css('a')['href']).to eq expected_path
-    end
-  end
-
-  context 'table of contents' do
-    it 'replaces [[<em>TOC</em>]] with ToC result' do
-      doc = described_class.call("<p>[[<em>TOC</em>]]</p>", { project_wiki: project_wiki }, { toc: "FOO" })
-
-      expect(doc.to_html).to eq("FOO")
-    end
-
-    it 'handles an empty ToC result' do
-      input = "<p>[[<em>TOC</em>]]</p>"
-      doc = described_class.call(input, project_wiki: project_wiki)
-
-      expect(doc.to_html).to eq ''
-    end
+  it_behaves_like 'limits the number of filtered items', context: { pipeline: :ascii_doc } do
+    let(:text) { '[[page name or url]] [[page name or url]] [[page name or url]]' }
+    let(:ends_with) { '</a> [[page name or url]]' }
   end
 end

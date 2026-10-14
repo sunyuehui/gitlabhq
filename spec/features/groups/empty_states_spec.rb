@@ -1,69 +1,170 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Groups Merge Requests Empty States' do
-  let(:group) { create(:group) }
-  let(:user) { create(:group_member, :developer, user: create(:user), group: group ).user }
+RSpec.describe 'Group empty states', feature_category: :groups_and_projects do
+  let_it_be(:user, freeze: false) { create(:user) }
+
+  let_it_be(:group_without_projects) { create(:group) }
+  let_it_be(:subgroup) { create(:group, parent: group_without_projects) }
+  let_it_be(:subgroup_project) { create(:project, namespace: subgroup) }
+
+  let_it_be(:group) { create(:group) }
+  let_it_be(:project) { create(:project, namespace: group) }
+
+  before_all do
+    create(:group_member, :developer, user: user, group: group)
+    create(:group_member, :developer, user: user, group: group_without_projects)
+    project.add_maintainer(user)
+  end
 
   before do
     sign_in(user)
   end
 
-  context 'group has a project' do
-    let(:project) { create(:project, namespace: group) }
+  [:issue, :merge_request].each do |issuable|
+    issuable_name = issuable.to_s.humanize.downcase
+    project_relation = issuable == :issue ? :project : :source_project
 
-    before do
-      project.add_master(user)
-    end
+    context "for #{issuable_name}s" do
+      let(:path) { public_send(:"#{issuable}s_group_path", group) }
 
-    context 'the project has a merge request' do
-      before do
-        create(:merge_request, source_project: project)
+      context 'group has a project' do
+        context "the project has #{issuable_name}s" do
+          it 'does not display an empty state' do
+            create(issuable, project_relation => project)
 
-        visit merge_requests_group_path(group)
-      end
+            visit path
+            expect(page).not_to have_selector('[data-testid="issuable-empty-state"]')
+          end
 
-      it 'should not display an empty state' do
-        expect(page).not_to have_selector('.empty-state')
-      end
-    end
+          it "displays link to create new #{issuable} when no open #{issuable} is found", :js do
+            create("closed_#{issuable}", project_relation => project)
+            issuable_link_fn = "project_#{issuable}s_path"
 
-    context 'the project has no merge requests', :js do
-      before do
-        visit merge_requests_group_path(group)
-      end
+            visit public_send(issuable_link_fn, project)
 
-      it 'should display an empty state' do
-        expect(page).to have_selector('.empty-state')
-      end
+            wait_for_all_requests
 
-      it 'should show a new merge request button' do
-        within '.empty-state' do
-          expect(page).to have_content('create merge request')
+            within_testid('issuable-empty-state') do
+              if issuable == :issue
+                expect(page).to have_content('No results found')
+                expect(page).to have_link('New item')
+              else
+                expect(page).to have_content("There are no open #{issuable.to_s.humanize.downcase}")
+                expect(find('a')['href']).to have_content(project_new_merge_request_path(project))
+              end
+            end
+          end
+
+          it 'displays link to create new issue when the current search gave no results', :js do
+            create(issuable, project_relation => project)
+
+            issuable_link_fn = "project_#{issuable}s_path"
+
+            visit public_send(issuable_link_fn, project, author_username: 'foo', scope: 'all', state: 'opened')
+
+            wait_for_all_requests
+
+            expect(page.find('.gl-empty-state')).to have_content("No results found")
+          end
+
+          it "displays conditional text when no closed #{issuable} is found", :js do
+            create(issuable, project_relation => project)
+
+            issuable_link_fn = "project_#{issuable}s_path"
+
+            visit public_send(issuable_link_fn, project, state: 'closed')
+
+            wait_for_all_requests
+
+            within_testid('issuable-empty-state') do
+              if issuable == :issue
+                expect(page).to have_content('No results found')
+              else
+                expect(page).to have_content("There are no closed #{issuable.to_s.humanize.downcase}")
+              end
+            end
+          end
+        end
+
+        context "the project has no #{issuable_name}s", :js do
+          before do
+            visit path
+          end
+
+          it 'displays an empty state' do
+            expect(page).to have_selector('[data-testid="issuable-empty-state"]')
+          end
+
+          it "shows a new #{issuable_name} button", skip: 'Button does not exist in Vue version' do
+            expect(page).to have_content("create #{issuable_name}")
+          end
+
+          it "the new #{issuable_name} button opens a project dropdown", skip: 'Button does not exist in Vue version' do
+            click_button "Select project to create #{issuable_name}"
+
+            expect(page).to have_button project.name
+          end
         end
       end
 
-      it 'the new merge request button opens a project dropdown' do
-        within '.empty-state' do
-          find('.new-project-item-select-button').click
+      shared_examples "no projects" do
+        it 'displays an empty state', :js do
+          expect(page).to have_selector('[data-testid="issuable-empty-state"]')
         end
 
-        expect(page).to have_selector('.ajax-project-dropdown')
+        it "does not show a new #{issuable_name} button", :js do
+          within_testid('issuable-empty-state') do
+            expect(page).not_to have_link("create #{issuable_name}")
+          end
+        end
       end
-    end
-  end
 
-  context 'group without a project' do
-    before do
-      visit merge_requests_group_path(group)
-    end
+      context 'group without a project' do
+        let(:path) { public_send(:"#{issuable}s_group_path", group_without_projects) }
 
-    it 'should display an empty state' do
-      expect(page).to have_selector('.empty-state')
-    end
+        context 'group has a subgroup' do
+          context "the project has #{issuable_name}s" do
+            before do
+              create(issuable, project_relation => subgroup_project)
 
-    it 'should not show a new merge request button' do
-      within '.empty-state' do
-        expect(page).not_to have_link('create merge request')
+              visit path
+            end
+
+            it 'does not display an empty state' do
+              expect(page).not_to have_selector('[data-testid="issuable-empty-state"]')
+            end
+          end
+
+          context "the project has no #{issuable_name}s" do
+            before do
+              visit path
+            end
+
+            it 'displays an empty state', :js do
+              expect(page).to have_selector('[data-testid="issuable-empty-state"]')
+            end
+          end
+        end
+
+        context 'group has no subgroups' do
+          before do
+            visit path
+          end
+
+          it_behaves_like "no projects"
+        end
+      end
+
+      context 'group has only a project with issues disabled' do
+        let(:project_with_issues_disabled) { create(:empty_project, :issues_disabled, group: group) }
+
+        before do
+          visit path
+        end
+
+        it_behaves_like "no projects"
       end
     end
   end

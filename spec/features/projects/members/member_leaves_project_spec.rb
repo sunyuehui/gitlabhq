@@ -1,19 +1,50 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Projects > Members > Member leaves project' do
-  let(:user) { create(:user) }
-  let(:project) { create(:project, :repository) }
+RSpec.describe 'Projects > Members > Member leaves project', :with_current_organization, feature_category: :groups_and_projects do
+  include Features::MembersHelpers
+  include Spec::Support::Helpers::ModalHelpers
 
-  background do
-    project.team << [user, :developer]
-    sign_in(user)
-    visit project_path(project)
+  let(:user) { create(:user, organization: current_organization) }
+  let(:project) { create(:project, :repository, :with_namespace_settings) }
+  let(:more_actions_dropdown) do
+    find_by_testid('projects-list-item-actions')
   end
 
-  scenario 'user leaves project' do
-    click_link 'Leave project'
+  before do
+    project.add_developer(user)
+    sign_in(user)
+  end
 
-    expect(current_path).to eq(dashboard_projects_path)
+  it 'user leaves project', :js do
+    visit project_path(project)
+
+    more_actions_dropdown.click
+    click_button 'Leave project'
+    accept_gl_confirm(button_text: 'Leave project')
+
+    wait_for_all_requests
+
+    expect(page).to have_current_path(dashboard_projects_path, ignore_query: true)
     expect(project.users.exists?(user.id)).to be_falsey
+  end
+
+  it 'user leaves project by url param', :js do
+    visit project_path(project)
+
+    visit project_path(project, leave: 1)
+
+    accept_gl_confirm(button_text: 'Leave project')
+    wait_for_all_requests
+
+    expect(page).to have_current_path(dashboard_projects_path, ignore_query: true)
+
+    sign_out(:user)
+    gitlab_sign_in(project.first_owner)
+
+    visit project_project_members_path(project)
+
+    expect(members_table).not_to have_content(user.name)
   end
 end

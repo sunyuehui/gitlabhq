@@ -1,25 +1,90 @@
+# frozen_string_literal: true
+
 require "spec_helper"
 
-describe SystemHook do
+RSpec.describe SystemHook, feature_category: :webhooks do
+  it_behaves_like 'a hook that does not get automatically disabled on failure' do
+    let_it_be(:organization) { create(:organization) }
+    let_it_be_with_reload(:hook) { create(:system_hook, organization: organization) }
+    let(:hook_factory) { :system_hook }
+    let(:default_factory_arguments) { {} }
+
+    def find_hooks
+      described_class.all
+    end
+  end
+
   context 'default attributes' do
-    let(:system_hook) { build(:system_hook) }
+    let(:system_hook) { described_class.new }
 
     it 'sets defined default parameters' do
       attrs = {
         push_events: false,
-        repository_update_events: true
+        repository_update_events: true,
+        merge_requests_events: false
       }
       expect(system_hook).to have_attributes(attrs)
     end
   end
 
-  describe "execute" do
-    let(:system_hook) { create(:system_hook) }
-    let(:user)        { create(:user) }
-    let(:project)     { create(:project, namespace: user.namespace) }
-    let(:group)       { create(:group) }
+  describe 'validations' do
+    describe 'url' do
+      let(:url) { 'http://localhost:9000' }
+
+      it { is_expected.not_to allow_value(url).for(:url) }
+      it { is_expected.to validate_presence_of(:organization_id) }
+
+      it 'is valid if application settings allow local requests from system hooks' do
+        settings = ApplicationSetting.new(allow_local_requests_from_system_hooks: true)
+        allow(ApplicationSetting).to receive(:current).and_return(settings)
+
+        is_expected.to allow_value(url).for(:url)
+      end
+    end
+  end
+
+  describe 'associations' do
+    it { is_expected.to have_many(:web_hook_logs) }
+    it { is_expected.to belong_to :organization }
+  end
+
+  describe '.for_organization' do
+    let_it_be(:organization) { create(:organization) }
+    let_it_be(:other_organization) { create(:organization) }
+    let_it_be(:hook) { create(:system_hook, organization: organization) }
+    let_it_be(:other_hook) { create(:system_hook, organization: other_organization) }
+
+    it 'returns only hooks of the given organization' do
+      expect(described_class.for_organization(organization)).to contain_exactly(hook)
+      expect(described_class.for_organization(other_organization)).to contain_exactly(other_hook)
+    end
+
+    it 'accepts an organization id' do
+      expect(described_class.for_organization(organization.id)).to contain_exactly(hook)
+    end
+
+    it 'returns no hooks when the organization is nil' do
+      expect(described_class.for_organization(nil)).to be_empty
+    end
+  end
+
+  describe '#destroy' do
+    it 'does not cascade to web_hook_logs' do
+      web_hook = create(:system_hook)
+      create_list(:web_hook_log, 3, web_hook: web_hook)
+
+      expect { web_hook.destroy! }.not_to change { web_hook.web_hook_logs.count }
+    end
+  end
+
+  describe "execute", :sidekiq_might_not_need_inline do
+    let_it_be(:system_hook) { create(:system_hook) }
+    let_it_be(:user) { create(:user) }
+    let(:project) { build(:project, namespace: user.namespace) }
+    let(:group) { build(:group) }
     let(:params) do
-      { name: 'John Doe', username: 'jduser', email: 'jg@example.com', password: 'mydummypass' }
+      { name: 'John Doe', username: 'jduser', email: 'jg@example.com', password: User.random_password,
+        organization_id: group.organization_id }
     end
 
     before do
@@ -35,6 +100,8 @@ describe SystemHook do
     end
 
     it "project_destroy hook" do
+      project.save!
+
       Projects::DestroyService.new(project, user, {}).async_execute
 
       expect(WebMock).to have_requested(:post, system_hook.url).with(
@@ -53,7 +120,7 @@ describe SystemHook do
     end
 
     it "user_destroy hook" do
-      user.destroy
+      user.destroy!
 
       expect(WebMock).to have_requested(:post, system_hook.url).with(
         body: /user_destroy/,
@@ -61,8 +128,8 @@ describe SystemHook do
       ).once
     end
 
-    it "project_create hook" do
-      project.team << [user, :master]
+    it "project member create hook" do
+      project.add_maintainer(user)
 
       expect(WebMock).to have_requested(:post, system_hook.url).with(
         body: /user_add_to_team/,
@@ -70,14 +137,47 @@ describe SystemHook do
       ).once
     end
 
-    it "project_destroy hook" do
-      project.team << [user, :master]
-      project.project_members.destroy_all
+    it "project member destroy hook" do
+      project.add_maintainer(user)
+      project.project_members.destroy_all # rubocop: disable Cop/DestroyAll
 
       expect(WebMock).to have_requested(:post, system_hook.url).with(
         body: /user_remove_from_team/,
         headers: { 'Content-Type' => 'application/json', 'X-Gitlab-Event' => 'System Hook' }
       ).once
+    end
+
+    it "project member update hook" do
+      project.save!
+      project.add_guest(user)
+
+      project.add_maintainer(user)
+
+      expect(WebMock).to have_requested(:post, system_hook.url).with(
+        body: /user_update_for_team/,
+        headers: { 'Content-Type' => 'application/json', 'X-Gitlab-Event' => 'System Hook' }
+      ).once
+    end
+
+    %i[project group].each do |parent|
+      it "#{parent} member access request hook" do
+        create(:"#{parent}_member", requested_at: Time.current.utc)
+
+        expect(WebMock).to have_requested(:post, system_hook.url).with(
+          body: /user_access_request_to_#{parent}/,
+          headers: { 'Content-Type' => 'application/json', 'X-Gitlab-Event' => 'System Hook' }
+        ).once
+      end
+
+      it "#{parent} member access request revoked hook" do
+        member = create(:"#{parent}_member", requested_at: Time.current.utc)
+        member.destroy!
+
+        expect(WebMock).to have_requested(:post, system_hook.url).with(
+          body: /user_access_request_revoked_for_#{parent}/,
+          headers: { 'Content-Type' => 'application/json', 'X-Gitlab-Event' => 'System Hook' }
+        ).once
+      end
     end
 
     it 'group create hook' do
@@ -90,7 +190,7 @@ describe SystemHook do
     end
 
     it 'group destroy hook' do
-      group.destroy
+      create(:group).destroy!
 
       expect(WebMock).to have_requested(:post, system_hook.url).with(
         body: /group_destroy/,
@@ -99,7 +199,7 @@ describe SystemHook do
     end
 
     it 'group member create hook' do
-      group.add_master(user)
+      group.add_maintainer(user)
 
       expect(WebMock).to have_requested(:post, system_hook.url).with(
         body: /user_add_to_group/,
@@ -108,11 +208,22 @@ describe SystemHook do
     end
 
     it 'group member destroy hook' do
-      group.add_master(user)
-      group.group_members.destroy_all
+      group.add_maintainer(user)
+      group.group_members.destroy_all # rubocop: disable Cop/DestroyAll
 
       expect(WebMock).to have_requested(:post, system_hook.url).with(
         body: /user_remove_from_group/,
+        headers: { 'Content-Type' => 'application/json', 'X-Gitlab-Event' => 'System Hook' }
+      ).once
+    end
+
+    it 'group member update hook' do
+      group = create(:group)
+      group.add_guest(user)
+      group.add_maintainer(user)
+
+      expect(WebMock).to have_requested(:post, system_hook.url).with(
+        body: /user_update_for_group/,
         headers: { 'Content-Type' => 'application/json', 'X-Gitlab-Event' => 'System Hook' }
       ).once
     end
@@ -131,20 +242,45 @@ describe SystemHook do
     let(:data) { { key: 'value' } }
     let(:hook_name) { 'system_hook' }
 
-    before do
-      expect(WebHookService).to receive(:new).with(hook, data, hook_name).and_call_original
-    end
-
     it '#execute' do
+      expect(WebHookService).to receive(:new).with(hook, data, hook_name, idempotency_key: anything,
+        force: false).and_call_original
+
       expect_any_instance_of(WebHookService).to receive(:execute)
 
       hook.execute(data, hook_name)
     end
 
     it '#async_execute' do
+      expect(WebHookService).to receive(:new).with(hook, data, hook_name, idempotency_key: anything).and_call_original
+
       expect_any_instance_of(WebHookService).to receive(:async_execute)
 
       hook.async_execute(data, hook_name)
     end
+  end
+
+  describe '#application_context' do
+    let_it_be(:organization) { create(:organization) }
+    let(:hook) { build(:system_hook, organization: organization) }
+
+    it 'includes the type and organization' do
+      expect(hook.application_context).to eq(
+        related_class: 'SystemHook',
+        organization: organization
+      )
+    end
+  end
+
+  describe '#pluralized_name' do
+    subject { build(:system_hook).pluralized_name }
+
+    it { is_expected.to eq('System hooks') }
+  end
+
+  describe '#help_path' do
+    subject { build(:system_hook).help_path }
+
+    it { is_expected.to eq('/help/administration/system_hooks.md') }
   end
 end

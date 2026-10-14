@@ -1,12 +1,24 @@
-class MetricsController < ActionController::Base
-  include RequiresWhitelistedMonitoringClient
+# frozen_string_literal: true
 
-  protect_from_forgery with: :exception
+class MetricsController < BaseActionController
+  include RequiresAllowlistedMonitoringClient
 
-  before_action :validate_prometheus_metrics
+  protect_from_forgery with: :exception, prepend: true
 
   def index
-    render text: metrics_service.metrics_text, content_type: 'text/plain; version=0.0.4'
+    response = if Gitlab::Metrics.prometheus_metrics_enabled?
+                 metrics_service.metrics_text
+               else
+                 help_page = help_page_url(
+                   'administration/monitoring/prometheus/gitlab_metrics.md')
+                 "# Metrics are disabled, see: #{help_page}\n"
+               end
+
+    render plain: response, content_type: 'text/plain; version=0.0.4'
+  end
+
+  def system
+    render json: system_metrics
   end
 
   private
@@ -15,7 +27,9 @@ class MetricsController < ActionController::Base
     @metrics_service ||= MetricsService.new
   end
 
-  def validate_prometheus_metrics
-    render_404 unless Gitlab::Metrics.prometheus_metrics_enabled?
+  def system_metrics
+    Gitlab::Metrics::System.summary.merge(
+      worker_id: ::Prometheus::PidProvider.worker_id
+    )
   end
 end

@@ -1,20 +1,42 @@
+# frozen_string_literal: true
+
 module Gitlab
-  module GlRepository
-    def self.gl_repository(project, is_wiki)
-      "#{is_wiki ? 'wiki' : 'project'}-#{project.id}"
+  class GlRepository
+    include Singleton
+
+    PROJECT = Gitlab::Repositories::ProjectRepository.instance
+    WIKI = Gitlab::Repositories::WikiRepository.instance
+    SNIPPET = Gitlab::Repositories::SnippetRepository.instance
+    DESIGN = ::Gitlab::Repositories::DesignManagementRepository.instance
+
+    TYPES = {
+      PROJECT.type_id => PROJECT,
+      WIKI.type_id => WIKI,
+      SNIPPET.type_id => SNIPPET,
+      DESIGN.type_id => DESIGN
+    }.freeze
+
+    def self.types
+      instance.types
     end
 
     def self.parse(gl_repository)
-      match_data = /\A(project|wiki)-([1-9][0-9]*)\z/.match(gl_repository)
-      unless match_data
-        raise ArgumentError, "Invalid GL Repository \"#{gl_repository}\""
-      end
+      identifier = ::Gitlab::Repositories::Identifier.parse(gl_repository)
 
-      type, id = match_data.captures
-      project = Project.find_by(id: id)
-      wiki = type == 'wiki'
+      repo_type = identifier.repo_type
+      container = identifier.container
 
-      [project, wiki]
+      [container, repo_type.project_for(container), repo_type]
     end
+
+    def self.default_type
+      PROJECT
+    end
+
+    def types
+      TYPES
+    end
+
+    private_class_method :instance
   end
 end

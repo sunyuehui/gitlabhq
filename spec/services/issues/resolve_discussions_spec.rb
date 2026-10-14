@@ -1,20 +1,21 @@
-require 'spec_helper.rb'
+# frozen_string_literal: true
 
-describe Issues::ResolveDiscussions do
-  class DummyService < Issues::BaseService
-    include ::Issues::ResolveDiscussions
+require 'spec_helper'
 
-    def initialize(*args)
-      super
-      filter_resolve_discussion_params
-    end
-  end
-
-  let(:project) { create(:project, :repository) }
-  let(:user) { create(:user) }
+RSpec.describe Issues::ResolveDiscussions, feature_category: :team_planning do
+  let_it_be(:user) { create(:user) }
+  let_it_be_with_reload(:project) { create(:project, :repository, developers: user) }
 
   before do
-    project.team << [user, :developer]
+    stub_const('DummyService', Class.new(Issues::BaseService))
+    DummyService.class_eval do
+      include ::Issues::ResolveDiscussions
+
+      def initialize(container:, current_user: nil, params: {})
+        super
+        filter_resolve_discussion_params
+      end
+    end
   end
 
   describe "for resolving discussions" do
@@ -23,7 +24,7 @@ describe Issues::ResolveDiscussions do
     let(:other_merge_request) { create(:merge_request, source_project: project, source_branch: "fix") }
 
     describe "#merge_request_for_resolving_discussion" do
-      let(:service) { DummyService.new(project, user, merge_request_to_resolve_discussions_of: merge_request.iid) }
+      let(:service) { DummyService.new(container: project, current_user: user, params: { merge_request_to_resolve_discussions_of: merge_request.iid }) }
 
       it "finds the merge request" do
         expect(service.merge_request_to_resolve_discussions_of).to eq(merge_request)
@@ -31,10 +32,8 @@ describe Issues::ResolveDiscussions do
 
       it "only queries for the merge request once" do
         fake_finder = double
-        fake_results = double
 
-        expect(fake_finder).to receive(:execute).and_return(fake_results).exactly(1)
-        expect(fake_results).to receive(:find_by).exactly(1)
+        expect(fake_finder).to receive(:find_by).exactly(1)
         expect(MergeRequestsFinder).to receive(:new).and_return(fake_finder).exactly(1)
 
         2.times { service.merge_request_to_resolve_discussions_of }
@@ -44,10 +43,12 @@ describe Issues::ResolveDiscussions do
     describe "#discussions_to_resolve" do
       it "contains a single discussion when matching merge request and discussion are passed" do
         service = DummyService.new(
-          project,
-          user,
-          discussion_to_resolve: discussion.id,
-          merge_request_to_resolve_discussions_of: merge_request.iid
+          container: project,
+          current_user: user,
+          params: {
+            discussion_to_resolve: discussion.id,
+            merge_request_to_resolve_discussions_of: merge_request.iid
+          }
         )
         # We need to compare discussion id's because the Discussion-objects are rebuilt
         # which causes the object-id's not to be different.
@@ -57,14 +58,18 @@ describe Issues::ResolveDiscussions do
       end
 
       it "contains all discussions when only a merge request is passed" do
-        second_discussion = Discussion.new([create(:diff_note_on_merge_request,
-                                                  noteable: merge_request,
-                                                  project: merge_request.target_project,
-                                                  line_number: 15)])
+        second_discussion = Discussion.new([
+          create(
+            :diff_note_on_merge_request,
+            noteable: merge_request,
+            project: merge_request.target_project,
+            line_number: 15
+          )
+        ])
         service = DummyService.new(
-          project,
-          user,
-          merge_request_to_resolve_discussions_of: merge_request.iid
+          container: project,
+          current_user: user,
+          params: { merge_request_to_resolve_discussions_of: merge_request.iid }
         )
         # We need to compare discussion id's because the Discussion-objects are rebuilt
         # which causes the object-id's not to be different.
@@ -74,15 +79,19 @@ describe Issues::ResolveDiscussions do
       end
 
       it "contains only unresolved discussions" do
-        _second_discussion = Discussion.new([create(:diff_note_on_merge_request, :resolved,
-                                                   noteable: merge_request,
-                                                   project: merge_request.target_project,
-                                                   line_number: 15
-                                                   )])
+        _second_discussion = Discussion.new([
+          create(
+            :diff_note_on_merge_request,
+            :resolved,
+            noteable: merge_request,
+            project: merge_request.target_project,
+            line_number: 15
+          )
+        ])
         service = DummyService.new(
-          project,
-          user,
-          merge_request_to_resolve_discussions_of: merge_request.iid
+          container: project,
+          current_user: user,
+          params: { merge_request_to_resolve_discussions_of: merge_request.iid }
         )
         # We need to compare discussion id's because the Discussion-objects are rebuilt
         # which causes the object-id's not to be different.
@@ -91,12 +100,57 @@ describe Issues::ResolveDiscussions do
         expect(discussion_ids).to contain_exactly(discussion.id)
       end
 
+      it "contains only non-confidential discussions" do
+        _second_discussion = Discussion.new([
+          create(
+            :discussion_note_on_merge_request,
+            :confidential,
+            noteable: merge_request,
+            project: merge_request.target_project
+          )
+        ])
+        service = DummyService.new(
+          container: project,
+          current_user: user,
+          params: { merge_request_to_resolve_discussions_of: merge_request.iid }
+        )
+        # We need to compare discussion id's because the Discussion-objects are rebuilt
+        # which causes the object-id's not to be different.
+        discussion_ids = service.discussions_to_resolve.map(&:id)
+
+        expect(discussion_ids).to contain_exactly(discussion.id)
+      end
+
+      it "is empty when the discussion is confidential" do
+        second_discussion = Discussion.new([
+          create(
+            :discussion_note_on_merge_request,
+            :confidential,
+            noteable: merge_request,
+            project: merge_request.target_project
+          )
+        ])
+
+        service = DummyService.new(
+          container: project,
+          current_user: user,
+          params: {
+            discussion_to_resolve: second_discussion.id,
+            merge_request_to_resolve_discussions_of: merge_request.iid
+          }
+        )
+
+        expect(service.discussions_to_resolve).to be_empty
+      end
+
       it "is empty when a discussion and another merge request are passed" do
         service = DummyService.new(
-          project,
-          user,
-          discussion_to_resolve: discussion.id,
-          merge_request_to_resolve_discussions_of: other_merge_request.iid
+          container: project,
+          current_user: user,
+          params: {
+            discussion_to_resolve: discussion.id,
+            merge_request_to_resolve_discussions_of: other_merge_request.iid
+          }
         )
 
         expect(service.discussions_to_resolve).to be_empty

@@ -1,27 +1,24 @@
-- breadcrumb_title "Repository"
-- @no_container = true
+- breadcrumb_title _('Repository')
+- add_page_specific_style 'page_bundles/tree'
+- @content_class = "repository-max-width"
 
-- page_title @blob.path, @ref
-= render "projects/commits/head"
+- if @gitaly_unavailable
+  = render 'shared/errors/gitaly_unavailable', reason: s_('Blob|Unable to load file content')
+- else
+  - page_title @blob.path, @ref
+  - content_for :prefetch_asset_tags do
+    - webpack_preload_asset_tag('monaco', prefetch: true)
+  - add_page_startup_graphql_call('repository/blob_info', { projectPath: @project.full_path, ref: current_ref, refType: @ref_type.to_s.upcase.presence, filePath: @blob.path, shouldFetchRawText: @blob.rendered_as_text? && !@blob.rich_viewer })
 
-- content_for :page_specific_javascripts do
-  = webpack_bundle_tag 'blob'
+  = render 'projects/last_push'
 
-  - if show_new_repo?
-    = webpack_bundle_tag 'common_vue'
-    = webpack_bundle_tag 'repo'
-
-= render 'projects/last_push'
-
-%div{ class: container_class }
-  - if show_new_repo?
-    = render 'projects/files', commit: @last_commit, project: @project, ref: @ref, content_url: project_blob_path(@project, @id)
-  - else
-    #tree-holder.tree-holder
+  .gl-flex.navigation-root
+    -# Pre-reserve width to prevent CLS; must match TREE_WIDTH in file_tree_browser.vue
+    #js-file-browser{ style: 'width:320px' }
+    #tree-holder.tree-holder.gl-pt-5.gl-w-full.gl-min-w-0
       = render 'blob', blob: @blob
 
-    - if can_modify_blob?(@blob)
-      = render 'projects/blob/remove'
+  = render 'shared/web_ide_path'
 
-      - title = "Replace #{@blob.name}"
-      = render 'projects/blob/upload', title: title, placeholder: title, button_title: 'Replace file', form_path: project_update_blob_path(@project, @id), method: :put
+  -# https://gitlab.com/gitlab-org/gitlab/-/issues/408388#note_1578533983
+  #js-ambiguous-ref-modal{ data: { ambiguous: @is_ambiguous_ref.to_s, ref: current_ref } }

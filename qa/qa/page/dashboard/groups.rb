@@ -1,20 +1,35 @@
+# frozen_string_literal: true
+
 module QA
   module Page
     module Dashboard
       class Groups < Page::Base
-        def prepare_test_namespace
-          if page.has_content?(Runtime::Namespace.name)
-            return click_link(Runtime::Namespace.name)
-          end
+        include Page::Component::GroupsFilter
 
-          click_on 'New group'
+        view 'app/assets/javascripts/groups/your_work/components/app.vue' do
+          element 'new-group-button'
+        end
 
-          fill_in 'group_path', with: Runtime::Namespace.name
-          fill_in 'group_description',
-                  with: "QA test run at #{Runtime::Namespace.time}"
-          choose 'Private'
+        view 'app/assets/javascripts/groups/your_work/constants.js' do
+          element 'groups-empty-state'
+        end
 
-          click_button 'Create group'
+        def has_group?(name)
+          return false if has_element?('groups-empty-state', wait: 5)
+
+          has_filtered_group?(name)
+        end
+
+        def click_group(name)
+          raise "Group with name #{name} not found!" unless has_group?(name)
+
+          click_link name
+        end
+
+        def click_new_group
+          dismiss_duo_chat_popup if respond_to?(:dismiss_duo_chat_popup)
+
+          click_element('new-group-button')
         end
       end
     end

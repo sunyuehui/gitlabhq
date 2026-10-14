@@ -1,7 +1,18 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Template::IssueTemplate do
-  let(:project) { create(:project, :repository, create_templates: :issue) }
+RSpec.describe Gitlab::Template::IssueTemplate do
+  let_it_be(:project) do
+    create(:project, :custom_repo, files: {
+      '.gitlab/issue_templates/bug.md' => 'something valid',
+      '.gitlab/issue_templates/(test).md' => 'parentheses',
+      '.gitlab/issue_templates/template_test.md' => 'template_test',
+      '.gitlab/issue_templates/feature_proposal.md' => 'feature_proposal'
+    })
+  end
+
+  let_it_be(:empty_project) { create(:project, namespace: project.namespace) }
 
   describe '.all' do
     it 'strips the md suffix' do
@@ -37,8 +48,6 @@ describe Gitlab::Template::IssueTemplate do
     end
 
     context 'when repo is bare or empty' do
-      let(:empty_project) { create(:project) }
-
       it "returns empty array" do
         templates = described_class.by_category('', empty_project)
 
@@ -61,8 +70,6 @@ describe Gitlab::Template::IssueTemplate do
     end
 
     context "when repo is empty" do
-      let(:empty_project) { create(:project) }
-
       it "raises file not found" do
         issue_template = described_class.new('.gitlab/issue_templates/not_existent.md', empty_project)
 

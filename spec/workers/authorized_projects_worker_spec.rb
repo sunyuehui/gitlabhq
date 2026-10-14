@@ -1,50 +1,27 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe AuthorizedProjectsWorker do
-  let(:project) { create(:project) }
-
-  describe '.bulk_perform_and_wait' do
-    it 'schedules the ids and waits for the jobs to complete' do
-      project.owner.project_authorizations.delete_all
-
-      described_class.bulk_perform_and_wait([[project.owner.id]])
-
-      expect(project.owner.project_authorizations.count).to eq(1)
-    end
+RSpec.describe AuthorizedProjectsWorker, feature_category: :permissions do
+  it 'has the `until_executed` deduplicate strategy' do
+    expect(described_class.get_deduplicate_strategy).to eq(:until_executed)
   end
 
-  describe '.bulk_perform_async' do
-    it "uses it's respective sidekiq queue" do
-      args = [[project.owner.id]]
-      push_bulk_args = {
-        'class' => described_class,
-        'queue' => described_class.sidekiq_options['queue'],
-        'args' => args
-      }
-
-      expect(Sidekiq::Client).to receive(:push_bulk).with(push_bulk_args).once
-
-      described_class.bulk_perform_async(args)
-    end
+  it 'has an option to reschedule once if deduplicated' do
+    expect(described_class.get_deduplication_options).to include(
+      { if_deduplicated: :reschedule_once, including_scheduled: true }
+    )
   end
 
-  describe '#perform' do
-    subject { described_class.new }
-
-    it "refreshes user's authorized projects" do
-      user = create(:user)
-
-      expect_any_instance_of(User).to receive(:refresh_authorized_projects)
-
-      subject.perform(user.id)
-    end
-
-    context "when the user is not found" do
-      it "does nothing" do
-        expect_any_instance_of(User).not_to receive(:refresh_authorized_projects)
-
-        subject.perform(-1)
-      end
-    end
+  it 'is cpu-bound' do
+    expect(described_class.get_worker_resource_boundary).to eq(:cpu)
   end
+
+  it_behaves_like "refreshes user's project authorizations"
+
+  it_behaves_like 'defers on database health signal behind a feature flag',
+    feature_flag: :defer_primary_auth_refresh_on_wal_rate,
+    gitlab_schema: :gitlab_main_org,
+    delay_by: 1.minute,
+    indicators: [Gitlab::Database::HealthStatus::Indicators::WalRate]
 end

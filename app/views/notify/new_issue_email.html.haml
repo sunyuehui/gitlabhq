@@ -1,11 +1,12 @@
-- if current_application_settings.email_author_in_body
-  %p.details
-    #{link_to @issue.author_name, user_url(@issue.author)} created an issue:
+%p.details
+  = html_escape(_('%{type} created by %{user}: %{issue_link}')) % { user: link_to(@issue.author_name, user_url(@issue.author)),
+                                                                    issue_link: issue_reference_link(@issue),
+                                                                    type: work_item_type_for(@issue) }
 
 - if @issue.assignees.any?
   %p
-    Assignee: #{@issue.assignee_list}
+    = assignees_label(@issue)
 
 - if @issue.description
-  %div
-  = markdown(@issue.description, pipeline: :email, author: @issue.author)
+  .md
+    = markdown(@issue.description, pipeline: :email, author: @issue.author, current_user: @recipient, issuable_reference_expansion_enabled: true)

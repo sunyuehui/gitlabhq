@@ -1,14 +1,19 @@
-require 'simplecov'
-require 'active_support/core_ext/numeric/time'
+# frozen_string_literal: true
+
+require_relative 'simplecov_env_core'
+require 'gitlab/utils/all'
 
 module SimpleCovEnv
   extend self
+  extend SimpleCovEnvCore
 
   def start!
-    return unless ENV['SIMPLECOV']
+    return if !ENV.key?('SIMPLECOV') || ENV['SIMPLECOV'] == '0'
+    return if SimpleCov.coverage_running?
 
     configure_profile
     configure_job
+    configure_formatter
 
     SimpleCov.start
   end
@@ -16,8 +21,9 @@ module SimpleCovEnv
   def configure_job
     SimpleCov.configure do
       if ENV['CI_JOB_NAME']
-        coverage_dir "coverage/#{ENV['CI_JOB_NAME']}"
-        command_name ENV['CI_JOB_NAME']
+        coverage_name = Gitlab::Utils.slugify("#{ENV['CI_JOB_NAME']}-#{ENV['CI_PROJECT_ID']}")
+        coverage_dir "coverage/#{coverage_name}"
+        command_name coverage_name
       end
 
       if ENV['CI']
@@ -27,36 +33,6 @@ module SimpleCovEnv
           SimpleCov.result
         end
       end
-    end
-  end
-
-  def configure_profile
-    SimpleCov.configure do
-      load_profile 'test_frameworks'
-      track_files '{app,lib}/**/*.rb'
-
-      add_filter '/vendor/ruby/'
-      add_filter 'app/controllers/sherlock/'
-      add_filter 'config/initializers/'
-      add_filter 'db/fixtures/'
-      add_filter 'lib/gitlab/sidekiq_middleware/'
-      add_filter 'lib/system_check/'
-
-      add_group 'Controllers', 'app/controllers'
-      add_group 'Finders',     'app/finders'
-      add_group 'Helpers',     'app/helpers'
-      add_group 'Libraries',   'lib'
-      add_group 'Mailers',     'app/mailers'
-      add_group 'Models',      'app/models'
-      add_group 'Policies',    'app/policies'
-      add_group 'Presenters',  'app/presenters'
-      add_group 'Serializers', 'app/serializers'
-      add_group 'Services',    'app/services'
-      add_group 'Uploaders',   'app/uploaders'
-      add_group 'Validators',  'app/validators'
-      add_group 'Workers',     %w(app/jobs app/workers)
-
-      merge_timeout 365.days
     end
   end
 end

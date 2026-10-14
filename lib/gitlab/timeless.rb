@@ -1,14 +1,12 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Timeless
-    def self.timeless(model, &block)
+    def self.timeless(model)
       original_record_timestamps = model.record_timestamps
       model.record_timestamps = false
 
-      if block.arity.abs == 1
-        block.call(model)
-      else
-        block.call
-      end
+      yield model
     ensure
       model.record_timestamps = original_record_timestamps
     end

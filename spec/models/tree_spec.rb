@@ -1,64 +1,93 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Tree do
-  let(:repository) { create(:project, :repository).repository }
-  let(:sha) { repository.root_ref }
+RSpec.describe Tree, feature_category: :source_code_management do
+  subject(:tree) { described_class.new(repository, '54fcc214') }
 
-  subject { described_class.new(repository, '54fcc214') }
+  let_it_be_with_reload(:repository) { create(:project, :repository).repository }
 
   describe '#readme' do
-    class FakeBlob
-      attr_reader :name
+    subject { tree.readme }
 
-      def initialize(name)
-        @name = name
+    before do
+      allow(tree).to receive(:blobs).and_return(files)
+    end
+
+    context 'when repository does not contain a README file' do
+      let(:files) { [fake_blob('file'), fake_blob('license'), fake_blob('copying')] }
+
+      it { is_expected.to be_nil }
+    end
+
+    context 'when repository does not contain a previewable README file' do
+      let(:files) { [fake_blob('file'), fake_blob('README.pages'), fake_blob('README.png')] }
+
+      it { is_expected.to be_nil }
+    end
+
+    context 'when repository contains a previewable README file' do
+      let(:files) { [fake_blob('README.png'), fake_blob('README'), fake_blob('file')] }
+
+      it { is_expected.to have_attributes(name: 'README') }
+    end
+
+    context 'when repository contains more than one README file' do
+      let(:files) { [fake_blob('file'), fake_blob('README.md'), fake_blob('README.asciidoc')] }
+
+      it 'returns first previewable README' do
+        is_expected.to have_attributes(name: 'README.md')
       end
 
-      def readme?
-        name =~ /^readme/i
+      context 'when only plain-text READMEs' do
+        let(:files) { [fake_blob('file'), fake_blob('README'), fake_blob('README.txt')] }
+
+        it 'returns first plain text README' do
+          is_expected.to have_attributes(name: 'README')
+        end
       end
     end
 
-    it 'returns nil when repository does not contains a README file' do
-      files = [FakeBlob.new('file'), FakeBlob.new('license'), FakeBlob.new('copying')]
-      expect(subject).to receive(:blobs).and_return(files)
+    context 'when the repository has a previewable and a plain text README' do
+      let(:files) { [fake_blob('file'), fake_blob('README'), fake_blob('README.md')] }
 
-      expect(subject.readme).to eq nil
+      it 'prefers previewable README file' do
+        is_expected.to have_attributes(name: 'README.md')
+      end
     end
 
-    it 'returns nil when repository does not contains a previewable README file' do
-      files = [FakeBlob.new('file'), FakeBlob.new('README.pages'), FakeBlob.new('README.png')]
-      expect(subject).to receive(:blobs).and_return(files)
+    context 'when repository contains both README and _index files' do
+      let(:files) { [fake_blob('README.md'), fake_blob('_index.md'), fake_blob('file')] }
 
-      expect(subject.readme).to eq nil
+      it 'returns README over _index' do
+        is_expected.to have_attributes(name: 'README.md')
+      end
+    end
+  end
+
+  describe '#cursor' do
+    subject { tree.cursor }
+
+    it { is_expected.to be_an_instance_of(Gitaly::PaginationCursor) }
+  end
+
+  describe '#project' do
+    it 'returns the project from the repository' do
+      expect(tree.project).to eq(repository.project)
     end
 
-    it 'returns README when repository contains a previewable README file' do
-      files = [FakeBlob.new('README.png'), FakeBlob.new('README'), FakeBlob.new('file')]
-      expect(subject).to receive(:blobs).and_return(files)
+    context 'when repository is nil' do
+      before do
+        tree.repository = nil
+      end
 
-      expect(subject.readme.name).to eq 'README'
+      it { expect(tree.project).to be_nil }
     end
+  end
 
-    it 'returns first previewable README when repository contains more than one' do
-      files = [FakeBlob.new('file'), FakeBlob.new('README.md'), FakeBlob.new('README.asciidoc')]
-      expect(subject).to receive(:blobs).and_return(files)
+  private
 
-      expect(subject.readme.name).to eq 'README.md'
-    end
-
-    it 'returns first plain text README when repository contains more than one' do
-      files = [FakeBlob.new('file'), FakeBlob.new('README'), FakeBlob.new('README.txt')]
-      expect(subject).to receive(:blobs).and_return(files)
-
-      expect(subject.readme.name).to eq 'README'
-    end
-
-    it 'prioritizes previewable README file over one in plain text' do
-      files = [FakeBlob.new('file'), FakeBlob.new('README'), FakeBlob.new('README.md')]
-      expect(subject).to receive(:blobs).and_return(files)
-
-      expect(subject.readme.name).to eq 'README.md'
-    end
+  def fake_blob(name)
+    instance_double(Gitlab::Git::Blob, name: name)
   end
 end

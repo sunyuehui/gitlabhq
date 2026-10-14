@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
       class Created < Status::Core
         def text
-          s_('CiStatusText|created')
+          s_('CiStatusText|Created')
         end
 
         def label
@@ -11,11 +13,15 @@ module Gitlab
         end
 
         def icon
-          'icon_status_created'
+          'status_created'
         end
 
         def favicon
           'favicon_status_created'
+        end
+
+        def details_path
+          nil
         end
       end
     end

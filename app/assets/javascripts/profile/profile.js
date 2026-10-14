@@ -1,100 +1,127 @@
-/* eslint-disable comma-dangle, no-unused-vars, class-methods-use-this, quotes, consistent-return, func-names, prefer-arrow-callback, space-before-function-paren, max-len */
-/* global Flash */
+import $ from 'jquery';
+import { parseBoolean } from '@gitlab/frontend-utils';
+import { initVueApp } from '~/lib/utils/vue3compat/init_vue_app';
+import { VARIANT_DANGER, VARIANT_INFO, createAlert } from '~/alert';
+import axios from '~/lib/utils/axios_utils';
+import { parseRailsFormFields } from '~/lib/utils/forms';
+import { Rails } from '~/lib/utils/rails_ujs';
+import { smoothScrollTop } from '~/lib/utils/scroll_utils';
+import UserProfileSetStatusWrapper from '~/set_status_modal/user_profile_set_status_wrapper.vue';
 
-((global) => {
-  class Profile {
-    constructor({ form } = {}) {
-      this.onSubmitForm = this.onSubmitForm.bind(this);
-      this.form = form || $('.edit-user');
-      this.bindEvents();
-      this.initAvatarGlCrop();
-    }
+export default class Profile {
+  constructor({ form } = {}) {
+    this.onSubmitForm = this.onSubmitForm.bind(this);
+    this.form = form || $('.js-edit-user');
+    this.setRepoRadio();
+    this.bindEvents();
+    this.initAvatarGlCrop();
+    this.form.attr('data-testid', 'form-ready');
+  }
 
-    initAvatarGlCrop() {
-      const cropOpts = {
-        filename: '.js-avatar-filename',
-        previewImage: '.avatar-image .avatar',
-        modalCrop: '.modal-profile-crop',
-        pickImageEl: '.js-choose-user-avatar-button',
-        uploadImageBtn: '.js-upload-user-avatar',
-        modalCropImg: '.modal-profile-crop-image'
-      };
-      this.avatarGlCrop = $('.js-user-avatar-input').glCrop(cropOpts).data('glcrop');
-    }
+  initAvatarGlCrop() {
+    const cropOpts = {
+      filename: '.js-avatar-filename',
+      previewImage: '.avatar-image .gl-avatar',
+      modalCrop: '.modal-profile-crop',
+      pickImageEl: '.js-choose-user-avatar-button',
+      uploadImageBtn: '.js-upload-user-avatar',
+      modalCropImg: document.querySelector('.modal-profile-crop-image'),
+    };
+    this.avatarGlCrop = $('.js-user-avatar-input').glCrop(cropOpts).data('glcrop');
+  }
 
-    bindEvents() {
-      $('.js-preferences-form').on('change.preference', 'input[type=radio]', this.submitForm);
-      $('#user_notification_email').on('change', this.submitForm);
-      $('#user_notified_of_own_activity').on('change', this.submitForm);
-      $('.update-username').on('ajax:before', this.beforeUpdateUsername);
-      $('.update-username').on('ajax:complete', this.afterUpdateUsername);
-      $('.update-notifications').on('ajax:success', this.onUpdateNotifs);
-      this.form.on('submit', this.onSubmitForm);
-    }
+  bindEvents() {
+    $('.js-preferences-form').on('change.preference', 'input[type=radio]', this.submitForm);
+    $('#user_notified_of_own_activity').on('change', this.submitForm);
+    this.form.on('submit', this.onSubmitForm);
+  }
 
-    submitForm() {
-      return $(this).parents('form').submit();
-    }
+  submitForm() {
+    const $form = $(this).parents('form');
 
-    onSubmitForm(e) {
-      e.preventDefault();
-      return this.saveForm();
-    }
-
-    beforeUpdateUsername() {
-      $('.loading-username', this).removeClass('hidden');
-    }
-
-    afterUpdateUsername() {
-      $('.loading-username', this).addClass('hidden');
-      $('button[type=submit]', this).enable();
-    }
-
-    onUpdateNotifs(e, data) {
-      return data.saved ?
-        new Flash("Notification settings saved", "notice") :
-        new Flash("Failed to save new settings", "alert");
-    }
-
-    saveForm() {
-      const self = this;
-      const formData = new FormData(this.form[0]);
-      const avatarBlob = this.avatarGlCrop.getBlob();
-
-      if (avatarBlob != null) {
-        formData.append('user[avatar]', avatarBlob, 'avatar.png');
-      }
-
-      return $.ajax({
-        url: this.form.attr('action'),
-        type: this.form.attr('method'),
-        data: formData,
-        dataType: "json",
-        processData: false,
-        contentType: false,
-        success: response => new Flash(response.message, 'notice'),
-        error: jqXHR => new Flash(jqXHR.responseJSON.message, 'alert'),
-        complete: () => {
-          window.scrollTo(0, 0);
-          // Enable submit button after requests ends
-          return self.form.find(':input[disabled]').enable();
-        }
-      });
+    if ($form.data('remote')) {
+      Rails.fire($form[0], 'submit');
+    } else {
+      $form.submit();
     }
   }
 
-  $(function() {
-    $(document).on('input.ssh_key', '#key_key', function() {
-      const $title = $('#key_title');
-      const comment = $(this).val().match(/^\S+ \S+ (.+)\n?$/);
+  onSubmitForm(e) {
+    e.preventDefault();
+    return this.saveForm();
+  }
 
-      // Extract the SSH Key title from its comment
-      if (comment && comment.length > 1) {
-        return $title.val(comment[1]).change();
-      }
-    });
-    if (global.utils.getPagePath() === 'profiles') {
-      return new Profile();
+  saveForm() {
+    const self = this;
+    const formData = new FormData(this.form.get(0));
+    const avatarBlob = this.avatarGlCrop.getBlob();
+
+    if (avatarBlob != null) {
+      formData.append('user[avatar]', avatarBlob, 'avatar.png');
     }
+
+    formData.delete('user[avatar]-trigger');
+
+    axios({
+      method: this.form.attr('method'),
+      url: this.form.attr('action'),
+      data: formData,
+    })
+      .then(({ data }) => {
+        if (avatarBlob != null) {
+          this.updateHeaderAvatar();
+        }
+
+        createAlert({
+          message: data.message,
+          variant: data.status === 'error' ? VARIANT_DANGER : VARIANT_INFO,
+        });
+      })
+      .then(() => {
+        smoothScrollTop(self.form[0]);
+
+        // Enable submit button after requests ends
+        self.form.find(':input[disabled]').enable();
+      })
+      .catch((error) =>
+        createAlert({
+          message: error.message,
+          variant: VARIANT_DANGER,
+        }),
+      );
+  }
+
+  updateHeaderAvatar() {
+    const url = URL.createObjectURL(this.avatarGlCrop.getBlob());
+
+    document.dispatchEvent(new CustomEvent('userAvatar:update', { detail: { url } }));
+  }
+
+  setRepoRadio() {
+    const multiEditRadios = $('input[name="user[multi_file]"]');
+    if (parseBoolean(this.newRepoActivated)) {
+      multiEditRadios.filter('[value=on]').prop('checked', true);
+    } else {
+      multiEditRadios.filter('[value=off]').prop('checked', true);
+    }
+  }
+}
+
+export const initSetStatusForm = () => {
+  const el = document.getElementById('js-user-profile-set-status-form');
+
+  if (!el) {
+    return null;
+  }
+
+  const fields = parseRailsFormFields(el);
+
+  return initVueApp({
+    el,
+    name: 'UserProfileStatusForm',
+    provide: {
+      fields,
+    },
+    component: UserProfileSetStatusWrapper,
   });
-})(window.gl || (window.gl = {}));
+};

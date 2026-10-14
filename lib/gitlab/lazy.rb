@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   # A class that can be wrapped around an expensive method call so it's only
   # executed when actually needed.
@@ -13,10 +15,10 @@ module Gitlab
       @block = block
     end
 
-    def method_missing(name, *args, &block)
+    def method_missing(...)
       __evaluate__
 
-      @result.__send__(name, *args, &block) # rubocop:disable GitlabSecurity/PublicSend
+      @result.__send__(...) # rubocop:disable GitlabSecurity/PublicSend
     end
 
     def respond_to_missing?(name, include_private = false)

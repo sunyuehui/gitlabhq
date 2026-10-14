@@ -1,108 +1,110 @@
+# frozen_string_literal: true
+
 module API
-  class Templates < Grape::API
+  class Templates < ::API::Base
     include PaginationParams
 
     GLOBAL_TEMPLATE_TYPES = {
       gitignores: {
-        klass: Gitlab::Template::GitignoreTemplate,
-        gitlab_version: 8.8
+        gitlab_version: 8.8,
+        feature_category: :source_code_management,
+        file_type: '.gitignore'
       },
       gitlab_ci_ymls: {
-        klass: Gitlab::Template::GitlabCiYmlTemplate,
-        gitlab_version: 8.9
+        gitlab_version: 8.9,
+        feature_category: :pipeline_composition,
+        file_type: 'GitLab CI/CD YAML'
       },
       dockerfiles: {
-        klass: Gitlab::Template::DockerfileTemplate,
-        gitlab_version: 8.15
+        gitlab_version: 8.15,
+        feature_category: :source_code_management,
+        file_type: 'Dockerfile'
       }
     }.freeze
-    PROJECT_TEMPLATE_REGEX =
-      /[\<\{\[]
-        (project|description|
-        one\sline\s.+\swhat\sit\sdoes\.) # matching the start and end is enough here
-      [\>\}\]]/xi.freeze
-    YEAR_TEMPLATE_REGEX = /[<{\[](year|yyyy)[>}\]]/i.freeze
-    FULLNAME_TEMPLATE_REGEX =
-      /[\<\{\[]
-        (fullname|name\sof\s(author|copyright\sowner))
-      [\>\}\]]/xi.freeze
 
     helpers do
-      def parsed_license_template
-        # We create a fresh Licensee::License object since we'll modify its
-        # content in place below.
-        template = Licensee::License.new(params[:name])
-
-        template.content.gsub!(YEAR_TEMPLATE_REGEX, Time.now.year.to_s)
-        template.content.gsub!(PROJECT_TEMPLATE_REGEX, params[:project]) if params[:project].present?
-
-        fullname = params[:fullname].presence || current_user.try(:name)
-        template.content.gsub!(FULLNAME_TEMPLATE_REGEX, fullname) if fullname
-        template
-      end
-
       def render_response(template_type, template)
         not_found!(template_type.to_s.singularize) unless template
         present template, with: Entities::Template
       end
     end
 
-    desc 'Get the list of the available license template' do
-      detail 'This feature was introduced in GitLab 8.7.'
-      success ::API::Entities::RepoLicense
+    desc 'List all license templates' do
+      detail 'Lists all available license templates.'
+      success ::API::Entities::License
+      tags ['templates']
     end
     params do
-      optional :popular, type: Boolean, desc: 'If passed, returns only popular licenses'
+      optional :popular, type: Boolean, desc: "If `true`, returns only popular licenses. If `false`, returns only licenses that aren't popular."
       use :pagination
     end
-    get "templates/licenses" do
-      options = {
-        featured: declared(params)[:popular].present? ? true : nil
-      }
-      licences = ::Kaminari.paginate_array(Licensee::License.all(options))
-      present paginate(licences), with: Entities::RepoLicense
+
+    route_setting :authorization, skip_granular_token_authorization: :public_endpoint
+    get "templates/licenses", feature_category: :source_code_management do
+      popular = declared(params)[:popular]
+      popular = to_boolean(popular) if popular.present?
+
+      templates = TemplateFinder.build(:licenses, nil, popular: popular).execute
+
+      present paginate(::Kaminari.paginate_array(templates)), with: ::API::Entities::License
     end
 
-    desc 'Get the text for a specific license' do
-      detail 'This feature was introduced in GitLab 8.7.'
-      success ::API::Entities::RepoLicense
+    desc 'Retrieve a license template' do
+      detail 'Retrieves a specified license template. You can pass parameters to replace the license placeholder.'
+      success ::API::Entities::License
+      tags ['templates']
     end
     params do
-      requires :name, type: String, desc: 'The name of the template'
+      requires :name, type: String, desc: 'Name of the license template.'
+      optional :project, type: String, desc: 'Name of the copyrighted project.'
+      optional :fullname, type: String, desc: 'Full name of the copyright holder.'
     end
-    get "templates/licenses/:name", requirements: { name: /[\w\.-]+/ } do
-      not_found!('License') unless Licensee::License.find(declared(params)[:name])
 
-      template = parsed_license_template
+    route_setting :authorization, skip_granular_token_authorization: :public_endpoint
+    get "templates/licenses/:name", requirements: { name: /[\w\.-]+/ }, feature_category: :source_code_management do
+      template = TemplateFinder.build(:licenses, nil, name: params[:name]).execute
 
-      present template, with: ::API::Entities::RepoLicense
+      not_found!('License') unless template.present?
+
+      template.resolve!(
+        project_name: params[:project].presence,
+        fullname: params[:fullname].presence || current_user&.name
+      )
+
+      present template, with: ::API::Entities::License
     end
 
     GLOBAL_TEMPLATE_TYPES.each do |template_type, properties|
-      klass = properties[:klass]
-      gitlab_version = properties[:gitlab_version]
+      file_type = properties[:file_type]
 
-      desc 'Get the list of the available template' do
-        detail "This feature was introduced in GitLab #{gitlab_version}."
+      desc "List all #{file_type} templates" do
+        detail "Lists all #{file_type} templates."
         success Entities::TemplatesList
+        tags ['templates']
       end
       params do
         use :pagination
       end
-      get "templates/#{template_type}" do
-        templates = ::Kaminari.paginate_array(klass.all)
+
+      route_setting :authorization, skip_granular_token_authorization: :public_endpoint
+      get "templates/#{template_type}", feature_category: properties[:feature_category] do
+        templates = ::Kaminari.paginate_array(TemplateFinder.build(template_type, nil).execute)
         present paginate(templates), with: Entities::TemplatesList
       end
 
-      desc 'Get the text for a specific template present in local filesystem' do
-        detail "This feature was introduced in GitLab #{gitlab_version}."
+      desc "Retrieve a #{file_type} template" do
+        detail "Retrieves a specified #{file_type} template."
         success Entities::Template
+        tags ['templates']
       end
       params do
-        requires :name, type: String, desc: 'The name of the template'
+        requires :name, type: String, desc: "The name of the #{file_type} template"
       end
-      get "templates/#{template_type}/:name" do
-        new_template = klass.find(declared(params)[:name])
+
+      route_setting :authorization, skip_granular_token_authorization: :public_endpoint
+      get "templates/#{template_type}/:name", requirements: { name: /[\w\.-]+/ }, feature_category: properties[:feature_category] do
+        finder = TemplateFinder.build(template_type, nil, name: declared(params)[:name])
+        new_template = finder.execute
 
         render_response(template_type, new_template)
       end

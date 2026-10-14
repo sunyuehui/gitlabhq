@@ -1,8 +1,10 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Raw artifact', :js do
+RSpec.describe 'Raw artifact', feature_category: :job_artifacts do
   let(:project) { create(:project, :public) }
-  let(:pipeline) { create(:ci_empty_pipeline, project: project) }
+  let(:pipeline) { create(:ci_pipeline, project: project) }
   let(:job) { create(:ci_build, :artifacts, pipeline: pipeline) }
 
   def raw_path(path)
@@ -19,7 +21,7 @@ feature 'Raw artifact', :js do
     end
 
     it "redirects to new URL" do
-      expect(page.current_path).to eq(raw_url)
+      expect(page).to have_current_path(raw_url, ignore_query: true)
     end
   end
 end

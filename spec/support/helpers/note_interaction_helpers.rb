@@ -1,8 +1,19 @@
-module NoteInteractionHelpers
-  def open_more_actions_dropdown(note)
-    note_element = find("#note_#{note.id}")
+# frozen_string_literal: true
 
-    note_element.find('.more-actions').click
-    note_element.find('.more-actions .dropdown-menu li', match: :first)
+module NoteInteractionHelpers
+  include MergeRequestDiffHelpers
+
+  def open_more_actions_dropdown(note)
+    note_element = find_by_scrolling("#note_#{note.id}")
+
+    note_element.find('.more-actions-toggle').click
+    note_element.find('.more-actions li', match: :first)
+  end
+
+  def open_more_actions_dropdown_in_panel(note)
+    note_element = find_in_panel_by_scrolling("#note_#{note.id}")
+
+    note_element.find('.more-actions-toggle').click
+    note_element.find('.more-actions li', match: :first)
   end
 end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Users
   # Service for refreshing the authorized projects of a user.
   #
@@ -12,101 +14,104 @@ module Users
   #     service = Users::RefreshAuthorizedProjectsService.new(some_user)
   #     service.execute
   class RefreshAuthorizedProjectsService
-    attr_reader :user
-
-    LEASE_TIMEOUT = 1.minute.to_i
+    attr_reader :user, :source
 
     # user - The User for which to refresh the authorized projects.
-    def initialize(user)
+    def initialize(user, source: nil, incorrect_auth_found_callback: nil, missing_auth_found_callback: nil)
       @user = user
-
-      # We need an up to date User object that has access to all relations that
-      # may have been created earlier. The only way to ensure this is to reload
-      # the User object.
-      user.reload
-    end
-
-    def execute
-      lease_key = "refresh_authorized_projects:#{user.id}"
-      lease = Gitlab::ExclusiveLease.new(lease_key, timeout: LEASE_TIMEOUT)
-
-      until uuid = lease.try_obtain
-        # Keep trying until we obtain the lease. If we don't do so we may end up
-        # not updating the list of authorized projects properly. To prevent
-        # hammering Redis too much we'll wait for a bit between retries.
-        sleep(0.1)
-      end
-
-      begin
-        execute_without_lease
-      ensure
-        Gitlab::ExclusiveLease.cancel(lease_key, uuid)
-      end
+      @source = source
+      @incorrect_auth_found_callback = incorrect_auth_found_callback
+      @missing_auth_found_callback = missing_auth_found_callback
     end
 
     # This method returns the updated User object.
-    def execute_without_lease
-      current = current_authorizations_per_project
-      fresh = fresh_access_levels_per_project
+    def execute
+      # We need an up to date User object that has access to all relations that
+      # may have been created earlier.
+      user.reset
 
-      remove = current.each_with_object([]) do |(project_id, row), array|
-        # rows not in the new list or with a different access level should be
-        # removed.
-        if !fresh[project_id] || fresh[project_id] != row.access_level
-          array << row.project_id
-        end
-      end
+      remove, add = AuthorizedProjectUpdate::FindRecordsDueForRefreshService.new(
+        user,
+        source: source,
+        incorrect_auth_found_callback: incorrect_auth_found_callback,
+        missing_auth_found_callback: missing_auth_found_callback
+      ).execute
 
-      add = fresh.each_with_object([]) do |(project_id, level), array|
-        # rows not in the old list or with a different access level should be
-        # added.
-        if !current[project_id] || current[project_id].access_level != level
-          array << [user.id, project_id, level]
-        end
-      end
+      # Most refreshes find nothing to change. Skipping `update_authorizations`
+      # for those avoids a per-refresh log document that carries no information;
+      # the refresh workers' Sidekiq job metrics still show volume and duration.
+      return user if remove.blank? && add.blank?
 
       update_authorizations(remove, add)
     end
 
+    private
+
+    attr_reader :incorrect_auth_found_callback, :missing_auth_found_callback
+
     # Updates the list of authorizations for the current user.
     #
-    # remove - The IDs of the authorization rows to remove.
-    # add - Rows to insert in the form `[user id, project id, access level]`
-    def update_authorizations(remove = [], add = [])
-      return if remove.empty? && add.empty?
+    # remove - The project IDs of the authorization rows to remove.
+    # add - Rows to insert in the form `[{ user_id: user_id, project_id: project_id, access_level: access_level}, ...]`
+    def update_authorizations(remove, add)
+      authorization_changes = ProjectAuthorizations::Changes.new do |changes|
+        changes.add(add)
+        changes.remove_projects_for_user(user, remove)
+      end.apply!
 
-      User.transaction do
-        user.remove_project_authorizations(remove) unless remove.empty?
-        ProjectAuthorization.insert_authorizations(add) unless add.empty?
-      end
+      user.update!(project_authorizations_recalculated_at: Time.zone.now)
+
+      log_refresh_details(authorization_changes, remove, add)
 
       # Since we batch insert authorization rows, Rails' associations may get
       # out of sync. As such we force a reload of the User object.
-      user.reload
+      user.reset
     end
 
-    def fresh_access_levels_per_project
-      fresh_authorizations.each_with_object({}) do |row, hash|
-        hash[row.project_id] = row.access_level
-      end
+    def log_refresh_details(changes, remove, add)
+      record_safety_net_refresh_metrics(changes)
+
+      Gitlab::AppJsonLogger.info(
+        event: 'authorized_projects_refresh',
+        user_id: user.id,
+        'authorized_projects_refresh.source': source,
+        # `source` is always the class of the worker that ended up running this
+        # service, which for the safety-net workers is the same regardless of why
+        # they were triggered. `trigger` instead carries the originally
+        # enqueuing caller (see `related_class` propagation in
+        # `UserProjectAccessChangedService`/`UserRefreshOverUserRangeWorker`)
+        'authorized_projects_refresh.trigger': refresh_trigger,
+        'authorized_projects_refresh.rows_deleted_count': changes.rows_deleted,
+        'authorized_projects_refresh.rows_added_count': changes.rows_added,
+        # most often there's only a few entries in remove and add, but limit it to the first 5
+        # entries to avoid flooding the logs
+        'authorized_projects_refresh.rows_deleted_slice': remove.first(5),
+        # Logged arrays should have uniformly typed values.
+        'authorized_projects_refresh.rows_added_slice':
+          add.first(5).map { |row| row.values_at(:user_id, :project_id, :access_level) }
+      )
     end
 
-    def current_authorizations_per_project
-      current_authorizations.index_by(&:project_id)
+    def refresh_trigger
+      Gitlab::ApplicationContext.current_context_attribute('meta.related_class').presence
     end
 
-    def current_authorizations
-      user.project_authorizations.select(:project_id, :access_level)
-    end
+    def record_safety_net_refresh_metrics(changes)
+      refresh_purpose = Gitlab::ApplicationContext.current_context_attribute(
+        'meta.authorized_projects_refresh_purpose'
+      )
 
-    def fresh_authorizations
-      klass = if Group.supports_nested_groups?
-                Gitlab::ProjectAuthorizations::WithNestedGroups
-              else
-                Gitlab::ProjectAuthorizations::WithoutNestedGroups
-              end
+      return unless refresh_purpose == UserProjectAccessChangedService::SAFETY_NET_REFRESH_PURPOSE
 
-      klass.new(user).calculate
+      labels = { trigger: refresh_trigger.to_s }
+
+      counter = Gitlab::Metrics.counter(
+        :gitlab_authorized_projects_safety_net_refresh_rows_total,
+        'Total number of project_authorizations rows added or deleted by a safety-net refresh'
+      )
+
+      counter.increment(labels.merge(direction: 'deleted'), changes.rows_deleted) if changes.rows_deleted > 0
+      counter.increment(labels.merge(direction: 'added'), changes.rows_added) if changes.rows_added > 0
     end
   end
 end

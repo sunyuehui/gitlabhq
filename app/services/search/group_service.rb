@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Search
   class GroupService < Search::GlobalService
     attr_accessor :group
@@ -8,11 +10,39 @@ module Search
       @group = group
     end
 
+    def execute
+      Gitlab::GroupSearchResults.new(
+        current_user,
+        params[:search],
+        projects,
+        group: group,
+        order_by: params[:order_by],
+        sort: params[:sort],
+        filters: filters
+      )
+    end
+
     def projects
       return Project.none unless group
-      return @projects if defined? @projects
 
-      @projects = super.inside_path(group.full_path)
+      super.for_group_and_its_subgroups(group)
+    end
+    strong_memoize_attr :projects
+
+    def allowed_scopes
+      Search::Scopes.available_for_context(
+        context: :group,
+        container: group,
+        requested_search_type: params[:search_type]
+      )
+    end
+
+    private
+
+    def searched_container
+      group
     end
   end
 end
+
+Search::GroupService.prepend_mod_with('Search::GroupService')

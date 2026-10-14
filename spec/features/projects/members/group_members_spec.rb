@@ -1,17 +1,21 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Projects members' do
+RSpec.describe 'Projects members', :js, feature_category: :groups_and_projects do
+  include Features::MembersHelpers
+
   let(:user) { create(:user) }
   let(:developer) { create(:user) }
-  let(:group) { create(:group, :public, :access_requestable) }
-  let(:project) { create(:project, :public, :access_requestable, creator: user, group: group) }
+  let(:group) { create(:group, :public) }
+  let(:project) { create(:project, :public, creator: user, group: group) }
   let(:project_invitee) { create(:project_member, project: project, invite_token: '123', invite_email: 'test1@abc.com', user: nil) }
   let(:group_invitee) { create(:group_member, group: group, invite_token: '123', invite_email: 'test2@abc.com', user: nil) }
   let(:project_requester) { create(:user) }
   let(:group_requester) { create(:user) }
 
-  background do
-    project.team << [developer, :developer]
+  before do
+    project.add_developer(developer)
     group.add_owner(user)
     sign_in(user)
   end
@@ -19,72 +23,92 @@ feature 'Projects members' do
   context 'with a group invitee' do
     before do
       group_invitee
-      visit project_settings_members_path(project)
+      visit project_project_members_path(project)
     end
 
-    scenario 'does not appear in the project members page' do
-      page.within first('.content-list') do
-        expect(page).not_to have_content('test2@abc.com')
-      end
+    it 'does not appear in the project members page' do
+      expect(members_table).not_to have_content('test2@abc.com')
     end
   end
 
-  context 'with a group and a project invitee' do
-    before do
-      group_invitee
-      project_invitee
-      visit project_settings_members_path(project)
+  context 'with a group' do
+    it 'shows group and project members by default' do
+      visit project_project_members_path(project)
+
+      expect(members_table).to have_content(developer.name)
+      expect(members_table).to have_content(user.name)
+      expect(members_table).to have_content(group.name)
     end
 
-    scenario 'shows the project invitee, the project developer, and the group owner' do
-      page.within first('.content-list') do
-        expect(page).to have_content('test1@abc.com')
-        expect(page).not_to have_content('test2@abc.com')
+    it 'shows project members only if requested' do
+      visit project_project_members_path(project, with_inherited_permissions: 'exclude')
 
-        # Project developer
-        expect(page).to have_content(developer.name)
+      expect(members_table).to have_content(developer.name)
+      expect(members_table).not_to have_content(user.name)
+      expect(members_table).not_to have_content(group.name)
+    end
 
-        # Group owner
-        expect(page).to have_content(user.name)
-        expect(page).to have_content(group.name)
-      end
+    it 'shows group members only if requested' do
+      visit project_project_members_path(project, with_inherited_permissions: 'only')
+
+      expect(members_table).not_to have_content(developer.name)
+      expect(members_table).to have_content(user.name)
+      expect(members_table).to have_content(group.name)
+    end
+  end
+
+  context 'with a group, a project invitee, and a project requester' do
+    before do
+      group.request_access(group_requester)
+      project.request_access(project_requester)
+      group_invitee
+      project_invitee
+      visit project_project_members_path(project)
+    end
+
+    it 'shows the group owner' do
+      expect(members_table).to have_content(user.name)
+      expect(members_table).to have_content(group.name)
+    end
+
+    it 'shows the project developer' do
+      expect(members_table).to have_content(developer.name)
+    end
+
+    it 'shows the project invitee' do
+      click_link 'Pending invitations'
+
+      expect(members_table).to have_content('test1@abc.com')
+      expect(members_table).not_to have_content('test2@abc.com')
+    end
+
+    it 'shows the project requester' do
+      click_link 'Access requests'
+
+      expect(members_table).to have_content(project_requester.name)
+      expect(members_table).not_to have_content(group_requester.name)
     end
   end
 
   context 'with a group requester' do
     before do
       group.request_access(group_requester)
-      visit project_settings_members_path(project)
+      visit project_project_members_path(project)
     end
 
-    scenario 'does not appear in the project members page' do
-      page.within first('.content-list') do
-        expect(page).not_to have_content(group_requester.name)
-      end
+    it 'does not appear in the project members page' do
+      expect(page).not_to have_link('Access requests')
+      expect(members_table).not_to have_content(group_requester.name)
     end
   end
 
-  context 'with a group and a project requesters' do
-    before do
-      group.request_access(group_requester)
-      project.request_access(project_requester)
-      visit project_settings_members_path(project)
-    end
+  context 'showing status of members' do
+    it 'shows the status' do
+      create(:user_status, user: user, emoji: 'smirk', message: 'Authoring this object')
 
-    scenario 'shows the project requester, the project developer, and the group owner' do
-      page.within first('.content-list') do
-        expect(page).to have_content(project_requester.name)
-        expect(page).not_to have_content(group_requester.name)
-      end
+      visit project_project_members_path(project)
 
-      page.within all('.content-list').last do
-        # Project developer
-        expect(page).to have_content(developer.name)
-
-        # Group owner
-        expect(page).to have_content(user.name)
-        expect(page).to have_content(group.name)
-      end
+      expect(first_row).to have_selector('gl-emoji[data-name="smirk"]')
     end
   end
 end

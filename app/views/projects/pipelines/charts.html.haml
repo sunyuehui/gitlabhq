@@ -1,23 +1,11 @@
-- @no_container = true
-- page_title _("Charts"), _("Pipelines")
-- if show_new_nav?
-  - add_to_breadcrumbs("Pipelines", project_pipelines_path(@project))
-- content_for :page_specific_javascripts do
-  = page_specific_javascript_bundle_tag('common_d3')
-  = page_specific_javascript_bundle_tag('graphs')
-= render 'head'
+- page_title _('CI/CD Analytics')
 
-%div{ class: container_class }
-  .sub-header-block
-    .oneline
-      = _("A collection of graphs regarding Continuous Integration")
+= render ::Layouts::PageHeadingComponent.new(_("CI/CD Analytics"))
 
-  #charts.ci-charts
-    .row
-      .col-md-6
-        = render 'projects/pipelines/charts/overall'
-      .col-md-6
-        = render 'projects/pipelines/charts/pipeline_times'
-
-    %hr
-    = render 'projects/pipelines/charts/pipelines'
+#js-project-pipelines-charts-app{ data: { project_path: @project.full_path,
+  should_render_quality_summary: should_render_quality_summary.to_s,
+  click_house_enabled_for_analytics: Gitlab::ClickHouse.enabled_for_analytics?(@project.group).to_s,
+  failed_pipelines_link: project_pipelines_path(@project, page: '1', scope: 'all', status: 'failed'),
+  coverage_chart_path: charts_project_graph_path(@project, @project.default_branch),
+  project_branch_count: @project.repository_exists? ? @project.repository.branch_count : 0,
+  default_branch: @project.default_branch } }

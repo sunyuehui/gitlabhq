@@ -1,79 +1,94 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Projects > Members > User requests access' do
-  let(:user) { create(:user) }
-  let(:project) { create(:project, :public, :access_requestable, :repository) }
-  let(:master) { project.owner }
+RSpec.describe 'Projects > Members > User requests access', :js, feature_category: :groups_and_projects do
+  include Spec::Support::Helpers::ModalHelpers
 
-  background do
-    sign_in(user)
-    visit project_path(project)
+  let_it_be(:user) { create(:user) }
+  let_it_be(:maintainer) { create(:user) }
+  let_it_be_with_reload(:project) { create(:project, :public, :repository, maintainers: [maintainer]) }
+
+  let(:more_actions_dropdown) do
+    find_by_testid('projects-list-item-actions')
   end
 
-  scenario 'request access feature is disabled' do
-    project.update_attributes(request_access_enabled: false)
-    visit project_path(project)
+  context 'when user has no existing access request' do
+    before do
+      sign_in(user)
+    end
 
-    expect(page).not_to have_content 'Request Access'
-  end
-
-  scenario 'user can request access to a project' do
-    perform_enqueued_jobs { click_link 'Request Access' }
-
-    expect(ActionMailer::Base.deliveries.last.to).to eq [master.notification_email]
-    expect(ActionMailer::Base.deliveries.last.subject).to eq "Request to join the #{project.name_with_namespace} project"
-
-    expect(project.requesters.exists?(user_id: user)).to be_truthy
-    expect(page).to have_content 'Your request for access has been queued for review.'
-
-    expect(page).to have_content 'Withdraw Access Request'
-    expect(page).not_to have_content 'Leave Project'
-  end
-
-  context 'code access is restricted' do
-    scenario 'user can request access' do
-      project.project_feature.update!(repository_access_level: ProjectFeature::PRIVATE,
-                                      builds_access_level: ProjectFeature::PRIVATE,
-                                      merge_requests_access_level: ProjectFeature::PRIVATE)
+    it 'request access feature is disabled' do
+      project.update!(request_access_enabled: false)
       visit project_path(project)
 
-      expect(page).to have_content 'Request Access'
+      more_actions_dropdown.click
+      expect(page).not_to have_content 'Request access'
+    end
+
+    it 'user can request access to a project' do
+      visit project_path(project)
+
+      more_actions_dropdown.click
+      request_access
+
+      more_actions_dropdown.click
+      expect(page).to have_content 'Withdraw access request'
+      expect(page).not_to have_content 'Leave project'
+    end
+
+    context 'code access is restricted' do
+      it 'user can request access' do
+        project.project_feature.update!(
+          repository_access_level: ProjectFeature::PRIVATE,
+          builds_access_level: ProjectFeature::PRIVATE,
+          merge_requests_access_level: ProjectFeature::PRIVATE
+        )
+        visit project_path(project)
+        more_actions_dropdown.click
+
+        expect(page).to have_content 'Request access'
+      end
     end
   end
 
-  scenario 'user is not listed in the project members page' do
-    click_link 'Request Access'
+  context 'when user has request for access' do
+    let!(:access_request) { create(:project_member, :access_request, project: project, user: user) }
 
-    expect(project.requesters.exists?(user_id: user)).to be_truthy
-
-    page.within('.layout-nav .nav-links') do
-      click_link('Members')
+    before do
+      sign_in(user)
+      visit project_path(project)
     end
 
-    visit project_project_members_path(project)
-    page.within('.content') do
-      expect(page).not_to have_content(user.name)
+    it 'user is not listed in the project members page' do
+      within_testid('non-static-items-section') do
+        click_button 'Manage'
+        click_link 'Members'
+      end
+
+      page.within('.content') do
+        expect(page).not_to have_content(user.name)
+      end
+    end
+
+    it 'user can withdraw request' do
+      more_actions_dropdown.click
+      withdraw_access
+
+      expect(page).to have_content 'Your access request to the project has been withdrawn.'
     end
   end
 
-  scenario 'user can withdraw its request for access' do
-    click_link 'Request Access'
+  def request_access
+    find_by_testid('request-access-link').click
 
-    expect(project.requesters.exists?(user_id: user)).to be_truthy
+    expect(page).to have_content 'Your request for access has been queued for review.'
+  end
 
-    click_link 'Withdraw Access Request'
+  def withdraw_access
+    find_by_testid('withdraw-access-link').click
+    accept_gl_confirm
 
-    expect(project.requesters.exists?(user_id: user)).to be_falsey
     expect(page).to have_content 'Your access request to the project has been withdrawn.'
-  end
-
-  def open_project_settings_menu
-    page.within('.layout-nav .nav-links') do
-      click_link('Settings')
-    end
-
-    page.within('.sub-nav') do
-      click_link('Members')
-    end
   end
 end

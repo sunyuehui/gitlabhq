@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class SnippetBlob
   include BlobLike
 
@@ -19,13 +21,11 @@ class SnippetBlob
     data.bytesize
   end
 
-  def data
-    snippet.content
+  def commit_id
+    nil
   end
 
-  def rendered_markup
-    return unless Gitlab::MarkupHelper.gitlab_markdown?(name)
-
-    Banzai.render_field(snippet, :content)
+  def data
+    snippet.content
   end
 end

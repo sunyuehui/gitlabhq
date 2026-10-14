@@ -1,181 +1,353 @@
-# GitLab Web Editor
-
-Sometimes it's easier to make quick changes directly from the GitLab interface
-than to clone the project and use the Git command line tool. In this feature
-highlight we look at how you can create a new file, directory, branch or
-tag from the file browser. All of these actions are available from a single
-dropdown menu.
-
-## Create a file
-
-From a project's files page, click the '+' button to the right of the branch selector.
-Choose **New file** from the dropdown.
-
-![New file dropdown menu](img/web_editor_new_file_dropdown.png)
-
+---
+stage: Create
+group: Source Code
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+description: Use the Web Editor to create, upload, and edit text files directly in the GitLab UI.
+title: Web Editor
 ---
 
-Enter a file name in the **File name** box. Then, add file content in the editor
-area. Add a descriptive commit message and choose a branch. The branch field
-will default to the branch you were viewing in the file browser. If you enter
-a new branch name, a checkbox will appear allowing you to start a new merge
-request after you commit the changes.
+{{< details >}}
 
-When you are satisfied with your new file, click **Commit Changes** at the bottom.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-![Create file editor](img/web_editor_new_file_editor.png)
+{{< /details >}}
 
-### Template dropdowns
+The Web Editor is a browser-based tool for making changes to your GitLab repositories without
+local setup. You can:
 
-When starting a new project, there are some common files which the new project
-might need too. Therefore a message will be displayed by GitLab to make this
-easy for you.
+- Edit single files and preview your changes before you commit them.
+- Create new files and directories.
+- Upload and replace files.
+- Create branches and tags for version control.
+- [Lock files](../file_lock.md#lock-a-file-or-directory) to prevent concurrent editing conflicts.
+- Contribute to projects without setting up Git locally.
 
-![First file for your project](img/web_editor_template_dropdown_first_file.png)
+GitLab uses your [primary email address](../../profile/_index.md#change-the-email-displayed-on-your-commits)
+for Web Editor commits.
 
-When clicking on either `LICENSE` or `.gitignore`, a dropdown will be displayed
-to provide you with a template which might be suitable for your project.
+For changes to multiple files, use the [Web IDE](../web_ide/_index.md).
 
-![MIT license selected](img/web_editor_template_dropdown_mit_license.png)
+> [!note]
+> To manage files in a [protected branch](branches/protected.md),
+> you must have the appropriate [permissions](../../permissions.md).
 
-The license, changelog, contribution guide, or `.gitlab-ci.yml` file could also
-be added through a button on the project page. In the example below the license
-has already been created, which creates a link to the license itself.
+## Manage files
 
-![New file button](img/web_editor_template_dropdown_buttons.png)
+You can create, edit, upload, and delete files with the Web Editor, directly from the GitLab UI.
 
->**Note:**
-The **Set up CI** button will not appear on an empty repository. You have to at
-least add a file in order for the button to show up.
+### Create a file
 
-## Upload a file
+To create a text file in the Web Editor:
 
-The ability to create a file is great when the content is text. However, this
-doesn't work well for binary data such as images, PDFs or other file types. In
-this case you need to upload a file.
+1. In the top bar, select **Search or go to** and find your project.
+1. Go to the directory where you want to create the new file.
+1. Next to the directory name, select the plus icon ({{< icon name="plus" >}}) > **New file**.
+1. Next to the branch name, enter a filename and extension. For example, `my_file.md`.
+1. Add content to your file.
+1. Select **Commit changes**.
+1. In the **Commit message** field, enter a reason for the commit.
+1. Choose one of the following options:
 
-From a project's files page, click the '+' button to the right of the branch
-selector. Choose **Upload file** from the dropdown.
+   - To create a file in the prefilled target branch, select **Commit changes**.
+   - To create a file in a new branch and commit changes:
 
-![Upload file dropdown menu](img/web_editor_upload_file_dropdown.png)
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is cleared.
+     1. Select **Commit changes**.
 
----
+   - To create a file in a new branch, commit changes, and create a merge request:
 
-Once the upload dialog pops up there are two ways to upload your file. Either
-drag and drop a file on the pop up or use the **click to upload** link. A file
-preview will appear once you have selected a file to upload.
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is selected.
+     1. Select **Commit changes**.
 
-Enter a commit message, choose a branch, and click **Upload file** when you are
-ready.
+To open a new file editor with pre-filled content, use the `content` query parameter in the URL.
+For example:
 
-![Upload file dialog](img/web_editor_upload_file_dialog.png)
+```plaintext
+https://gitlab.com/<your-namespace>/<your-project>/-/new/main?content=your+content+here
+```
+
+#### From a template
+
+To create a text file from a template in the Web Editor:
+
+1. In the top bar, select **Search or go to** and find your project.
+1. Go to the directory where you want to create the new file.
+1. Next to the directory name, select the plus icon ({{< icon name="plus" >}}) > **New file**.
+1. In **Filename**, enter a name that GitLab provides a template for:
+   - `.gitignore`
+   - `.gitlab-ci.yml`
+   - `LICENSE`
+   - `Dockerfile`
+1. From the **Apply a template** dropdown list, select a template.
+1. Optional. Update the template as desired.
+1. Continue from the step 6 in the [create a file](#create-a-file) process.
+
+### Edit a file
+
+To edit a text file in the Web Editor:
+
+1. In the top bar, select **Search or go to** and find your project.
+1. Go to the file you want to edit.
+1. Select **Edit** > **Edit single file**.
+1. Make your changes.
+1. Select **Commit changes**.
+1. In the **Commit message** field, enter a reason for the commit.
+1. Choose one of the following options:
+
+   - To edit a file from the prefilled target branch, select **Commit changes**.
+   - To edit a file from a new branch and commit changes:
+
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is cleared.
+     1. Select **Commit changes**.
+
+   - To edit a file from a new branch, commit changes, and create a merge request:
+
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is selected.
+     1. Select **Commit changes**.
+     1. Fill out the fields and select **Create merge request**.
+
+> [!note]
+> If someone edits and commits changes to the same file while you are editing,
+> you can't commit your changes. The following error message is displayed:
+> `Someone edited the file the same time you did. Please check out the file and
+> make sure your change will not unintentionally remove theirs.`
+
+#### Link to specific lines
+
+To link to single or multiple lines in the Web Editor, add hash
+information to the filename segment of the URL. For example:
+
+- `MY_FILE.js#L3` highlights line 3 in `MY_FILE.js`.
+- `MY_FILE.js#L3-10` highlights lines 3 to 10 in `MY_FILE.js`.
+
+When you edit a file, you can also link to a single line by selecting a line number.
+
+#### Edit files in a forked merge request
+
+Prerequisites:
+
+- You must work on a merge request from a fork.
+- [Allow commits from upstream members](../merge_requests/allow_collaboration.md#allow-commits-from-upstream-members) must be enabled.
+
+If you're working on a merge request from a forked project,
+you can edit a file and commit changes. To do this:
+
+1. Go to the merge request.
+1. Go to the file you want to edit.
+1. Select **Edit** > **Edit single file**.
+1. Select **Commit changes**.
+1. In **Commit message**, enter a reason for the commit.
+   The following information is provided: `Your changes can be committed to <branch-name> because a merge request is open.`
+1. Select **Commit changes**.
+
+### Preview a file
+
+{{< history >}}
+
+- Preview for new files [introduced](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/253963) in GitLab 19.4.
+
+{{< /history >}}
+
+When you create or edit a file in the Web Editor, you can preview your content before you commit it.
+
+To preview your content, select the **Preview** tab.
+What you see depends on the file extension:
+
+- Markdown files show a live preview beside your content that updates as you type.
+- Other markup files, such as AsciiDoc, Org, and reStructuredText, show rendered markup.
+- All other files show a diff of your changes.
+
+To go back to your content, select the **Write** tab.
+
+When you edit a file that is not a markup file, the tab is labeled **Preview changes**.
+
+### Upload a file
+
+To upload a file in the Web Editor:
+
+1. In the top bar, select **Search or go to** and find your project.
+1. Go to the directory where you want to upload the file.
+1. Next to the directory name, select the plus icon ({{< icon name="plus" >}}) > **Upload file**.
+1. Drop or upload the file you want to add.
+1. In the **Commit message** field, enter a reason for the commit.
+1. Choose one of the following options:
+
+   - To upload a file from the prefilled target branch, select **Commit changes**.
+   - To upload a file from a new branch and commit changes:
+
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is cleared.
+     1. Select **Commit changes**.
+
+   - To upload a file from a new branch, commit changes, and create a merge request:
+
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is selected.
+     1. Select **Commit changes**.
+     1. Fill out the fields and select **Create merge request**.
+
+### Delete a file
+
+To delete a file in the Web Editor:
+
+1. In the top bar, select **Search or go to** and find your project.
+1. Go to the file you want to delete.
+1. Select **Delete**.
+1. In **Commit message**, enter a reason for the commit.
+1. Choose between the following options:
+
+   - To delete a file from the prefilled target branch, select **Commit changes**.
+   - To delete a file from a new branch and commit changes:
+
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is cleared.
+     1. Select **Commit changes**.
+
+   - To delete a file from a new branch, commit changes, and create a merge request:
+
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is selected.
+     1. Select **Commit changes**.
+
+> [!note]
+> If someone edits and commits changes to the same file while you are editing,
+> you can't commit your changes. The following error message is displayed:
+> `Someone edited the file the same time you did. Please check out the file and
+> make sure your change will not unintentionally remove theirs.`
+
+### Replace a file
+
+To replace a file in the Web Editor:
+
+1. In the top bar, select **Search or go to** and find your project.
+1. Go to the file you want to replace.
+1. Select **Replace**.
+1. Drop or upload the file you want to upload and replace the existing one.
+1. In **Commit message**, enter a reason for the commit.
+1. Choose between the following options:
+
+   - To replace a file from the prefilled target branch, select **Commit changes**.
+   - To replace a file from a new branch and commit changes:
+
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is cleared.
+     1. Select **Commit changes**.
+
+   - To replace a file from a new branch, commit changes, and create a merge request:
+
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is selected.
+     1. Select **Commit changes**.
+
+### Cancel file changes
+
+To cancel changes, edit, upload, or delete a file, from the Web Editor:
+
+1. Select **Cancel**.
+1. Select one of the following:
+
+   - Confirm you want to cancel changes: Select **OK**.
+   - Don't cancel changes: Select **Cancel**.
+
+### File operations from the Actions menu
+
+{{< history >}}
+
+- [Introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/519325) in GitLab 17.10 [with a feature flag](../../../administration/feature_flags/_index.md) named `blob_overflow_menu`. Disabled by default.
+- [Generally available](https://gitlab.com/gitlab-org/gitlab/-/issues/522993) in GitLab 18.1. Feature flag `blob_overflow_menu` removed.
+
+{{< /history >}}
+
+The **Actions** ({{< icon name="ellipsis_v" >}}) menu consolidates file operations into the
+dropdown list. From this menu, you can:
+
+- Edit a file.
+- Upload a file.
+- Delete a file.
+- Replace a file.
+
+To complete these actions:
+
+1. Open the file in GitLab.
+1. In the upper-right corner, next to a filename, select **Actions** ({{< icon name="ellipsis_v" >}}).
+1. Select your desired action.
 
 ## Create a directory
 
-To keep files in the repository organized it is often helpful to create a new
-directory.
+To create a directory in the Web Editor:
 
-From a project's files page, click the '+' button to the right of the branch selector.
-Choose **New directory** from the dropdown.
+1. In the top bar, select **Search or go to** and find your project.
+1. Go to the directory where you want to create the new directory.
+1. Next to the directory name, select the plus icon ({{< icon name="plus" >}}) > **New directory**.
+1. In the **Directory name** field, enter your directory name.
+1. In **Commit message**, enter a reason for the commit.
+1. Choose between the following options:
 
-![New directory dropdown](img/web_editor_new_directory_dropdown.png)
+   - To create a directory from the prefilled target branch, select **Commit changes**.
+   - To create a directory from a new branch and commit changes:
 
----
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is cleared.
+     1. Select **Commit changes**.
 
-In the new directory dialog enter a directory name, a commit message and choose
-the target branch. Click **Create directory** to finish.
+   - To create a directory from a new branch, commit changes, and create a merge request:
 
-![New directory dialog](img/web_editor_new_directory_dialog.png)
+     1. Select **Commit to a new branch**.
+     1. Enter a branch name.
+     1. Ensure the **Create a merge request for this change** checkbox is selected.
+     1. Select **Commit changes**.
 
-## Create a new branch
+## Create a branch
 
-There are multiple ways to create a branch from GitLab's web interface.
+To create a [branch](branches/_index.md) in the Web Editor:
 
-### Create a new branch from an issue
+1. In the top bar, select **Search or go to** and find your project.
+1. Next to the repository name, select the plus icon ({{< icon name="plus" >}}) > **New branch**.
+1. Complete the fields.
+1. Select **Create branch**.
 
-> [Introduced][ce-2808] in GitLab 8.6.
+## Create a tag
 
-In case your development workflow dictates to have an issue for every merge
-request, you can quickly create a branch right on the issue page which will be
-tied with the issue itself. You can see a **New branch** button after the issue
-description, unless there is already a branch with the same name or a referenced
-merge request.
+You can create [tags](tags/_index.md) to mark milestones such as
+production releases and release candidates. To create a tag in the Web Editor:
 
-![New Branch Button](img/web_editor_new_branch_from_issue.png)
+1. In the top bar, select **Search or go to** and find your project.
+1. Next to the repository name, select the plus icon ({{< icon name="plus" >}}) > **New tag**.
+1. Complete the fields.
+1. Select **Create tag**.
 
-Once you click it, a new branch will be created that diverges from the default
-branch of your project, by default `master`. The branch name will be based on
-the title of the issue and as suffix it will have its ID. Thus, the example
-screenshot above will yield a branch named
-`2-et-cum-et-sed-expedita-repellat-consequatur-ut-assumenda-numquam-rerum`.
+## Editor accessibility options
 
-Since GitLab 9.0, when you click the `New branch` in an empty repository project, GitLab automatically creates the master branch, commits a blank `README.md` file to it and creates and redirects you to a new branch based on the issue title.
-If your [project is already configured with a deployment service][project-services-doc] (e.g. Kubernetes), GitLab takes one step further and prompts you to set up [auto deploy][auto-deploy-doc] by helping you create a `.gitlab-ci.yml` file.
+The web editor is based on the [Monaco Editor](https://github.com/microsoft/monaco-editor)
+which has several [accessibility features](https://github.com/microsoft/monaco-editor/wiki/Monaco-Editor-Accessibility-Guide),
+including:
 
+| Feature                          | Shortcut on Windows or Linux      | Shortcut on macOS                                    | Details |
+|----------------------------------|-----------------------------------|------------------------------------------------------|---------|
+| Keyboard navigation command list | <kbd>F1</kbd>                     | <kbd>F1</kbd>                                        | A [list of commands](https://github.com/microsoft/monaco-editor/wiki/Monaco-Editor-Accessibility-Guide#keyboard-navigation) that make the editor easier to use without a mouse. |
+| Tab trapping                     | <kbd>Control</kbd>+<kbd>m</kbd> | <kbd>Control</kbd>+<kbd>Shift</kbd>+<kbd>m</kbd> | Enable [tab trapping](https://github.com/microsoft/monaco-editor/wiki/Monaco-Editor-Accessibility-Guide#tab-trapping) to go to the next focusable element on the page instead of inserting a tab character. |
 
-After the branch is created, you can edit files in the repository to fix
-the issue. When a merge request is created based on the newly created branch,
-the description field will automatically display the [issue closing pattern]
-`Closes #ID`, where `ID` the ID of the issue. This will close the issue once the
-merge request is merged.
+## Related topics
 
-[project-services-doc]: ../integrations/project_services.md
-[auto-deploy-doc]: ../../../ci/autodeploy/index.md
-
-### Create a new branch from a project's dashboard
-
-If you want to make changes to several files before creating a new merge
-request, you can create a new branch up front. From a project's files page,
-choose **New branch** from the dropdown.
-
-![New branch dropdown](img/web_editor_new_branch_dropdown.png)
-
----
-
-Enter a new **Branch name**. Optionally, change the **Create from** field
-to choose which branch, tag or commit SHA this new branch will originate from.
-This field will autocomplete if you start typing an existing branch or tag.
-Click **Create branch** and you will be returned to the file browser on this new
-branch.
-
-![New branch page](img/web_editor_new_branch_page.png)
-
----
-
-You can now make changes to any files, as needed. When you're ready to merge
-the changes back to master you can use the widget at the top of the screen.
-This widget only appears for a period of time after you create the branch or
-modify files.
-
-![New push widget](img/web_editor_new_push_widget.png)
-
-## Create a new tag
-
-Tags are useful for marking major milestones such as production releases,
-release candidates, and more. You can create a tag from a branch or a commit
-SHA. From a project's files page, choose **New tag** from the dropdown.
-
-![New tag dropdown](img/web_editor_new_tag_dropdown.png)
-
----
-
-Give the tag a name such as `v1.0.0`. Choose the branch or SHA from which you
-would like to create this new tag. You can optionally add a message and
-release notes. The release notes section supports markdown format and you can
-also upload an attachment. Click **Create tag** and you will be taken to the tag
-list page.
-
-![New tag page](img/web_editor_new_tag_page.png)
-
-## Tips
-
-When creating or uploading a new file, or creating a new directory, you can
-trigger a new merge request rather than committing directly to master. Enter
-a new branch name in the **Target branch** field. You will notice a checkbox
-appear that is labeled **Start a new merge request with these changes**. After
-you commit the changes you will be taken to a new merge request form.
-
-![Start a new merge request with these changes](img/web_editor_start_new_merge_request.png)
-
-[ce-2808]: https://gitlab.com/gitlab-org/gitlab-ce/merge_requests/2808
-[issue closing pattern]: ../issues/automatic_issue_closing.md
+- [Create merge requests](../merge_requests/creating_merge_requests.md)
+- [Branches](branches/_index.md)
+  - [Default branch](branches/default.md)
+  - [Protected branches](branches/protected.md)
+- [Web IDE](../web_ide/_index.md)
+- [File tree browser](files/file_tree_browser.md)

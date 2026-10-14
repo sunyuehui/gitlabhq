@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::PackageJsonLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::PackageJsonLinker do
   describe '.support?' do
     it 'supports package.json' do
       expect(described_class.support?('package.json')).to be_truthy
@@ -33,7 +35,8 @@ describe Gitlab::DependencyLinker::PackageJsonLinker do
             "express": "4.2.x",
             "bigpipe": "bigpipe/pagelet",
             "plates": "https://github.com/flatiron/plates/tarball/master",
-            "karma": "^1.4.1"
+            "karma": "^1.4.1",
+            "random": "git+https://EdOverflow@github.com/example/example.git"
           },
           "devDependencies": {
             "vows": "^0.7.0",
@@ -48,11 +51,11 @@ describe Gitlab::DependencyLinker::PackageJsonLinker do
     subject { Gitlab::Highlight.highlight(file_name, file_content) }
 
     def link(name, url)
-      %{<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>}
+      %(<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>)
     end
 
-    it 'links the module name' do
-      expect(subject).to include(link('module-name', 'https://npmjs.com/package/module-name'))
+    it 'does not link the module name' do
+      expect(subject).not_to include(link('module-name', 'https://npmjs.com/package/module-name'))
     end
 
     it 'links the homepage' do
@@ -71,12 +74,19 @@ describe Gitlab::DependencyLinker::PackageJsonLinker do
       expect(subject).to include(link('primus', 'https://npmjs.com/package/primus'))
       expect(subject).to include(link('async', 'https://npmjs.com/package/async'))
       expect(subject).to include(link('express', 'https://npmjs.com/package/express'))
-      expect(subject).to include(link('bigpipe', 'https://npmjs.com/package/bigpipe'))
-      expect(subject).to include(link('plates', 'https://npmjs.com/package/plates'))
       expect(subject).to include(link('karma', 'https://npmjs.com/package/karma'))
       expect(subject).to include(link('vows', 'https://npmjs.com/package/vows'))
       expect(subject).to include(link('assume', 'https://npmjs.com/package/assume'))
       expect(subject).to include(link('pre-commit', 'https://npmjs.com/package/pre-commit'))
+    end
+
+    it 'links dependencies to URL detected on value' do
+      expect(subject).to include(link('bigpipe', 'https://github.com/bigpipe/pagelet'))
+      expect(subject).to include(link('plates', 'https://github.com/flatiron/plates/tarball/master'))
+    end
+
+    it 'does not link to NPM when invalid git URL' do
+      expect(subject).not_to include(link('random', 'https://npmjs.com/package/random'))
     end
 
     it 'links GitHub repos' do
@@ -89,6 +99,36 @@ describe Gitlab::DependencyLinker::PackageJsonLinker do
 
     it 'does not link scripts with the same key as a package' do
       expect(subject).not_to include(link('karma start config/karma.config.js --single-run', 'https://github.com/karma start config/karma.config.js --single-run'))
+    end
+
+    context 'when dependency is not a string' do
+      let(:file_content) do
+        <<-CONTENT.strip_heredoc
+        {
+          "dependencies": {
+            "wrong": {}
+          }
+        }
+        CONTENT
+      end
+
+      it 'does not link it' do
+        expect(subject).not_to include(%(<a href))
+      end
+    end
+
+    context 'when `dependencies` is not a hash' do
+      let(:file_content) do
+        <<-CONTENT.strip_heredoc
+        {
+          "dependencies": "wrong"
+        }
+        CONTENT
+      end
+
+      it 'does not link it' do
+        expect(subject).not_to include(%(<a href))
+      end
     end
   end
 end

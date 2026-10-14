@@ -1,28 +1,35 @@
-Rails.application.config.peek.adapter = :redis, { client: ::Redis.new(Gitlab::Redis::Cache.params) }
+# frozen_string_literal: true
+
+require 'peek/adapters/redis'
+
+Peek::Adapters::Redis.prepend ::Gitlab::PerformanceBar::RedisAdapterWhenPeekEnabled
+Peek.singleton_class.prepend ::Gitlab::PerformanceBar::WithTopLevelWarnings
+
+Rails.application.config.peek.adapter = :redis, {
+  client: Gitlab::Redis::Cache.redis,
+  expires_in: 5.minutes
+}
 
 Peek.into Peek::Views::Host
-Peek.into Peek::Views::PerformanceBar
-if Gitlab::Database.mysql?
-  require 'peek-mysql2'
-  PEEK_DB_CLIENT = ::Mysql2::Client
-  PEEK_DB_VIEW = Peek::Views::Mysql2
-else
-  require 'peek-pg'
-  PEEK_DB_CLIENT = ::PG::Connection
-  PEEK_DB_VIEW = Peek::Views::PG
-end
-Peek.into PEEK_DB_VIEW
-Peek.into Peek::Views::Redis
-Peek.into Peek::Views::Sidekiq
-Peek.into Peek::Views::Rblineprof
-Peek.into Peek::Views::GC
+Peek.into Peek::Views::ActiveRecord
+Peek.into Peek::Views::Gitaly
+Peek.into Peek::Views::RedisDetailed
+Peek.into Peek::Views::Elasticsearch
+Peek.into Peek::Views::Zoekt
+Peek.into Peek::Views::ExternalHttp
+Peek.into Peek::Views::ClickHouse
+Peek.into Peek::Views::BulletDetailed if defined?(Bullet)
+Peek.into Peek::Views::Memory
 
-# rubocop:disable Style/ClassAndModuleCamelCase
-class PEEK_DB_CLIENT
-  class << self
-    attr_accessor :query_details
+Peek.into Peek::Views::Tracing if Labkit::Tracing.tracing_url_enabled?
+
+# Trigger view creation here, since views might be subscribing to Rails notifications
+# via setup_subscribers, which is called in the initializer.
+# See https://github.com/peek/peek/blob/master/lib/peek/views/view.rb
+Peek.views
+
+ActiveSupport::Notifications.subscribe('format_response.grape') do |_name, _start, _finish, _id, payload|
+  if request_id = payload[:env]['action_dispatch.request_id']
+    Peek.adapter.save(request_id)
   end
-  self.query_details = Concurrent::Array.new
 end
-
-PEEK_DB_VIEW.prepend ::Gitlab::PerformanceBar::PeekQueryTracker

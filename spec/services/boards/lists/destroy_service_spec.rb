@@ -1,38 +1,41 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Boards::Lists::DestroyService do
+RSpec.describe Boards::Lists::DestroyService, feature_category: :planning_views do
+  let_it_be(:user) { create(:user) }
+
+  let(:list_type) { :list }
+
   describe '#execute' do
-    let(:project) { create(:project) }
-    let(:board)   { create(:board, project: project) }
-    let(:user)    { create(:user) }
+    context 'when board parent is a project' do
+      let_it_be(:project) { create(:project) }
+      let_it_be(:board) { create(:board, project: project) }
+      let_it_be(:list) { create(:list, board: board) }
+      let_it_be(:closed_list) { board.lists.closed.first }
 
-    context 'when list type is label' do
-      it 'removes list from board' do
-        list = create(:list, board: board)
-        service = described_class.new(project, user)
-
-        expect { service.execute(list) }.to change(board.lists, :count).by(-1)
+      let(:params) do
+        { board: board }
       end
 
-      it 'decrements position of higher lists' do
-        development = create(:list, board: board, position: 0)
-        review      = create(:list, board: board, position: 1)
-        staging     = create(:list, board: board, position: 2)
-        closed      = board.closed_list
+      let(:parent) { project }
 
-        described_class.new(project, user).execute(development)
-
-        expect(review.reload.position).to eq 0
-        expect(staging.reload.position).to eq 1
-        expect(closed.reload.position).to be_nil
-      end
+      it_behaves_like 'lists destroy service'
     end
 
-    it 'does not remove list from board when list type is closed' do
-      list = board.closed_list
-      service = described_class.new(project, user)
+    context 'when board parent is a group' do
+      let_it_be(:group) { create(:group) }
+      let_it_be(:board) { create(:board, group: group) }
+      let_it_be(:list) { create(:list, board: board) }
+      let_it_be(:closed_list) { board.lists.closed.first }
 
-      expect { service.execute(list) }.not_to change(board.lists, :count)
+      let(:params) do
+        { board: board }
+      end
+
+      let(:parent) { group }
+
+      it_behaves_like 'lists destroy service'
     end
   end
 end

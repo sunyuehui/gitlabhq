@@ -1,98 +1,18 @@
-/**
- * Well styled list
- *
- */
-.well-list {
-  position: relative;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-
-  > li {
-    padding: 10px 15px;
-    min-height: 20px;
-    border-bottom: 1px solid $list-border;
-
-    &::after {
-      content: " ";
-      display: table;
-      clear: both;
-    }
-
-    &.disabled {
-      color: $list-text-disabled-color;
-    }
-
-    &.unstyled {
-      &:hover {
-        background: none;
-      }
-    }
-
-    &.warning-row {
-      background-color: $list-warning-row-bg;
-      border-color: $list-warning-row-border;
-      color: $list-warning-row-color;
-    }
-
-    &.smoke { background-color: $gray-light; }
-
-    &:not(.ui-sort-disabled):hover {
-      background: $row-hover;
-    }
-
-    &:last-child {
-      border-bottom: none;
-
-      &.bottom {
-        background: $gray-light;
-      }
-    }
-
-    .list-item-name {
-      float: left;
-      position: relative;
-      top: 3px;
-    }
-
-    p {
-      padding-top: 1px;
-      margin: 0;
-      color: $white-normal;
-
-      img {
-        position: relative;
-        top: 3px;
-      }
-    }
-
-    .well-title {
-      font-size: $list-font-size;
-      line-height: 18px;
-    }
-  }
-}
-
-
 /** light list with border-bottom between li **/
 ul.bordered-list,
 ul.unstyled-list {
   @include basic-list;
-
-  &.top-list {
-    li:first-child {
-      padding-top: 0;
-
-      h4,
-      h5 {
-        margin-top: 0;
-      }
-    }
-  }
 }
 
 ul.unstyled-list > li {
-  border-bottom: none;
+  border-bottom: 0;
+}
+
+ul.list-items-py-2 {
+  > li {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
 }
 
 // Generic content list
@@ -102,88 +22,44 @@ ul.content-list {
   padding: 0;
 
   li {
-    border-color: $white-normal;
-    font-size: $list-font-size;
-    color: $list-text-color;
-
-    &.no-description {
-      .title {
-        line-height: $list-text-height;
-      }
-    }
+    @apply gl-border-default;
+    font-size: $gl-font-size;
+    @apply gl-text-default;
+    word-break: break-word;
 
     .title {
-      font-weight: 600;
+      font-weight: $gl-font-weight-bold;
     }
 
     a {
-      color: $gl-text-color;
-    }
+      @apply gl-text-default;
 
-    .member-group-link {
-      color: $blue-600;
+      &.inline-link {
+        @apply gl-text-link;
+      }
     }
 
     .description {
-      p {
-        @include str-truncated;
-        margin-bottom: 0;
-      }
+      @include str-truncated;
     }
 
     .controls {
       float: right;
 
-      > .control-text {
-        margin-right: $gl-padding-top;
-        line-height: $list-text-height;
-
-        &:last-child {
-          margin-right: 0;
-        }
-      }
-
       > .btn,
       > .btn-group,
       > .dropdown.inline {
-        margin-right: $gl-padding-top;
-        display: inline-block;
-        margin-top: 3px;
-        margin-bottom: 4px;
+        margin-right: $grid-size;
 
         &.has-tooltip,
         &:last-child {
           margin-right: 0;
 
-          @media(max-width: $screen-xs-max) {
+          @include gl-container-width-down(sm, panel) {
             margin: 0 auto;
           }
         }
       }
-
-      .no-comments {
-        opacity: .5;
-      }
-    }
-
-    .member-controls {
-      float: none;
-
-      @media (min-width: $screen-sm-min) {
-        float: right;
-      }
-    }
-
-    // When dragging a list item
-    &.ui-sortable-helper {
-      border-bottom: none;
-    }
-
-    &.list-placeholder {
-      background-color: $gray-light;
-      border: dotted 1px $white-normal;
-      margin: 1px 0;
-      min-height: 52px;
     }
   }
 }
@@ -191,30 +67,9 @@ ul.content-list {
 // Content list using flexbox
 .flex-list {
   .flex-row {
-    display: -webkit-flex;
-    display: -ms-flexbox;
     display: flex;
     align-items: center;
     white-space: nowrap;
-  }
-
-  .row-main-content {
-    flex: 1 1 auto;
-    overflow: hidden;
-    padding-right: 8px;
-  }
-
-  .row-fixed-content {
-    flex: 0 0 auto;
-    margin-left: auto;
-  }
-
-  .row-title {
-    font-weight: 600;
-  }
-
-  .row-second-line {
-    display: block;
   }
 
   .dropdown {
@@ -224,12 +79,14 @@ ul.content-list {
     }
   }
 
-  .label-default {
-    color: $gl-text-color-secondary;
+  .badge-secondary {
+    @apply gl-text-subtle;
   }
 }
 
-.panel > .content-list > li {
+ul.content-list.content-list-items-padding > li,
+ul.content-list.issuable-list > li,
+.card > .content-list > li {
   padding: $gl-padding-top $gl-padding;
 }
 
@@ -251,9 +108,7 @@ ul.controls {
       margin-right: 0;
     }
 
-    .author_link {
-      display: inline-block;
-
+    .author-link {
       .avatar-inline {
         margin-left: 0;
         margin-right: 0;
@@ -263,8 +118,7 @@ ul.controls {
   }
 
   .issuable-pipeline-broken a,
-  .issuable-pipeline-status a,
-  .author_link {
+  .author-link {
     display: flex;
   }
 }
@@ -273,112 +127,24 @@ ul.indent-list {
   padding: 10px 0 0 30px;
 }
 
-
 // Specific styles for tree list
-.group-list-tree {
-  .folder-toggle-wrap {
-    float: left;
-    line-height: $list-text-height;
-    font-size: 0;
-
-    span {
-      font-size: $gl-font-size;
-    }
-  }
-
-  .folder-caret,
-  .folder-icon {
-    display: inline-block;
-  }
-
-  .folder-caret {
-    width: 15px;
-  }
-
-  .folder-icon {
-    width: 20px;
-  }
-
-  > .group-row:not(.has-subgroups) {
-    .folder-caret .fa {
-      opacity: 0;
-    }
-  }
-
-  .content-list li:last-child {
-    padding-bottom: 0;
-  }
-
-  .group-list-tree {
-    margin-bottom: 0;
-    margin-left: 30px;
-    position: relative;
-
-    &::before {
-      content: '';
-      display: block;
-      width: 0;
-      position: absolute;
-      top: 5px;
-      bottom: 0;
-      left: -16px;
-      border-left: 2px solid $border-white-normal;
-    }
-
-    .group-row {
-      position: relative;
-
-      &::before {
-        content: "";
-        display: block;
-        width: 10px;
-        height: 0;
-        border-top: 2px solid $border-white-normal;
-        position: absolute;
-        top: 30px;
-        left: -16px;
-      }
-
-      &:last-child::before {
-        background: $white-light;
-        height: auto;
-        top: 30px;
-        bottom: 0;
-      }
-    }
-  }
-
-  .group-row {
-    padding: 0;
-    border: none;
-
-    &:last-of-type {
-      .group-row-contents:not(:hover) {
-        border-bottom: 1px solid transparent;
-      }
-    }
-  }
-
-  .group-row-contents {
-    padding: 10px 10px 8px;
-    border-top: solid 1px transparent;
-    border-bottom: solid 1px $white-normal;
-
-    &:hover {
-      border-color: $row-hover-border;
-      background-color: $row-hover;
-      cursor: pointer;
-    }
-
-    .avatar-container > a {
-      width: 100%;
-    }
-  }
+@keyframes spin-avatar {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
-.js-groups-list-holder {
-  .groups-list-loading {
-    font-size: 34px;
-    text-align: center;
+.horizontal-list {
+  padding-left: 0;
+  list-style: none;
+
+  > li {
+    float: left;
+  }
+
+  &.list-items-separated {
+    > li:not(:last-child)::after {
+      content: '\00b7';
+      margin: 0 $gl-padding-4;
+    }
   }
 }

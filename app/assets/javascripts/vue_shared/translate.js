@@ -1,8 +1,5 @@
-import {
-  __,
-  n__,
-  s__,
-} from '../locale';
+// relative import is needed due to this file being imported by aliased @vue/compat
+import { __, n__, s__, sprintf } from '../locale';
 
 export default (Vue) => {
   Vue.mixin({
@@ -12,7 +9,7 @@ export default (Vue) => {
 
         @param text The text to be translated
         @returns {String} The translated text
-      **/
+      */
       __,
       /**
         Translate the text with a number
@@ -23,7 +20,7 @@ export default (Vue) => {
         @param pluralText Plural text to translate (eg. '%d days')
         @param count Number to decide which translation to use (eg. 2)
         @returns {String} Translated text with the number replaced (eg. '2 days')
-      **/
+      */
       n__,
       /**
         Translate context based text
@@ -35,8 +32,9 @@ export default (Vue) => {
                             (eg. 'Context')
         @param key Is the dynamic variable you want to be translated
         @returns {String} Translated context based text
-      **/
+      */
       s__,
+      sprintf,
     },
   });
 };

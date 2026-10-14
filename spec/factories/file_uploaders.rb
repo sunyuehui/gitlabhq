@@ -1,9 +1,10 @@
-FactoryGirl.define do
+# frozen_string_literal: true
+
+FactoryBot.define do
   factory :file_uploader do
     skip_create
 
-    project
-    secret nil
+    secret { nil }
 
     transient do
       fixture { 'rails_sample.jpg' }
@@ -12,11 +13,12 @@ FactoryGirl.define do
     end
 
     after(:build) do |uploader, evaluator|
-      uploader.store!(evaluator.file)
+      uploader.store!(evaluator.file) if evaluator.model&.persisted?
     end
 
     initialize_with do
-      new(project, secret)
+      klass = container.is_a?(Group) ? NamespaceFileUploader : FileUploader
+      klass.new(container, nil, secret: secret)
     end
   end
 end

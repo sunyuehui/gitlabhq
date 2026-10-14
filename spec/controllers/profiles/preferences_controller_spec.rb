@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Profiles::PreferencesController do
+RSpec.describe Profiles::PreferencesController, feature_category: :user_profile do
   let(:user) { create(:user) }
 
   before do
@@ -22,28 +24,51 @@ describe Profiles::PreferencesController do
   end
 
   describe 'PATCH update' do
-    def go(params: {}, format: :js)
+    def go(params: {}, format: :json)
       params.reverse_merge!(
+        color_mode_id: '1',
         color_scheme_id: '1',
-        dashboard: 'stars'
+        dashboard: 'stars',
+        theme_id: '1'
       )
 
-      patch :update, user: params, format: format
+      patch :update, params: { user: params }, format: format
     end
 
     context 'on successful update' do
-      it 'sets the flash' do
+      it 'responds with success' do
         go
-        expect(flash[:notice]).to eq 'Preferences saved.'
+
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(response.parsed_body['message']).to eq _('Preferences saved.')
+        expect(response.parsed_body['type']).to eq('notice')
       end
 
       it "changes the user's preferences" do
         prefs = {
+          color_mode_id: '2',
           color_scheme_id: '1',
-          dashboard: 'stars'
+          diffs_deletion_color: '#123456',
+          diffs_addition_color: '#abcdef',
+          dashboard: 'stars',
+          theme_id: '2',
+          first_day_of_week: '1',
+          preferred_language: 'jp',
+          tab_width: '5',
+          project_shortcut_buttons: 'true',
+          keyboard_shortcuts_enabled: 'true',
+          emoji_autocomplete_enabled: 'false',
+          render_whitespace_in_code: 'true',
+          extensions_marketplace_enabled: '1'
         }.with_indifferent_access
 
-        expect(user).to receive(:assign_attributes).with(prefs)
+        expected_params = prefs.except(:extensions_marketplace_enabled).merge(
+          extensions_marketplace_opt_in_status: "enabled",
+          # Default marketplace_home_url based on Open VSX
+          extensions_marketplace_opt_in_url: "https://open-vsx.org"
+        )
+
+        expect(user).to receive(:assign_attributes).with(ActionController::Parameters.new(expected_params).permit!)
         expect(user).to receive(:save)
 
         go params: prefs
@@ -51,36 +76,59 @@ describe Profiles::PreferencesController do
     end
 
     context 'on failed update' do
-      it 'sets the flash' do
+      it 'responds with error' do
         expect(user).to receive(:save).and_return(false)
 
         go
 
-        expect(flash[:alert]).to eq('Failed to save preferences.')
+        expect(response).to have_gitlab_http_status(:bad_request)
+        expect(response.parsed_body['message']).to eq _('Failed to save preferences.')
+        expect(response.parsed_body['type']).to eq('alert')
       end
     end
 
     context 'on invalid dashboard setting' do
-      it 'sets the flash' do
+      it 'responds with error' do
         prefs = { dashboard: 'invalid' }
 
         go params: prefs
 
-        expect(flash[:alert]).to match(/\AFailed to save preferences \(.+\)\.\z/)
+        expect(response).to have_gitlab_http_status(:bad_request)
+        expect(response.parsed_body['message']).to match(/\AFailed to save preferences \(.+\)\.\z/)
+        expect(response.parsed_body['type']).to eq('alert')
       end
     end
 
-    context 'as js' do
-      it 'renders' do
-        go
-        expect(response).to render_template :update
+    context 'on invalid diffs colors setting' do
+      it 'responds with error for diffs_deletion_color' do
+        prefs = { diffs_deletion_color: '#1234567' }
+
+        go params: prefs
+
+        expect(response).to have_gitlab_http_status(:bad_request)
+        expect(response.parsed_body['message']).to eq _('Failed to save preferences.')
+        expect(response.parsed_body['type']).to eq('alert')
+      end
+
+      it 'responds with error for diffs_addition_color' do
+        prefs = { diffs_addition_color: '#1234567' }
+
+        go params: prefs
+
+        expect(response).to have_gitlab_http_status(:bad_request)
+        expect(response.parsed_body['message']).to eq _('Failed to save preferences.')
+        expect(response.parsed_body['type']).to eq('alert')
       end
     end
 
-    context 'as html' do
-      it 'redirects' do
-        go format: :html
-        expect(response).to redirect_to(profile_preferences_path)
+    context 'on enabled_following setting' do
+      it 'does not update enabled_following preference of user' do
+        prefs = { enabled_following: false }
+
+        go params: prefs
+        user.reload
+
+        expect(user.enabled_following).to be(false)
       end
     end
   end

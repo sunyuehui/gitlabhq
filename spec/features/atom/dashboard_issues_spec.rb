@@ -1,48 +1,73 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe "Dashboard Issues Feed"  do
+RSpec.describe "Dashboard Issues Feed", feature_category: :planning_views do
   describe "GET /issues" do
-    let!(:user)     { create(:user, email: 'private1@example.com', public_email: 'public1@example.com') }
-    let!(:assignee) { create(:user, email: 'private2@example.com', public_email: 'public2@example.com') }
+    let!(:user) do
+      user = create(:user, email: 'private1@example.com')
+      public_email = create(:email, :confirmed, user: user, email: 'public1@example.com')
+      user.update!(public_email: public_email.email)
+      user
+    end
+
+    let!(:assignee) do
+      user = create(:user, email: 'private2@example.com')
+      public_email = create(:email, :confirmed, user: user, email: 'public2@example.com')
+      user.update!(public_email: public_email.email)
+      user
+    end
+
     let!(:project1) { create(:project) }
     let!(:project2) { create(:project) }
 
     before do
-      project1.team << [user, :master]
-      project2.team << [user, :master]
+      project1.add_maintainer(user)
+      project2.add_maintainer(user)
     end
 
     describe "atom feed" do
-      it "renders atom feed via private token" do
-        visit issues_dashboard_path(:atom, private_token: user.private_token)
+      it "returns 400 if no filter is used" do
+        personal_access_token = create(:personal_access_token, user: user)
+
+        visit issues_dashboard_path(:atom, private_token: personal_access_token.token)
+
+        expect(response_headers['Content-Type']).to have_content('application/atom+xml')
+        expect(page.status_code).to eq(400)
+      end
+
+      it "renders atom feed via personal access token" do
+        personal_access_token = create(:personal_access_token, user: user)
+
+        visit issues_dashboard_path(:atom, private_token: personal_access_token.token, assignee_username: user.username)
 
         expect(response_headers['Content-Type']).to have_content('application/atom+xml')
         expect(body).to have_selector('title', text: "#{user.name} issues")
       end
 
-      it "renders atom feed via RSS token" do
-        visit issues_dashboard_path(:atom, rss_token: user.rss_token)
+      it "renders atom feed via feed token" do
+        visit issues_dashboard_path(:atom, feed_token: user.feed_token, assignee_username: user.username)
 
         expect(response_headers['Content-Type']).to have_content('application/atom+xml')
         expect(body).to have_selector('title', text: "#{user.name} issues")
       end
 
       it "renders atom feed with url parameters" do
-        visit issues_dashboard_path(:atom, rss_token: user.rss_token, state: 'opened', assignee_id: user.id)
+        visit issues_dashboard_path(:atom, feed_token: user.feed_token, state: 'opened', assignee_username: user.username)
 
         link = find('link[type="application/atom+xml"]')
         params = CGI.parse(URI.parse(link[:href]).query)
 
-        expect(params).to include('rss_token' => [user.rss_token])
+        expect(params).to include('feed_token' => [user.feed_token])
         expect(params).to include('state' => ['opened'])
-        expect(params).to include('assignee_id' => [user.id.to_s])
+        expect(params).to include('assignee_username' => [user.username.to_s])
       end
 
       context "issue with basic fields" do
         let!(:issue2) { create(:issue, author: user, assignees: [assignee], project: project2, description: 'test desc') }
 
         it "renders issue fields" do
-          visit issues_dashboard_path(:atom, rss_token: user.rss_token)
+          visit issues_dashboard_path(:atom, feed_token: user.feed_token, assignee_username: assignee.username)
 
           entry = find(:xpath, "//feed/entry[contains(summary/text(),'#{issue2.title}')]")
 
@@ -51,7 +76,7 @@ describe "Dashboard Issues Feed"  do
           expect(entry).to have_selector('assignees email', text: assignee.public_email)
           expect(entry).not_to have_selector('labels')
           expect(entry).not_to have_selector('milestone')
-          expect(entry).to have_selector('description', text: issue2.description)
+          expect(entry).to have_selector('content', text: issue2.description)
         end
       end
 
@@ -65,7 +90,7 @@ describe "Dashboard Issues Feed"  do
         end
 
         it "renders issue label and milestone info" do
-          visit issues_dashboard_path(:atom, rss_token: user.rss_token)
+          visit issues_dashboard_path(:atom, feed_token: user.feed_token, assignee_username: assignee.username)
 
           entry = find(:xpath, "//feed/entry[contains(summary/text(),'#{issue1.title}')]")
 
@@ -74,7 +99,7 @@ describe "Dashboard Issues Feed"  do
           expect(entry).to have_selector('assignees email', text: assignee.public_email)
           expect(entry).to have_selector('labels label', text: label1.title)
           expect(entry).to have_selector('milestone', text: milestone1.title)
-          expect(entry).not_to have_selector('description')
+          expect(entry).not_to have_selector('content')
         end
       end
     end

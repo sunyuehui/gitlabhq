@@ -1,16 +1,44 @@
+# frozen_string_literal: true
+
 module ContainerRegistry
   class Tag
-    attr_reader :repository, :name
+    include Gitlab::Utils::StrongMemoize
+
+    MANIFEST_ARCHS_TO_SKIP = [nil, 'unknown'].freeze
+
+    attr_reader :repository, :name, :updated_at, :referrers, :published_at, :platform, :manifests
+    attr_writer :created_at, :manifest_digest, :revision, :total_size
+    attr_accessor :media_type
 
     delegate :registry, :client, to: :repository
-    delegate :revision, :short_revision, to: :config_blob, allow_nil: true
+    delegate :project, to: :repository, private: true
 
-    def initialize(repository, name)
-      @repository, @name = repository, name
+    def initialize(repository, name, from_api: false)
+      @repository = repository
+      @name = name
+      @from_api = from_api
+    end
+
+    def referrers=(refs)
+      @referrers = Array.wrap(refs).map { |ref| Referrer.new(ref['artifactType'], ref['digest'], self) }
+    end
+
+    def revision
+      @revision || config_blob&.revision
+    end
+
+    def short_revision
+      return unless revision
+
+      revision[0..8]
     end
 
     def valid?
-      manifest.present?
+      from_api? || manifest.present?
+    end
+
+    def latest?
+      name == "latest"
     end
 
     def v1?
@@ -22,7 +50,9 @@ module ContainerRegistry
     end
 
     def manifest
-      @manifest ||= client.repository_manifest(repository.path, name)
+      strong_memoize(:manifest) do
+        client.repository_manifest(repository.path, name)
+      end
     end
 
     def path
@@ -40,49 +70,165 @@ module ContainerRegistry
     end
 
     def digest
-      @digest ||= client.repository_tag_digest(repository.path, name)
-    end
-
-    def config_blob
-      return @config_blob if defined?(@config_blob)
-      return unless manifest && manifest['config']
-
-      @config_blob = repository.blob(manifest['config'])
-    end
-
-    def config
-      return unless config_blob
-
-      @config ||= ContainerRegistry::Config.new(self, config_blob) if config_blob.data
-    end
-
-    def created_at
-      return unless config
-
-      @created_at ||= DateTime.rfc3339(config['created'])
-    end
-
-    def layers
-      return @layers if defined?(@layers)
-      return unless manifest
-
-      layers = manifest['layers'] || manifest['fsLayers']
-
-      @layers = layers.map do |layer|
-        repository.blob(layer)
+      strong_memoize(:digest) do
+        @manifest_digest || client.repository_tag_digest(repository.path, name)
       end
     end
 
-    def total_size
-      return unless layers
+    def config_blob
+      # Like #layers, guard against a non-Hash (fat) manifest: on a manifest
+      # list String, manifest['config'] is a substring match, not a key lookup,
+      # so an unguarded access would build a bogus blob and raise downstream.
+      return unless manifest.is_a?(Hash) && manifest['config']
 
-      layers.map(&:size).sum if v2?
+      strong_memoize(:config_blob) do
+        repository.blob(manifest['config'])
+      end
     end
 
-    def delete
+    def config
+      return if config_blob&.data.blank?
+
+      strong_memoize(:config) do
+        ContainerRegistry::Config.new(self, config_blob)
+      end
+    end
+
+    def created_at
+      return @created_at if @created_at
+
+      strong_memoize(:memoized_created_at) do
+        next unless config
+
+        DateTime.rfc3339(config['created'])
+      rescue ArgumentError
+        nil
+      end
+    end
+
+    # this function will set and memoize a created_at
+    # to avoid a #config_blob call.
+    def force_created_at_from_iso8601(string_value)
+      date = parse_iso8601_string(string_value)
+      instance_variable_set(ivar(:memoized_created_at), date)
+    end
+
+    def updated_at=(string_value)
+      return unless string_value
+
+      @updated_at = parse_iso8601_string(string_value)
+    end
+
+    def published_at=(string_value)
+      return unless string_value
+
+      @published_at = parse_iso8601_string(string_value)
+    end
+
+    def layers
+      return unless manifest
+      # A multi-arch tag resolves to a manifest list (returned as an unparsed
+      # String) or an OCI image index (a Hash with no `layers`). Neither carries
+      # image layers, so report none instead of raising on nil.map. See
+      # https://gitlab.com/gitlab-org/gitlab/-/issues/603051
+      return [] unless manifest.is_a?(Hash)
+
+      strong_memoize(:layers) do
+        (manifest['layers'] || manifest['fsLayers'] || []).map do |layer|
+          repository.blob(layer)
+        end
+      end
+    end
+
+    def put(digests)
+      repository.client.put_tag(repository.path, name, digests)
+    end
+
+    def total_size
+      return @total_size if @total_size
+
+      return if layers.blank?
+
+      layers.sum(&:size) if v2?
+    end
+
+    # Deletes the image associated with this tag
+    # Note this will delete the image and all tags associated with it.
+    # Consider using DeleteTagsService instead.
+    def unsafe_delete
       return unless digest
 
-      client.delete_repository_tag(repository.path, digest)
+      client.delete_repository_tag_by_digest(repository.path, digest)
+    end
+
+    def protection_rule
+      result = nil
+      project.container_registry_protection_tag_rules.select(&:mutable?).each do |rule|
+        next unless rule.matches_tag_name?(name)
+
+        result ||= ::ContainerRegistry::Protection::TagRule.new
+        set_highest_protection_rule_access_level(result, rule)
+      end
+
+      result
+    end
+    strong_memoize_attr :protection_rule
+
+    def protected_for_delete?(user)
+      return true unless user
+      return false unless protection_rule
+      return false if user.can_admin_all_resources?
+
+      max_access = project.team.max_member_access(user.id)
+      protection_rule.delete_restricted?(max_access)
+    end
+
+    def manifests=(tag_references)
+      return unless tag_references
+
+      @manifests = tag_references
+        .reject { |ref| ref.dig('config', 'platform', 'architecture').in?(MANIFEST_ARCHS_TO_SKIP) }
+        .map { |ref| create_manifest_from_tag_reference(ref) }
+    end
+
+    def platform=(platform_hash)
+      @platform = ImagePlatform.from_hash(self, platform_hash)
+    end
+
+    private
+
+    def from_api?
+      @from_api
+    end
+
+    def parse_iso8601_string(string_value)
+      DateTime.iso8601(string_value)
+    rescue ArgumentError
+      nil
+    end
+
+    def set_highest_protection_rule_access_level(result, rule)
+      %i[push delete].each do |action|
+        attribute = :"minimum_access_level_for_#{action}"
+        result[attribute] = [
+          result.method(:"#{attribute}_before_type_cast").call.to_i,
+          rule.method(:"#{attribute}_before_type_cast").call
+        ].max
+      end
+    end
+
+    def create_manifest_from_tag_reference(ref)
+      manifest = ImageManifest.new(
+        tag: self,
+        digest: ref.dig('manifest', 'digest'),
+        media_type: ref.dig('manifest', 'media_type'),
+        size: ref['size_bytes']
+      )
+      manifest.platform = ImagePlatform.from_hash(manifest, ref.dig('config', 'platform'))
+
+      manifest
     end
   end
 end
+
+ContainerRegistry::Tag.prepend_mod

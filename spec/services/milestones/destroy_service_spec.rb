@@ -1,50 +1,93 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Milestones::DestroyService do
-  let(:user) { create(:user) }
-  let(:project) { create(:project) }
-  let(:milestone) { create(:milestone, title: 'Milestone v1.0', project: project) }
-  let(:issue) { create(:issue, project: project, milestone: milestone) }
-  let(:merge_request) { create(:merge_request, source_project: project, milestone: milestone) }
+RSpec.describe Milestones::DestroyService, feature_category: :team_planning do
+  let_it_be(:user) { create(:user) }
+  let_it_be(:group) { create(:group, maintainers: user) }
+  let_it_be_with_reload(:project) { create(:project, group: group) }
 
-  before do
-    project.team << [user, :master]
-  end
-
-  def service
-    described_class.new(project, user, {})
-  end
+  subject(:service) { described_class.new(container, user, {}) }
 
   describe '#execute' do
-    it 'deletes milestone' do
-      service.execute(milestone)
+    shared_examples 'deletes milestone id from issuables' do
+      specify do
+        stub_const('Milestones::DestroyService::BATCH_SIZE', 2)
 
-      expect { milestone.reload }.to raise_error ActiveRecord::RecordNotFound
+        issues = create_list(:issue, described_class::BATCH_SIZE + 1, project: project, milestone: milestone)
+        merge_request = create(:merge_request, source_project: project, milestone: milestone)
+
+        expect(milestone).to receive(:run_after_commit).and_yield
+
+        expect { expect(service.execute(milestone)).to eq(milestone) }
+          .to publish_event(WorkItems::BulkUpdatedEvent)
+          .with(
+            root_namespace_id: group.id,
+            work_item_ids: issues.take(described_class::BATCH_SIZE).map(&:id),
+            updated_attributes: %w[milestone_id]
+          )
+
+        expect { milestone.reload }.to raise_error ActiveRecord::RecordNotFound
+
+        issues.each do |issue|
+          expect(issue.reload.milestone).to be_nil
+        end
+        expect(merge_request.reload.milestone).to be_nil
+      end
     end
 
-    it 'deletes milestone id from issuables' do
-      service.execute(milestone)
+    context 'on project milestones' do
+      let(:milestone) { create(:milestone, title: 'Milestone v1.0', project: project) }
 
-      expect(issue.reload.milestone).to be_nil
-      expect(merge_request.reload.milestone).to be_nil
-    end
+      let(:container) { project }
 
-    context 'group milestones' do
-      let(:group) { create(:group) }
-      let(:group_milestone) { create(:milestone, group: group) }
+      it 'deletes milestone' do
+        service.execute(milestone)
 
-      before do
-        project.update(namespace: group)
-        group.add_developer(user)
+        expect { milestone.reload }.to raise_error ActiveRecord::RecordNotFound
       end
 
-      it { expect(service.execute(group_milestone)).to be_nil }
+      it_behaves_like 'deletes milestone id from issuables'
 
-      it 'does not update milestone issuables' do
-        expect(MergeRequests::UpdateService).not_to receive(:new)
-        expect(Issues::UpdateService).not_to receive(:new)
+      it 'logs destroy event and runs on-delete webhook' do
+        expect(service).to receive(:execute_hooks).with(milestone, 'delete')
 
-        service.execute(group_milestone)
+        service.execute(milestone)
+
+        event = Event.where(project_id: milestone.project_id, target_type: 'Milestone')
+
+        expect(event.count).to eq(1)
+      end
+
+      context 'when a release is tied to a milestone' do
+        it 'destroys the milestone but not the associated release' do
+          release = create(
+            :release,
+            tag: 'v1.0',
+            project: project,
+            milestones: [milestone]
+          )
+
+          expect { service.execute(milestone) }.not_to change { Release.count }
+          expect(release.reload).to be_persisted
+        end
+      end
+    end
+
+    context 'on group milestones' do
+      let(:milestone) { create(:milestone, group: group) }
+      let(:container) { group }
+
+      it 'deletes milestone' do
+        service.execute(milestone)
+
+        expect { milestone.reload }.to raise_error ActiveRecord::RecordNotFound
+      end
+
+      it_behaves_like 'deletes milestone id from issuables'
+
+      it 'does not log destroy event and does not run on-delete webhook' do
+        expect { service.execute(milestone) }.not_to change { Event.count }
       end
     end
   end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Gitaly note: JV: no RPC's here.
 
 module Gitlab
@@ -25,7 +27,13 @@ module Gitlab
         @base && @head && @base.id == @head.id
       end
 
-      def commits
+      def commits(limit: nil)
+        return @commits if defined?(@commits) && @commits.empty?
+
+        if limit
+          return Gitlab::Git::Commit.between(@repository, @base.id, @head.id, limit: limit)
+        end
+
         return @commits if defined?(@commits)
 
         @commits = Gitlab::Git::Commit.between(@repository, @base.id, @head.id)
@@ -39,6 +47,19 @@ module Gitlab
         paths = options.delete(:paths) || []
         options[:straight] = @straight
         Gitlab::Git::Diff.between(@repository, @head.id, @base.id, options, *paths)
+      end
+
+      def generated_files(diffs: nil)
+        return Set.new unless @base && @head
+
+        changed_paths =
+          if diffs
+            diffs.map { |diff| Gitlab::Git::ChangedPath.from_diff(diff) }
+          else
+            @repository.find_changed_paths([Gitlab::Git::DiffTree.new(@base.id, @head.id)])
+          end
+
+        @repository.detect_generated_files(@base.id, @head.id, changed_paths)
       end
     end
   end

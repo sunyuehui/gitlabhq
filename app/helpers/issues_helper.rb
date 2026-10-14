@@ -1,108 +1,27 @@
+# frozen_string_literal: true
+
 module IssuesHelper
-  def issue_css_classes(issue)
-    classes = "issue"
-    classes << " closed" if issue.closed?
-    classes << " today" if issue.today?
-    classes
+  include Issues::IssueTypeHelpers
+
+  def show_timeline_view_toggle?(issue)
+    # Overridden in EE
+    false
   end
 
-  # Returns an OpenStruct object suitable for use by <tt>options_from_collection_for_select</tt>
-  # to allow filtering issues by an unassigned User or Milestone
-  def unassigned_filter
-    # Milestone uses :title, Issue uses :name
-    OpenStruct.new(id: 0, title: 'None (backlog)', name: 'Unassigned')
-  end
-
-  def url_for_issue(issue_iid, project = @project, options = {})
-    return '' if project.nil?
-
-    url =
-      if options[:internal]
-        url_for_internal_issue(issue_iid, project, options)
-      else
-        url_for_tracker_issue(issue_iid, project, options)
-      end
-
-    # Ensure we return a valid URL to prevent possible XSS.
-    URI.parse(url).to_s
-  rescue URI::InvalidURIError
-    ''
-  end
-
-  def url_for_tracker_issue(issue_iid, project, options)
-    if options[:only_path]
-      project.issues_tracker.issue_path(issue_iid)
-    else
-      project.issues_tracker.issue_url(issue_iid)
+  def issue_repositioning_disabled?
+    if @group
+      @group.root_ancestor.issue_repositioning_disabled?
+    elsif @project
+      @project.root_namespace.issue_repositioning_disabled?
     end
-  end
-
-  def url_for_internal_issue(issue_iid, project = @project, options = {})
-    helpers = Gitlab::Routing.url_helpers
-
-    if options[:only_path]
-      helpers.namespace_project_issue_path(namespace_id: project.namespace, project_id: project, id: issue_iid)
-    else
-      helpers.namespace_project_issue_url(namespace_id: project.namespace, project_id: project, id: issue_iid)
-    end
-  end
-
-  def bulk_update_milestone_options
-    milestones = @project.milestones.active.reorder(due_date: :asc, title: :asc).to_a
-    milestones.unshift(Milestone::None)
-
-    options_from_collection_for_select(milestones, 'id', 'title', params[:milestone_id])
-  end
-
-  def milestone_options(object)
-    milestones = object.project.milestones.active.reorder(due_date: :asc, title: :asc).to_a
-    milestones.unshift(object.milestone) if object.milestone.present? && object.milestone.closed?
-    milestones.unshift(Milestone::None)
-
-    options_from_collection_for_select(milestones, 'id', 'title', object.milestone_id)
-  end
-
-  def project_options(issuable, current_user, ability: :read_project)
-    projects = current_user.authorized_projects
-    projects = projects.select do |project|
-      current_user.can?(ability, project)
-    end
-
-    no_project = OpenStruct.new(id: 0, name_with_namespace: 'No project')
-    projects.unshift(no_project)
-    projects.delete(issuable.project)
-
-    options_from_collection_for_select(projects, :id, :name_with_namespace)
-  end
-
-  def status_box_class(item)
-    if item.try(:expired?)
-      'status-box-expired'
-    elsif item.try(:merged?)
-      'status-box-merged'
-    elsif item.closed?
-      'status-box-closed'
-    elsif item.try(:upcoming?)
-      'status-box-upcoming'
-    else
-      'status-box-open'
-    end
-  end
-
-  def issue_button_visibility(issue, closed)
-    return 'hidden' if issue.closed? == closed
-  end
-
-  def merge_requests_sentence(merge_requests)
-    # Sorting based on the `!123` or `group/project!123` reference will sort
-    # local merge requests first.
-    merge_requests.map do |merge_request|
-      merge_request.to_reference(@project)
-    end.sort.to_sentence(last_word_connector: ', or ')
   end
 
   def confidential_icon(issue)
-    icon('eye-slash') if issue.confidential?
+    sprite_icon('eye-slash', css_class: 'gl-align-text-bottom') if issue.confidential?
+  end
+
+  def issue_hidden?(issue)
+    issue.hidden?
   end
 
   def award_user_list(awards, current_user, limit: 10)
@@ -118,29 +37,22 @@ module IssuesHelper
     names.to_sentence
   end
 
-  def award_state_class(awards, current_user)
-    if !current_user
+  def award_state_class(awardable, awards, current_user)
+    if !can?(current_user, :award_emoji, awardable)
       "disabled"
     elsif current_user && awards.find { |a| a.user_id == current_user.id }
-      "active"
+      "selected"
     else
       ""
     end
   end
 
-  def award_user_authored_class(award)
-    if award == 'thumbsdown' || award == 'thumbsup'
-      'user-authored js-user-authored'
-    else
-      ''
-    end
-  end
-
   def awards_sort(awards)
-    awards.sort_by do |award, notes|
-      if award == "thumbsup"
+    awards.sort_by do |award, _award_emojis|
+      case award
+      when AwardEmoji::THUMBS_UP
         0
-      elsif award == "thumbsdown"
+      when AwardEmoji::THUMBS_DOWN
         1
       else
         2
@@ -148,21 +60,9 @@ module IssuesHelper
     end.to_h
   end
 
-  def due_date_options
-    options = [
-      Issue::AnyDueDate,
-      Issue::NoDueDate,
-      Issue::DueThisWeek,
-      Issue::DueThisMonth,
-      Issue::Overdue
-    ]
-
-    options_from_collection_for_select(options, 'name', 'title', params[:due_date])
-  end
-
   def link_to_discussions_to_resolve(merge_request, single_discussion = nil)
-    link_text = merge_request.to_reference
-    link_text += " (discussion #{single_discussion.first_note.id})" if single_discussion
+    link_text = [merge_request.to_reference]
+    link_text << "(discussion #{single_discussion.first_note.id})" if single_discussion
 
     path = if single_discussion
              Gitlab::UrlBuilder.build(single_discussion.first_note)
@@ -171,11 +71,83 @@ module IssuesHelper
              project_merge_request_path(project, merge_request)
            end
 
-    link_to link_text, path
+    link_to link_text.join(' '), path
   end
 
-  # Required for Banzai::Filter::IssueReferenceFilter
-  module_function :url_for_issue
-  module_function :url_for_internal_issue
-  module_function :url_for_tracker_issue
+  def show_new_issue_link?(project)
+    return false unless project
+    return false if project.self_or_ancestors_archived?
+
+    # We want to show the link to users that are not signed in, that way they
+    # get directed to the sign-in/sign-up flow and afterwards to the new issue page.
+    return true unless current_user
+
+    can?(current_user, :create_issue, project)
+  end
+
+  def show_new_branch_button?
+    can_create_confidential_merge_request? || !@issue.confidential?
+  end
+
+  def can_create_confidential_merge_request?
+    @issue.confidential? && !@project.private? &&
+      can?(current_user, :create_merge_request_in, @project)
+  end
+
+  def show_moved_service_desk_issue_warning?(issue)
+    return false unless issue.moved_from
+    return false unless issue.work_item_type&.service_desk?
+
+    ::ServiceDesk.enabled?(issue.moved_from.project) &&
+      !::ServiceDesk.enabled?(issue.project)
+  end
+
+  def issue_header_actions_data(project, issuable, current_user, issuable_sidebar)
+    new_issuable_params = { issue: {}, add_related_issue: issuable.iid }
+    if issuable.work_item_type&.incident?
+      new_issuable_params[:issuable_template] = 'incident'
+      new_issuable_params[:issue][:issue_type] = 'incident'
+    end
+
+    {
+      can_create_issue: show_new_issue_link?(project).to_s,
+      can_create_incident: create_issue_type_allowed?(project, :incident).to_s,
+      can_destroy_issue: can?(current_user, :"destroy_#{issuable.to_ability_name}", issuable).to_s,
+      can_reopen_issue: can?(current_user, :reopen_issue, issuable).to_s,
+      can_report_spam: issuable.submittable_as_spam_by?(current_user).to_s,
+      can_update_issue: can?(current_user, :update_issue, issuable).to_s,
+      is_issue_author: (issuable.author == current_user).to_s,
+      issue_path: issuable_path(issuable),
+      new_issue_path: new_project_issue_path(project, new_issuable_params),
+      project_path: project.full_path,
+      report_abuse_path: add_category_abuse_reports_path,
+      reported_user_id: issuable.author.id,
+      reported_from_url: issue_url(issuable),
+      submit_as_spam_path: mark_as_spam_project_issue_path(project, issuable),
+      issuable_email_address: issuable_sidebar.nil? ? '' : issuable_sidebar[:create_note_email]
+    }
+  end
+
+  def dashboard_issues_list_data(current_user)
+    {
+      autocomplete_award_emojis_path: autocomplete_award_emojis_path,
+      autocomplete_users_path: autocomplete_users_path,
+      calendar_path: url_for(safe_params.merge(calendar_url_options)),
+      dashboard_labels_path: dashboard_labels_path(format: :json, include_ancestor_groups: true),
+      dashboard_milestones_path: dashboard_milestones_path(format: :json),
+      empty_state_with_filter_svg_path: image_path('illustrations/empty-state/empty-issues-md.svg'),
+      empty_state_without_filter_svg_path: image_path('illustrations/empty-state/empty-search-md.svg'),
+      initial_sort: current_user&.user_preference&.issues_sort,
+      is_public_visibility_restricted:
+        Gitlab::CurrentSettings.restricted_visibility_levels&.include?(Gitlab::VisibilityLevel::PUBLIC).to_s,
+      is_signed_in: current_user.present?.to_s,
+      rss_path: url_for(safe_params.merge(rss_url_options))
+    }
+  end
+
+  def award_emoji_issue_api_path(issue)
+    api_v4_projects_issues_award_emoji_path(id: issue.project.id, issue_iid: issue.iid)
+  end
 end
+
+IssuesHelper.prepend_mod_with('IssuesHelper')

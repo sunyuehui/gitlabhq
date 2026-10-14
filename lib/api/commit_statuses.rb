@@ -1,120 +1,141 @@
+# frozen_string_literal: true
+
 require 'mime/types'
 
 module API
-  class CommitStatuses < Grape::API
+  class CommitStatuses < ::API::Base
+    feature_category :continuous_integration
+    urgency :low
+
+    ALLOWED_SORT_VALUES = %w[id pipeline_id].freeze
+    DEFAULT_SORT_VALUE = 'id'
+
+    ALLOWED_SORT_DIRECTIONS = %w[asc desc].freeze
+    DEFAULT_SORT_DIRECTION = 'asc'
+
     params do
-      requires :id, type: String, desc: 'The ID of a project'
+      requires :id, types: [String, Integer], desc: 'ID or URL-encoded path of the project.'
     end
-    resource :projects, requirements: { id: %r{[^/]+} } do
+    resource :projects, requirements: ::API::NAMESPACE_OR_PROJECT_REQUIREMENTS do
       include PaginationParams
 
       before { authenticate! }
 
-      desc "Get a commit's statuses" do
-        success Entities::CommitStatus
+      desc 'List all commit statuses' do
+        detail 'Lists all commit statuses for a specified project.'
+        tags ['commit_statuses']
+        success code: 200, model: Entities::CommitStatus
+        failure [
+          { code: 401, message: 'Unauthorized' },
+          { code: 403, message: 'Forbidden' },
+          { code: 404, message: 'Not found' }
+        ]
+        is_array true
       end
       params do
-        requires :sha,   type: String, desc: 'The commit hash'
-        optional :ref,   type: String, desc: 'The ref'
-        optional :stage, type: String, desc: 'The stage'
-        optional :name,  type: String, desc: 'The name'
-        optional :all,   type: String, desc: 'Show all statuses, default: false'
+        requires :sha,   type: String, desc: 'Commit SHA.', documentation: { example: '18f3e63d05582537db6d183d9d557be09e1f90c8' }
+        optional :ref,   type: String, desc: 'Name of the branch or tag. Defaults to the default branch.', documentation: { example: 'develop' }
+        optional :stage, type: String, desc: 'Filter statuses by [build stage](https://docs.gitlab.com/ci/yaml/#stages). For example, `test`.', documentation: { example: 'test' }
+        optional :name,  type: String, desc: 'Filter statuses by [job name](https://docs.gitlab.com/ci/yaml/#job-keywords).', documentation: { example: 'bundler:audit' }
+        optional :pipeline_id, type: Integer, desc: 'Filter statuses by pipeline ID.', documentation: { example: 1234 }
+        optional :all, type: Boolean, desc: 'If `true`, includes all statuses instead of only the latest.', documentation: { default: false }
+        optional :order_by,
+          type: String,
+          values: ALLOWED_SORT_VALUES,
+          default: DEFAULT_SORT_VALUE,
+          desc: 'Sort results by the specified field.',
+          documentation: { default: DEFAULT_SORT_VALUE }
+        optional :sort,
+          type: String,
+          values: ALLOWED_SORT_DIRECTIONS,
+          desc: 'Sort statuses in ascending or descending order. Defaults to `asc`.',
+          documentation: { default: DEFAULT_SORT_DIRECTION }
         use :pagination
       end
+      # rubocop: disable CodeReuse/ActiveRecord
+      route_setting :authorization, permissions: :read_commit_status, boundary_type: :project
       get ':id/repository/commits/:sha/statuses' do
         authorize!(:read_commit_status, user_project)
 
         not_found!('Commit') unless user_project.commit(params[:sha])
 
-        pipelines = user_project.pipelines.where(sha: params[:sha])
+        pipelines = user_project.ci_pipelines.where(sha: params[:sha])
+        pipelines = pipelines.where(id: params[:pipeline_id]) if params[:pipeline_id].present?
         statuses = ::CommitStatus.where(pipeline: pipelines)
         statuses = statuses.latest unless to_boolean(params[:all])
         statuses = statuses.where(ref: params[:ref]) if params[:ref].present?
-        statuses = statuses.where(stage: params[:stage]) if params[:stage].present?
+        statuses = statuses.joins(:ci_stage).where(ci_stage: { name: params[:stage] }) if params[:stage].present?
         statuses = statuses.where(name: params[:name]) if params[:name].present?
+        statuses = order_and_sort_statuses(statuses)
         present paginate(statuses), with: Entities::CommitStatus
       end
+      # rubocop: enable CodeReuse/ActiveRecord
 
-      desc 'Post status to a commit' do
-        success Entities::CommitStatus
+      desc 'Create or update a commit pipeline status' do
+        detail 'Creates or updates the status of a commit represented by a job in an `external` stage. ' \
+          'If the commit is associated with a merge request, target the commit in the merge request source branch.'
+        tags ['commit_statuses']
+        success code: 200, model: Entities::CommitStatus
+        failure [
+          { code: 400, message: 'Bad request' },
+          { code: 401, message: 'Unauthorized' },
+          { code: 403, message: 'Forbidden' },
+          { code: 404, message: 'Not found' },
+          { code: 409, message: 'Another update to this commit status is in progress' }
+        ]
       end
       params do
-        requires :sha,         type: String,  desc: 'The commit hash'
-        requires :state,       type: String,  desc: 'The state of the status',
-                               values: %w(pending running success failed canceled)
-        optional :ref,         type: String,  desc: 'The ref'
-        optional :target_url,  type: String,  desc: 'The target URL to associate with this status'
-        optional :description, type: String,  desc: 'A short description of the status'
-        optional :name,        type: String,  desc: 'A string label to differentiate this status from the status of other systems. Default: "default"'
-        optional :context,     type: String,  desc: 'A string label to differentiate this status from the status of other systems. Default: "default"'
-        optional :coverage,    type: Float,   desc: 'The total code coverage'
+        requires :sha,          type: String, desc: 'Commit SHA.',
+          documentation: { example: '18f3e63d05582537db6d183d9d557be09e1f90c8' }
+        requires :state,        type: String, desc: 'State of the status.',
+          values: %w[pending running success failed canceled skipped],
+          documentation: { example: 'pending' }
+        optional :ref,          type: String, desc: 'Branch or tag that the status refers to. Must be 255 characters or fewer.',
+          documentation: { example: 'develop' }
+        optional :target_url,   type: String, desc: 'Target URL to associate with this status. Must be 255 characters or fewer.',
+          documentation: { example: 'https://gitlab.example.com/janedoe/gitlab-foss/builds/91' }
+        optional :description,  type: String, desc: 'Short description of the status. Must be 255 characters or fewer.'
+        optional :name,         type: String, desc: 'String label to differentiate this status from the status of other systems.',
+          documentation: { example: 'coverage', default: 'default' }
+        optional :context,      type: String, desc: 'String label to differentiate this status from the status of other systems.',
+          documentation: { example: 'coverage', default: 'default' }
+        optional :coverage,     type: Float, desc: 'Total code coverage.',
+          documentation: { example: 100.0 }
+        optional :pipeline_id,  type: Integer, desc: 'ID of the pipeline to set the status for. Use when multiple pipelines exist for the same commit SHA.'
       end
+      route_setting :authorization, permissions: :create_commit_status, boundary_type: :project
       post ':id/statuses/:sha' do
         authorize! :create_commit_status, user_project
 
-        commit = @project.commit(params[:sha])
-        not_found! 'Commit' unless commit
+        response =
+          ::Ci::CreateCommitStatusService
+            .new(user_project, current_user, params)
+            .execute(optional_commit_status_params: optional_commit_status_params)
 
-        # Since the CommitStatus is attached to Ci::Pipeline (in the future Pipeline)
-        # We need to always have the pipeline object
-        # To have a valid pipeline object that can be attached to specific MR
-        # Other CI service needs to send `ref`
-        # If we don't receive it, we will attach the CommitStatus to
-        # the first found branch on that commit
-
-        ref = params[:ref]
-        ref ||= @project.repository.branch_names_contains(commit.sha).first
-        not_found! 'References for commit' unless ref
-
-        name = params[:name] || params[:context] || 'default'
-
-        pipeline = @project.pipeline_for(ref, commit.sha)
-        unless pipeline
-          pipeline = @project.pipelines.create!(
-            source: :external,
-            sha: commit.sha,
-            ref: ref,
-            user: current_user)
-        end
-
-        status = GenericCommitStatus.running_or_pending.find_or_initialize_by(
-          project: @project,
-          pipeline: pipeline,
-          name: name,
-          ref: ref,
-          user: current_user
-        )
-
-        optional_attributes =
-          attributes_for_keys(%w[target_url description coverage])
-
-        status.update(optional_attributes) if optional_attributes.any?
-        render_validation_error!(status) if status.invalid?
-
-        begin
-          case params[:state]
-          when 'pending'
-            status.enqueue!
-          when 'running'
-            status.enqueue
-            status.run!
-          when 'success'
-            status.success!
-          when 'failed'
-            status.drop!
-          when 'canceled'
-            status.cancel!
+        if response.error?
+          case response.reason
+          when :conflict
+            conflict!(response.message)
           else
-            render_api_error!('invalid state', 400)
+            render_api_error!(response.message, response.http_status)
           end
-
-          MergeRequest.where(source_project: @project, source_branch: ref)
-            .update_all(head_pipeline_id: pipeline) if pipeline.latest?
-
-          present status, with: Entities::CommitStatus
-        rescue StateMachines::InvalidTransition => e
-          render_api_error!(e.message, 400)
+        else
+          present response.payload[:job], with: Entities::CommitStatus
         end
+      end
+      helpers do
+        def optional_commit_status_params
+          updatable_optional_attributes = %w[target_url description coverage]
+          attributes_for_keys(updatable_optional_attributes)
+        end
+
+        # rubocop: disable CodeReuse/ActiveRecord -- Better code maintainability here, this won't be reused anywhere
+        def order_and_sort_statuses(statuses)
+          sort_direction = params[:sort].presence || DEFAULT_SORT_DIRECTION
+          order_column = ALLOWED_SORT_VALUES.include?(params[:order_by]) ? params[:order_by] : DEFAULT_SORT_VALUE
+          statuses.order(order_column => sort_direction)
+        end
+        # rubocop: enable CodeReuse/ActiveRecord
       end
     end
   end

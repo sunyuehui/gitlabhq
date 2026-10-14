@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Email
     class HTMLParser
@@ -6,6 +8,7 @@ module Gitlab
       end
 
       attr_reader :raw_body
+
       def initialize(raw_body)
         @raw_body = raw_body
       end
@@ -15,9 +18,6 @@ module Gitlab
       end
 
       def filter_replies!
-        document.xpath('//blockquote').each(&:remove)
-        document.xpath('//table').each(&:remove)
-
         # bogus links with no href are sometimes added by outlook,
         # and can result in Html2Text adding extra square brackets
         # to the text, so we unwrap them here.
@@ -34,7 +34,7 @@ module Gitlab
       end
 
       def filtered_text
-        @filtered_text ||= Html2Text.convert(filtered_html)
+        @filtered_text ||= ::Gitlab::Email::HtmlToMarkdownParser.convert(filtered_html)
       end
     end
   end

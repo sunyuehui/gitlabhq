@@ -1,7 +1,12 @@
+# frozen_string_literal: true
+
 class ProjectLabel < Label
   MAX_NUMBER_OF_PRIORITIES = 1
 
+  self.allow_legacy_sti_class = true
+
   belongs_to :project
+  belongs_to :parent_container, foreign_key: :project_id, class_name: 'Project'
 
   validates :project, presence: true
 
@@ -10,14 +15,18 @@ class ProjectLabel < Label
 
   delegate :group, to: :project, allow_nil: true
 
-  alias_attribute :subject, :project
+  alias_method :subject, :project
 
   def subject_foreign_key
     'project_id'
   end
 
-  def to_reference(target_project = nil, format: :id, full: false)
-    super(project, target_project: target_project, format: format, full: full)
+  def to_reference(target_container = nil, format: :id, full: false)
+    super(project, target_container: target_container, format: format, full: full)
+  end
+
+  def preloaded_parent_container
+    association(:project).loaded? ? project : parent_container
   end
 
   private

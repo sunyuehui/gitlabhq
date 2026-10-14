@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe BlobViewer::Podspec do
+RSpec.describe BlobViewer::Podspec do
   include FakeBlobHelpers
 
   let(:project) { build_stubbed(:project) }
@@ -12,7 +14,9 @@ describe BlobViewer::Podspec do
       end
     SPEC
   end
+
   let(:blob) { fake_blob(path: 'Reachability.podspec', data: data) }
+
   subject { described_class.new(blob) }
 
   describe '#package_name' do

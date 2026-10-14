@@ -1,11 +1,13 @@
+# frozen_string_literal: true
+
 namespace :gitlab do
   namespace :ldap do
     desc 'GitLab | LDAP | Rename provider'
-    task :rename_provider, [:old_provider, :new_provider] => :environment  do |_, args|
+    task :rename_provider, [:old_provider, :new_provider] => :gitlab_environment do |_, args|
       old_provider = args[:old_provider] ||
-        prompt('What is the old provider? Ex. \'ldapmain\': '.color(:blue))
+        prompt(Rainbow('What is the old provider? Ex. \'ldapmain\': ').blue)
       new_provider = args[:new_provider] ||
-        prompt('What is the new provider ID? Ex. \'ldapcustom\': '.color(:blue))
+        prompt(Rainbow('What is the new provider ID? Ex. \'ldapcustom\': ').blue)
       puts '' # Add some separation in the output
 
       identities = Identity.where(provider: old_provider)
@@ -29,11 +31,29 @@ namespace :gitlab do
       updated_count = identities.update_all(provider: new_provider)
 
       if updated_count == identity_count
-        puts 'User identities were successfully updated'.color(:green)
+        puts Rainbow('User identities were successfully updated').green
       else
         plural_updated_count = ActionController::Base.helpers.pluralize(updated_count, 'user')
-        puts 'Some user identities could not be updated'.color(:red)
+        puts Rainbow('Some user identities could not be updated').red
         puts "Successfully updated #{plural_updated_count} out of #{plural_id_count} total"
+      end
+    end
+
+    namespace :secret do
+      desc 'GitLab | LDAP | Secret | Write LDAP secrets'
+      task write: [:environment] do
+        content = $stdin.tty? ? $stdin.gets : $stdin.read
+        Gitlab::EncryptedLdapCommand.write(content)
+      end
+
+      desc 'GitLab | LDAP | Secret | Edit LDAP secrets'
+      task edit: [:environment] do
+        Gitlab::EncryptedLdapCommand.edit
+      end
+
+      desc 'GitLab | LDAP | Secret | Show LDAP secrets'
+      task show: [:environment] do
+        Gitlab::EncryptedLdapCommand.show
       end
     end
   end

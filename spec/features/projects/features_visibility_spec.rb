@@ -1,67 +1,71 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'Edit Project Settings' do
+RSpec.describe 'Edit Project Settings', feature_category: :groups_and_projects do
   let(:member) { create(:user) }
   let!(:project) { create(:project, :public, :repository) }
   let!(:issue) { create(:issue, project: project) }
   let(:non_member) { create(:user) }
 
-  describe 'project features visibility selectors', js: true do
+  # Sidebar nav links are only visible after hovering over or expanding the
+  # section that contains them (if it exists). Finding visible and hidden
+  # nav links allows us to avoid doing that.
+  let(:visibility_all) { { visible: :all } }
+
+  describe 'project features visibility selectors', :js do
     before do
-      project.team << [member, :master]
+      project.add_maintainer(member)
       sign_in(member)
     end
 
-    tools = { builds: "pipelines", issues: "issues", wiki: "wiki", snippets: "snippets", merge_requests: "merge_requests" }
+    tools = { builds: "pipelines", issues: "issues", wiki: "wiki", snippets: "snippets", merge_requests: "merge_requests", analytics: "project-cycle-analytics" }
 
     tools.each do |tool_name, shortcut_name|
       describe "feature #{tool_name}" do
         it 'toggles visibility' do
           visit edit_project_path(project)
 
-          select 'Disabled', from: "project_project_feature_attributes_#{tool_name}_access_level"
-          page.within('.sharing-permissions') do
-            click_button 'Save changes'
-          end
-          wait_for_requests
-          expect(page).not_to have_selector(".shortcuts-#{shortcut_name}")
+          # disable by clicking toggle
+          toggle_feature_off(tool_name)
+          click_save_changes
+          expect(page).not_to have_selector(".shortcuts-#{shortcut_name}", **visibility_all)
 
-          select 'Everyone with access', from: "project_project_feature_attributes_#{tool_name}_access_level"
-          page.within('.sharing-permissions') do
-            click_button 'Save changes'
-          end
-          wait_for_requests
-          expect(page).to have_selector(".shortcuts-#{shortcut_name}")
-
-          select 'Only team members', from: "project_project_feature_attributes_#{tool_name}_access_level"
-          page.within('.sharing-permissions') do
-            click_button 'Save changes'
-          end
-          wait_for_requests
-          expect(page).to have_selector(".shortcuts-#{shortcut_name}")
+          # re-enable by clicking toggle again
+          toggle_feature_on(tool_name)
+          click_save_changes
+          expect(page).to have_selector(".shortcuts-#{shortcut_name}", **visibility_all)
         end
       end
     end
 
     context 'When external issue tracker is enabled and issues enabled on project settings' do
-      it 'does not hide issues tab' do
-        allow_any_instance_of(Project).to receive(:external_issue_tracker).and_return(JiraService.new)
+      it 'does not hide issues tab and hides labels tab' do
+        allow_next_instance_of(Project) do |instance|
+          allow(instance).to receive(:external_issue_tracker).and_return(Integrations::Jira.new)
+        end
 
         visit project_path(project)
 
-        expect(page).to have_selector('.shortcuts-issues')
+        expect(page).to have_selector('.shortcuts-issues', **visibility_all)
+        expect(page).not_to have_selector('.shortcuts-labels', **visibility_all)
       end
     end
 
     context 'When external issue tracker is enabled and issues disabled on project settings' do
-      it 'hides issues tab' do
+      before do
         project.issues_enabled = false
         project.save!
-        allow_any_instance_of(Project).to receive(:external_issue_tracker).and_return(JiraService.new)
+        allow_next_instance_of(Project) do |instance|
+          allow(instance).to receive(:external_issue_tracker).and_return(Integrations::Jira.new)
+        end
+      end
 
+      it 'hides issues tab' do
         visit project_path(project)
 
-        expect(page).not_to have_selector('.shortcuts-issues')
+        expect(page).not_to have_selector('.shortcuts-issues', **visibility_all)
+        expect(page).not_to have_selector('.shortcuts-labels', **visibility_all)
       end
     end
 
@@ -69,15 +73,16 @@ describe 'Edit Project Settings' do
       it "shows builds when enabled" do
         visit project_pipelines_path(project)
 
-        expect(page).to have_selector(".shortcuts-builds")
+        expect(page).to have_selector(".shortcuts-builds", **visibility_all)
       end
 
       it "hides builds when disabled" do
-        allow(Ability).to receive(:allowed?).with(member, :read_builds, project).and_return(false)
+        allow(Ability).to receive(:allowed?).and_return(true)
+        allow(Ability).to receive(:allowed?).with(member, :read_build, project).and_return(false)
 
         visit project_pipelines_path(project)
 
-        expect(page).not_to have_selector(".shortcuts-builds")
+        expect(page).not_to have_selector(".shortcuts-builds", **visibility_all)
       end
     end
   end
@@ -90,7 +95,7 @@ describe 'Edit Project Settings' do
       {
         builds: project_job_path(project, job),
         issues: project_issues_path(project),
-        wiki: project_wiki_path(project, :home),
+        wiki: wiki_path(project.wiki),
         snippets: project_snippets_path(project),
         merge_requests: project_merge_requests_path(project)
       }
@@ -130,7 +135,7 @@ describe 'Edit Project Settings' do
       it 'renders 200 if user is member of group' do
         group = create(:group)
         project.group = group
-        project.save
+        project.save!
 
         group.add_owner(member)
 
@@ -146,6 +151,7 @@ describe 'Edit Project Settings' do
       before do
         non_member.update_attribute(:admin, true)
         sign_in(non_member)
+        enable_admin_mode!(non_member)
       end
 
       it 'renders 404 if feature is disabled' do
@@ -168,61 +174,54 @@ describe 'Edit Project Settings' do
     end
   end
 
-  describe 'repository visibility', js: true do
+  describe 'repository visibility', :js do
     before do
-      project.team << [member, :master]
+      project.add_maintainer(member)
       sign_in(member)
       visit edit_project_path(project)
     end
 
     it "disables repository related features" do
-      select "Disabled", from: "project_project_feature_attributes_repository_access_level"
+      toggle_feature_off('repository')
 
-      page.within('.sharing-permissions') do
-        click_button "Save changes"
-      end
-
-      expect(find(".sharing-permissions")).to have_selector("select.disabled", count: 2)
+      click_save_changes
+      expect(find_by_testid("visibility-features-permissions-content")).to have_selector(".gl-toggle.is-disabled", minimum: 3)
     end
 
     it "shows empty features project homepage" do
-      select "Disabled", from: "project_project_feature_attributes_repository_access_level"
-      select "Disabled", from: "project_project_feature_attributes_issues_access_level"
-      select "Disabled", from: "project_project_feature_attributes_wiki_access_level"
+      toggle_feature_off('repository')
+      toggle_feature_off('issues')
+      toggle_feature_off('wiki')
 
-      page.within('.sharing-permissions') do
-        click_button "Save changes"
-      end
-      wait_for_requests
+      click_save_changes
 
       visit project_path(project)
+      wait_for_requests
 
-      expect(page).to have_content "Customize your workflow!"
+      expect(page).to have_content "joined project"
     end
 
     it "hides project activity tabs" do
-      select "Disabled", from: "project_project_feature_attributes_repository_access_level"
-      select "Disabled", from: "project_project_feature_attributes_issues_access_level"
-      select "Disabled", from: "project_project_feature_attributes_wiki_access_level"
+      toggle_feature_off('repository')
+      toggle_feature_off('issues')
+      toggle_feature_off('wiki')
 
-      page.within('.sharing-permissions') do
-        click_button "Save changes"
-      end
-      wait_for_requests
+      click_save_changes
 
       visit activity_project_path(project)
+      wait_for_requests
 
       page.within(".event-filter") do
-        expect(page).to have_selector("a", count: 2)
+        expect(page).to have_content("All")
         expect(page).not_to have_content("Push events")
         expect(page).not_to have_content("Merge events")
         expect(page).not_to have_content("Comments")
       end
     end
 
-    # Regression spec for https://gitlab.com/gitlab-org/gitlab-ce/issues/25272
+    # Regression spec for https://gitlab.com/gitlab-org/gitlab-foss/issues/25272
     it "hides comments activity tab only on disabled issues, merge requests and repository" do
-      select "Disabled", from: "project_project_feature_attributes_issues_access_level"
+      toggle_feature_off('issues')
 
       save_changes_and_check_activity_tab do
         expect(page).to have_content("Comments")
@@ -230,7 +229,7 @@ describe 'Edit Project Settings' do
 
       visit edit_project_path(project)
 
-      select "Disabled", from: "project_project_feature_attributes_merge_requests_access_level"
+      toggle_feature_off('merge_requests')
 
       save_changes_and_check_activity_tab do
         expect(page).to have_content("Comments")
@@ -238,7 +237,7 @@ describe 'Edit Project Settings' do
 
       visit edit_project_path(project)
 
-      select "Disabled", from: "project_project_feature_attributes_repository_access_level"
+      toggle_feature_off('repository')
 
       save_changes_and_check_activity_tab do
         expect(page).not_to have_content("Comments")
@@ -248,12 +247,10 @@ describe 'Edit Project Settings' do
     end
 
     def save_changes_and_check_activity_tab
-      page.within('.sharing-permissions') do
-        click_button "Save changes"
-      end
-      wait_for_requests
+      click_save_changes
 
       visit activity_project_path(project)
+      wait_for_requests
 
       page.within(".event-filter") do
         yield
@@ -261,12 +258,12 @@ describe 'Edit Project Settings' do
     end
   end
 
-  # Regression spec for https://gitlab.com/gitlab-org/gitlab-ce/issues/24056
+  # Regression spec for https://gitlab.com/gitlab-org/gitlab-foss/issues/24056
   describe 'project statistic visibility' do
     let!(:project) { create(:project, :private) }
 
     before do
-      project.team << [member, :guest]
+      project.add_guest(member)
       sign_in(member)
       visit project_path(project)
     end
@@ -274,5 +271,22 @@ describe 'Edit Project Settings' do
     it "does not show project statistic for guest" do
       expect(page).not_to have_selector('.project-stats')
     end
+  end
+
+  def toggle_feature_off(feature_name)
+    find(".project-feature-controls[data-for=\"project[project_feature_attributes][#{feature_name}_access_level]\"] .gl-toggle.is-checked").click
+  end
+
+  def toggle_feature_on(feature_name)
+    find(".project-feature-controls[data-for=\"project[project_feature_attributes][#{feature_name}_access_level]\"] .gl-toggle:not(.is-checked)").click
+  end
+
+  def click_save_changes
+    within_testid('visibility-features-permissions-content') do
+      click_button 'Save changes'
+    end
+
+    expect(page)
+      .to have_content format(_("Project '%{project_name}' was successfully updated."), project_name: project.name)
   end
 end

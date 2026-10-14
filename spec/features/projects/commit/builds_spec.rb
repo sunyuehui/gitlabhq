@@ -1,27 +1,27 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'project commit pipelines', js: true do
-  given(:project) { create(:project, :repository) }
+RSpec.describe 'project commit pipelines', :js, feature_category: :continuous_integration do
+  let(:project) { create(:project, :repository) }
 
-  background do
+  before do
+    create(:ci_pipeline, project: project, sha: project.commit.sha, ref: 'master')
+
     user = create(:user)
-    project.team << [user, :master]
+    project.add_maintainer(user)
     sign_in(user)
+
+    visit pipelines_project_commit_path(project, project.commit.sha)
   end
 
-  context 'when no builds triggered yet' do
-    background do
-      create(:ci_pipeline, project: project,
-                           sha: project.commit.sha,
-                           ref: 'master')
-    end
+  context 'with no related merge requests' do
+    it 'shows the correct text for no related MRs' do
+      wait_for_requests
 
-    scenario 'user views commit pipelines page' do
-      visit pipelines_project_commit_path(project, project.commit.sha)
-
-      page.within('.table-holder') do
-        expect(page).to have_content project.pipelines[0].status # pipeline status
-        expect(page).to have_content project.pipelines[0].id     # pipeline ids
+      page.within('.merge-request-info') do
+        expect(page).not_to have_selector '.gl-spinner'
+        expect(page).to have_content 'No related merge requests found'
       end
     end
   end

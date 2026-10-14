@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::SQL::RecursiveCTE, :postgresql do
+RSpec.describe Gitlab::SQL::RecursiveCTE, feature_category: :shared do
   let(:cte) { described_class.new(:cte_name) }
 
   describe '#to_arel' do
@@ -12,13 +14,13 @@ describe Gitlab::SQL::RecursiveCTE, :postgresql do
       cte << rel2
 
       sql = cte.to_arel.to_sql
-      name = ActiveRecord::Base.connection.quote_table_name(:cte_name)
+      name = ApplicationRecord.adapter_class.quote_table_name(:cte_name)
 
-      sql1, sql2 = ActiveRecord::Base.connection.unprepared_statement do
+      sql1, sql2 = ApplicationRecord.connection.unprepared_statement do
         [rel1.except(:order).to_sql, rel2.except(:order).to_sql]
       end
 
-      expect(sql).to eq("#{name} AS (#{sql1}\nUNION\n#{sql2})")
+      expect(sql).to eq("#{name} AS ((#{sql1})\nUNION\n(#{sql2}))")
     end
   end
 
@@ -26,8 +28,17 @@ describe Gitlab::SQL::RecursiveCTE, :postgresql do
     it 'returns an alias for the CTE' do
       table = Arel::Table.new(:kittens)
 
-      source_name = ActiveRecord::Base.connection.quote_table_name(:cte_name)
-      alias_name = ActiveRecord::Base.connection.quote_table_name(:kittens)
+      source_name = ApplicationRecord.adapter_class.quote_table_name(:cte_name)
+      alias_name = ApplicationRecord.adapter_class.quote_table_name(:kittens)
+
+      expect(cte.alias_to(table).to_sql).to eq("#{source_name} AS #{alias_name}")
+    end
+
+    it 'replaces dots with an underscore' do
+      table = Arel::Table.new('gitlab.kittens')
+
+      source_name = ApplicationRecord.adapter_class.quote_table_name(:cte_name)
+      alias_name = ApplicationRecord.adapter_class.quote_table_name(:gitlab_kittens)
 
       expect(cte.alias_to(table).to_sql).to eq("#{source_name} AS #{alias_name}")
     end
@@ -44,6 +55,19 @@ describe Gitlab::SQL::RecursiveCTE, :postgresql do
 
       expect(relation.to_sql).to match(/WITH RECURSIVE.+cte_name/)
       expect(relation.to_a).to eq(User.where(id: user.id).to_a)
+    end
+  end
+
+  it_behaves_like 'CTE with MATERIALIZED keyword examples' do
+    # MATERIALIZED keyword is not needed for recursive queries
+    let(:expected_query_block_with_materialized) { 'WITH RECURSIVE "some_cte" AS (' }
+    let(:expected_query_block_without_materialized) { 'WITH RECURSIVE "some_cte" AS (' }
+
+    let(:query) do
+      recursive_cte = described_class.new(:some_cte)
+      recursive_cte << User.active
+
+      User.with.recursive(recursive_cte.to_arel).to_sql
     end
   end
 end

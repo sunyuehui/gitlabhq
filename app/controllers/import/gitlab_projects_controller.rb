@@ -1,34 +1,54 @@
+# frozen_string_literal: true
+
 class Import::GitlabProjectsController < Import::BaseController
+  include SafeFormatHelper
+  include WorkhorseAuthorization
+
+  before_action :disable_query_limiting, only: [:create]
   before_action :verify_gitlab_project_import_enabled
 
   def new
-    @namespace = Namespace.find(project_params[:namespace_id])
-    return render_404 unless current_user.can?(:create_projects, @namespace)
+    namespace_id = project_params[:namespace_id]
+    @namespace = namespace_id.present? ? Namespace.find(namespace_id) : current_user.namespace
+
+    unless current_user.can?(:import_projects, @namespace)
+      return access_denied!(s_('ImportProjects|You do not have permission to import into this namespace.'))
+    end
+
     @path = project_params[:path]
   end
 
   def create
-    unless file_is_valid?
-      return redirect_back_or_default(options: { alert: "You need to upload a GitLab project export archive." })
+    unless file_is_valid?(project_params[:file])
+      return redirect_back_or_default(
+        options: {
+          alert: _("You need to upload a GitLab project export archive (ending in .gz).")
+        }
+      )
     end
 
-    @project = ::Projects::GitlabProjectsImportService.new(current_user, project_params).execute
+    @project = ::Projects::GitlabProjectsImportService.new(
+      current_user,
+      project_params,
+      import_type: 'gitlab_project',
+      request_channel: ::Gitlab::Import::RequestChannel::UI
+    ).execute
 
     if @project.saved?
       redirect_to(
         project_path(@project),
-        notice: "Project '#{@project.name}' is being imported."
+        notice: safe_format(_("Project '%{project_name}' is being imported."), project_name: @project.name)
       )
     else
-      redirect_back_or_default(options: { alert: "Project could not be imported: #{@project.errors.full_messages.join(', ')}" })
+      redirect_back_or_default(
+        options: {
+          alert: "Project could not be imported: #{@project.errors.full_messages.join(', ')}"
+        }
+      )
     end
   end
 
   private
-
-  def file_is_valid?
-    project_params[:file] && project_params[:file].respond_to?(:read)
-  end
 
   def verify_gitlab_project_import_enabled
     render_404 unless gitlab_project_import_enabled?
@@ -36,7 +56,19 @@ class Import::GitlabProjectsController < Import::BaseController
 
   def project_params
     params.permit(
-      :path, :namespace_id, :file
+      :name, :path, :namespace_id, :file
     )
+  end
+
+  def disable_query_limiting
+    Gitlab::QueryLimiting.disable!('https://gitlab.com/gitlab-org/gitlab/-/issues/20823')
+  end
+
+  def uploader_class
+    ImportExportUploader
+  end
+
+  def maximum_size
+    Gitlab::CurrentSettings.max_import_size.megabytes
   end
 end

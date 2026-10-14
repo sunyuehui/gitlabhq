@@ -1,43 +1,15 @@
-- pipeline = local_assigns.fetch(:pipeline) { project.pipelines.latest_successful_for(ref) }
+- project = local_assigns.fetch(:project)
+- ref = local_assigns.fetch(:ref)
+- ref_type = local_assigns.fetch(:ref_type)
+- css_class = local_assigns.fetch(:css_class, '')
+- archive_prefix = ref ? "#{project.path}-#{ref.tr('/', '-')}" : ''
+- pipeline = local_assigns.fetch(:pipeline, nil)
+- download_links = download_links(project, ref, archive_prefix, ref_type).to_json
+- download_artifacts = pipeline && previous_artifacts(project, ref, pipeline.latest_builds_with_artifacts).to_json || []
 
 - if !project.empty_repo? && can?(current_user, :download_code, project)
-  .project-action-button.dropdown.inline>
-    %button.btn.has-tooltip{ title: s_('DownloadSource|Download'), 'data-toggle' => 'dropdown', 'aria-label' => s_('DownloadSource|Download') }
-      = icon('download')
-      = icon("caret-down")
-      %span.sr-only=  _('Select Archive Format')
-    %ul.dropdown-menu.dropdown-menu-align-right{ role: 'menu' }
-      %li.dropdown-header
-        #{ _('Source code') }
-      %li
-        = link_to archive_project_repository_path(project, ref: ref, format: 'zip'), rel: 'nofollow', download: '' do
-          %i.fa.fa-download
-          %span=  _('Download zip')
-      %li
-        = link_to archive_project_repository_path(project, ref: ref, format: 'tar.gz'), rel: 'nofollow', download: '' do
-          %i.fa.fa-download
-          %span= _('Download tar.gz')
-      %li
-        = link_to archive_project_repository_path(project, ref: ref, format: 'tar.bz2'), rel: 'nofollow', download: '' do
-          %i.fa.fa-download
-          %span= _('Download tar.bz2')
-      %li
-        = link_to archive_project_repository_path(project, ref: ref, format: 'tar'), rel: 'nofollow', download: '' do
-          %i.fa.fa-download
-          %span= _('Download tar')
-
-      - if pipeline
-        - artifacts = pipeline.builds.latest.with_artifacts
-        - if artifacts.any?
-          %li.dropdown-header Artifacts
-          - unless pipeline.latest?
-            - latest_pipeline = project.pipeline_for(ref)
-            %li
-              .unclickable= ci_status_for_statuseable(latest_pipeline)
-            %li.dropdown-header Previous Artifacts
-          - artifacts.each do |job|
-            %li
-              = link_to latest_succeeded_project_artifacts_path(project, "#{ref}/download", job: job.name), rel: 'nofollow', download: '' do
-                %i.fa.fa-download
-                %span
-                  #{ s_('DownloadArtifacts|Download') } '#{job.name}'
+  .js-source-code-dropdown{ data: {
+    download_links: download_links,
+    download_artifacts: download_artifacts,
+    css_class: css_class,
+  } }

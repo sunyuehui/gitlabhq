@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'projects/blob/_viewer.html.haml' do
+RSpec.describe 'projects/blob/_viewer.html.haml' do
   include FakeBlobHelpers
 
   let(:project) { build(:project) }
@@ -22,6 +24,7 @@ describe 'projects/blob/_viewer.html.haml' do
   before do
     assign(:project, project)
     assign(:blob, blob)
+    assign(:ref, 'master')
     assign(:id, File.join('master', blob.path))
 
     controller.params[:controller] = 'projects/blob'
@@ -29,6 +32,8 @@ describe 'projects/blob/_viewer.html.haml' do
     controller.params[:namespace_id] = project.namespace.to_param
     controller.params[:project_id] = project.to_param
     controller.params[:id] = File.join('master', blob.path)
+
+    allow(project.repository).to receive(:gitattribute).and_return(nil)
   end
 
   def render_view

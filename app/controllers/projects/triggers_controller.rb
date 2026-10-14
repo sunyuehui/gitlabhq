@@ -1,56 +1,62 @@
+# frozen_string_literal: true
+
 class Projects::TriggersController < Projects::ApplicationController
-  before_action :authorize_admin_build!
+  before_action :authorize_manage_trigger_on_project!
   before_action :authorize_manage_trigger!, except: [:index, :create]
-  before_action :authorize_admin_trigger!, only: [:edit, :update]
-  before_action :trigger, only: [:take_ownership, :edit, :update, :destroy]
+
+  before_action :authorize_admin_trigger!, only: [:update]
+  before_action :trigger, only: [:update, :destroy]
 
   layout 'project_settings'
 
+  feature_category :continuous_integration
+  urgency :low
+
   def index
-    redirect_to project_settings_ci_cd_path(@project)
+    redirect_to project_settings_ci_cd_path(@project, anchor: 'js-pipeline-triggers')
   end
 
   def create
-    @trigger = project.triggers.create(trigger_params.merge(owner: current_user))
+    response = ::Ci::PipelineTriggers::CreateService.new(
+      project: project,
+      user: current_user,
+      description: trigger_params[:description],
+      expires_at: trigger_params[:expires_at]
+    ).execute
 
-    if @trigger.valid?
-      flash[:notice] = 'Trigger was created successfully.'
+    @trigger = response.payload[:trigger]
+
+    if response.success?
+      flash[:notice] = _('Trigger token was created successfully.')
     else
-      flash[:alert] = 'You could not create a new trigger.'
+      flash[:alert] = response.message
     end
 
-    redirect_to project_settings_ci_cd_path(@project)
-  end
-
-  def take_ownership
-    if trigger.update(owner: current_user)
-      flash[:notice] = 'Trigger was re-assigned.'
-    else
-      flash[:alert] = 'You could not take ownership of trigger.'
-    end
-
-    redirect_to project_settings_ci_cd_path(@project)
-  end
-
-  def edit
+    redirect_to project_settings_ci_cd_path(@project, anchor: 'js-pipeline-triggers')
   end
 
   def update
-    if trigger.update(trigger_params)
-      redirect_to project_settings_ci_cd_path(@project), notice: 'Trigger was successfully updated.'
+    response = ::Ci::PipelineTriggers::UpdateService.new(user: current_user, trigger: trigger,
+      description: trigger_params[:description]).execute
+
+    if response.success?
+      redirect_to project_settings_ci_cd_path(@project, anchor: 'js-pipeline-triggers'),
+        notice: _('Trigger token was successfully updated.')
     else
       render action: "edit"
     end
   end
 
   def destroy
-    if trigger.destroy
-      flash[:notice] = "Trigger removed."
+    response = ::Ci::PipelineTriggers::DestroyService.new(user: current_user, trigger: trigger).execute
+
+    if response.success?
+      flash[:notice] = _("Trigger token removed.")
     else
-      flash[:alert] = "Could not remove the trigger."
+      flash[:alert] = response.message
     end
 
-    redirect_to project_settings_ci_cd_path(@project), status: 302
+    redirect_to project_settings_ci_cd_path(@project, anchor: 'js-pipeline-triggers'), status: :found
   end
 
   private
@@ -59,17 +65,24 @@ class Projects::TriggersController < Projects::ApplicationController
     access_denied! unless can?(current_user, :manage_trigger, trigger)
   end
 
+  def authorize_manage_trigger_on_project!
+    access_denied! unless can?(current_user, :manage_trigger, project)
+  end
+
   def authorize_admin_trigger!
     access_denied! unless can?(current_user, :admin_trigger, trigger)
   end
 
   def trigger
-    @trigger ||= project.triggers.find(params[:id]) || render_404
+    @trigger ||= project.triggers.find(find_trigger_params[:id])
+      .present(current_user: current_user)
+  end
+
+  def find_trigger_params
+    params.permit(:id)
   end
 
   def trigger_params
-    params.require(:trigger).permit(
-      :description
-    )
+    params.require(:trigger).permit(:description, :expires_at)
   end
 end

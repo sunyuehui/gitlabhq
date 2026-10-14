@@ -1,9 +1,13 @@
+# frozen_string_literal: true
+
 module Banzai
   module ReferenceParser
     class CommitParser < BaseParser
       self.reference_type = :commit
 
-      def referenced_by(nodes)
+      COMMITS_LIMIT = 1000
+
+      def referenced_by(nodes, options = {})
         commit_ids = commit_ids_per_project(nodes)
         projects = find_projects_for_hash_keys(commit_ids)
 
@@ -17,17 +21,11 @@ module Banzai
       end
 
       def find_commits(project, ids)
-        commits = []
+        return [] unless project.valid_repo?
 
-        return commits unless project.valid_repo?
+        ids = ids.take(COMMITS_LIMIT)
 
-        ids.each do |id|
-          commit = project.commit(id)
-
-          commits << commit if commit
-        end
-
-        commits
+        project.commits_by(oids: ids)
       end
 
       private

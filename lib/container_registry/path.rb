@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ContainerRegistry
   ##
   # Class responsible for extracting project and repository name from
@@ -14,8 +16,14 @@ module ContainerRegistry
 
     LEVELS_SUPPORTED = 3
 
-    def initialize(path)
+    attr_reader :project
+
+    # The 'project' argument is optional.
+    # If provided during initialization, it will limit the path to the specified project,
+    # potentially reducing the need for a database query.
+    def initialize(path, project: nil)
       @path = path.to_s.downcase
+      @project = project
     end
 
     def valid?
@@ -28,6 +36,7 @@ module ContainerRegistry
       @components ||= @path.split('/')
     end
 
+    # rubocop: disable CodeReuse/ActiveRecord
     def nodes
       raise InvalidRegistryPathError unless valid?
 
@@ -35,21 +44,20 @@ module ContainerRegistry
         components.take(length).join('/')
       end
     end
+    # rubocop: enable CodeReuse/ActiveRecord
 
     def has_project?
       repository_project.present?
     end
 
+    # rubocop: disable CodeReuse/ActiveRecord
     def has_repository?
       return false unless has_project?
 
       repository_project.container_repositories
         .where(name: repository_name).any?
     end
-
-    def root_repository?
-      @path == project_path
-    end
+    # rubocop: enable CodeReuse/ActiveRecord
 
     def repository_project
       @project ||= Project
@@ -60,7 +68,7 @@ module ContainerRegistry
     def repository_name
       return unless has_project?
 
-      @path.remove(%r(^#{Regexp.escape(project_path)}/?))
+      @path.remove(%r{^#{Regexp.escape(project_path)}/?})
     end
 
     def project_path

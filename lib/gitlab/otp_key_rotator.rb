@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   # The +otp_key_base+ param is used to encrypt the User#otp_secret attribute.
   #
@@ -26,14 +28,15 @@ module Gitlab
       @filename = filename
     end
 
+    # rubocop: disable CodeReuse/ActiveRecord
     def rotate!(old_key:, new_key:)
-      old_key ||= Gitlab::Application.secrets.otp_key_base
+      old_key ||= Gitlab::Application.credentials.otp_key_base
 
-      raise ArgumentError.new("Old key is the same as the new key") if old_key == new_key
-      raise ArgumentError.new("New key is too short! Must be 256 bits") if new_key.size < 64
+      raise ArgumentError, "Old key is the same as the new key" if old_key == new_key
+      raise ArgumentError, "New key is too short! Must be 256 bits" if new_key.size < 64
 
       write_csv do |csv|
-        ActiveRecord::Base.transaction do
+        User.transaction do
           User.with_two_factor.in_batches do |relation| # rubocop: disable Cop/InBatches
             rows = relation.pluck(:id, :encrypted_otp_secret, :encrypted_otp_secret_iv, :encrypted_otp_secret_salt)
             rows.each do |row|
@@ -47,21 +50,24 @@ module Gitlab
         end
       end
     end
+    # rubocop: enable CodeReuse/ActiveRecord
 
+    # rubocop: disable CodeReuse/ActiveRecord
     def rollback!
-      ActiveRecord::Base.transaction do
+      User.transaction do
         CSV.foreach(filename, headers: HEADERS, return_headers: false) do |row|
           User.where(id: row['user_id']).update_all(encrypted_otp_secret: row['old_value'])
         end
       end
     end
+    # rubocop: enable CodeReuse/ActiveRecord
 
     private
 
     attr_reader :old_key, :new_key
 
     def otp_secret_settings
-      @otp_secret_settings ||= User.encrypted_attributes[:otp_secret]
+      @otp_secret_settings ||= User.attr_encrypted_encrypted_attributes[:otp_secret]
     end
 
     def reencrypt(user, old_key, new_key)

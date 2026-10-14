@@ -1,9 +1,16 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Metrics::MethodCall do
-  let(:method_call) { described_class.new('Foo#bar', 'foo') }
+RSpec.describe Gitlab::Metrics::MethodCall do
+  let(:transaction) { Gitlab::Metrics::WebTransaction.new({}) }
+  let(:method_call) { described_class.new('Foo#bar', :Foo, '#bar', transaction) }
 
   describe '#measure' do
+    after do
+      ::Gitlab::Metrics::Transaction.reload_metric!(:gitlab_method_call_duration_seconds)
+    end
+
     it 'measures the performance of the supplied block' do
       method_call.measure { 'foo' }
 
@@ -11,33 +18,61 @@ describe Gitlab::Metrics::MethodCall do
       expect(method_call.cpu_time).to be_a_kind_of(Numeric)
       expect(method_call.call_count).to eq(1)
     end
-  end
 
-  describe '#to_metric' do
-    it 'returns a Metric instance' do
-      method_call.measure { 'foo' }
-      metric = method_call.to_metric
+    context 'when measurement is above threshold' do
+      before do
+        allow(method_call).to receive(:above_threshold?).and_return(true)
+      end
 
-      expect(metric).to be_an_instance_of(Gitlab::Metrics::Metric)
-      expect(metric.series).to eq('foo')
+      around do |example|
+        freeze_time do
+          example.run
+        end
+      end
 
-      expect(metric.values[:duration]).to be_a_kind_of(Numeric)
-      expect(metric.values[:cpu_duration]).to be_a_kind_of(Numeric)
-      expect(metric.values[:call_count]).to be_an(Integer)
+      it 'metric is not a NullMetric' do
+        method_call.measure { 'foo' }
+        expect(::Gitlab::Metrics::WebTransaction.prometheus_metric(:gitlab_method_call_duration_seconds, :histogram)).not_to be_instance_of(Gitlab::Metrics::NullMetric)
+      end
 
-      expect(metric.tags).to eq({ method: 'Foo#bar' })
+      it 'observes the performance of the supplied block' do
+        expect(transaction)
+          .to receive(:observe).with(:gitlab_method_call_duration_seconds, be_a_kind_of(Numeric), { method: "#bar", module: :Foo })
+
+        method_call.measure { 'foo' }
+      end
+    end
+
+    context 'when measurement is below threshold' do
+      before do
+        allow(method_call).to receive(:above_threshold?).and_return(false)
+      end
+
+      it 'does not observe the performance' do
+        expect(transaction)
+          .not_to receive(:observe)
+                .with(:gitlab_method_call_duration_seconds, be_a_kind_of(Numeric))
+
+        method_call.measure { 'foo' }
+      end
     end
   end
 
   describe '#above_threshold?' do
+    before do
+      allow(Gitlab::Metrics).to receive(:method_call_threshold).and_return(100)
+    end
+
     it 'returns false when the total call time is not above the threshold' do
-      expect(method_call.above_threshold?).to eq(false)
+      expect(method_call).to receive(:real_time).and_return(0.009)
+
+      expect(method_call.above_threshold?).to be(false)
     end
 
     it 'returns true when the total call time is above the threshold' do
-      expect(method_call).to receive(:real_time).and_return(9000)
+      expect(method_call).to receive(:real_time).and_return(9)
 
-      expect(method_call.above_threshold?).to eq(true)
+      expect(method_call.above_threshold?).to be(true)
     end
   end
 

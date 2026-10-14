@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Banzai
   module ReferenceParser
     # Base class for reference parsing classes.
@@ -45,9 +47,21 @@ module Banzai
         @data_attribute ||= "data-#{reference_type.to_s.dasherize}"
       end
 
-      def initialize(project = nil, current_user = nil)
-        @project = project
-        @current_user = current_user
+      # Returns a model class to use as a reference.
+      # By default, the method does not take namespaces into account,
+      # thus parser classes can customize the reference class to use
+      # a model name with a namespace
+      def self.reference_class
+        reference_type.to_s.classify.constantize
+      end
+
+      # context - An instance of `Banzai::RenderContext`.
+      def initialize(context)
+        @context = context
+      end
+
+      def project_for_node(node)
+        context.project_for_node(node)
       end
 
       # Returns all the nodes containing references that the user can refer to.
@@ -58,11 +72,18 @@ module Banzai
       # Returns all the nodes that are visible to the given user.
       def nodes_visible_to_user(user, nodes)
         projects = lazy { projects_for_nodes(nodes) }
+        groups = lazy { groups_for_nodes(nodes) }
         project_attr = 'data-project'
+        group_attr = 'data-group'
+
+        preload_associations(projects, user)
+        preload_group_associations(groups, user)
 
         nodes.select do |node|
           if node.has_attribute?(project_attr)
             can_read_reference?(user, projects[node], node)
+          elsif node.has_attribute?(group_attr)
+            can_read_reference?(user, groups[node], node)
           else
             true
           end
@@ -70,8 +91,10 @@ module Banzai
       end
 
       # Returns an Array of objects referenced by any of the given HTML nodes.
-      def referenced_by(nodes)
+      def referenced_by(nodes, options = {})
         ids = unique_attribute_values(nodes, self.class.data_attribute)
+
+        return ids if options.fetch(:ids_only, false)
 
         if ids.empty?
           references_relation.none
@@ -162,8 +185,9 @@ module Banzai
       # objects that have not yet been queried. For objects that have already
       # been queried the object is returned from the cache.
       def collection_objects_for_ids(collection, ids)
-        if RequestStore.active?
-          ids = ids.map(&:to_i)
+        if Gitlab::SafeRequestStore.active?
+          ids = ids.map(&:to_i).uniq
+
           cache = collection_cache[collection_cache_key(collection)]
           to_query = ids - cache.keys
 
@@ -171,7 +195,10 @@ module Banzai
             collection.where(id: to_query).each { |row| cache[row.id] = row }
           end
 
-          cache.values_at(*ids).compact
+          ids.each_with_object([]) do |id, array|
+            row = cache[id]
+            array << row if row
+          end
         else
           collection.where(id: ids)
         end
@@ -184,7 +211,7 @@ module Banzai
 
       # Processes the list of HTML documents and returns an Array containing all
       # the references.
-      def process(documents)
+      def process(documents, ids_only: false)
         type = self.class.reference_type
         reference_options = self.class.reference_options
 
@@ -192,15 +219,16 @@ module Banzai
           Querying.css(document, "a[data-reference-type='#{type}'].gfm", reference_options).to_a
         end
 
-        gather_references(nodes)
+        gather_references(nodes, ids_only: ids_only)
       end
 
-      # Gathers the references for the given HTML nodes.
-      def gather_references(nodes)
+      # Gathers the references for the given HTML nodes.  Returns visible
+      # references and a list of nodes which are not visible to the user
+      def gather_references(nodes, ids_only: false)
         nodes = nodes_user_can_reference(current_user, nodes)
-        nodes = nodes_visible_to_user(current_user, nodes)
+        visible = nodes_visible_to_user(current_user, nodes)
 
-        referenced_by(nodes)
+        { visible: referenced_by(visible, ids_only: ids_only), nodes: nodes, visible_nodes: visible }
       end
 
       # Returns a Hash containing the projects for a given list of HTML nodes.
@@ -210,8 +238,11 @@ module Banzai
       #     { node => project }
       #
       def projects_for_nodes(nodes)
-        @projects_for_nodes ||=
-          grouped_objects_for_nodes(nodes, Project, 'data-project')
+        @projects_for_nodes ||= grouped_objects_for_nodes(nodes, Project.includes(:project_feature), 'data-project')
+      end
+
+      def groups_for_nodes(nodes)
+        @groups_for_nodes ||= grouped_objects_for_nodes(nodes, Group, 'data-group')
       end
 
       def can?(user, permission, subject = :global)
@@ -224,7 +255,11 @@ module Banzai
 
       private
 
-      attr_reader :current_user, :project
+      attr_reader :context
+
+      def current_user
+        context.current_user
+      end
 
       # When a feature is disabled or visible only for
       # team members we should not allow team members
@@ -240,9 +275,21 @@ module Banzai
       end
 
       def collection_cache
-        RequestStore[:banzai_collection_cache] ||= Hash.new do |hash, key|
+        Gitlab::SafeRequestStore[:banzai_collection_cache] ||= Hash.new do |hash, key|
           hash[key] = {}
         end
+      end
+
+      # For any preloading of project associations
+      # needed to avoid N+1s.
+      # Note: `projects` param is a hash of { node => project }.
+      # See #projects_for_nodes for more information.
+      def preload_associations(projects, user)
+        ::Preloaders::ProjectPolicyPreloader.new(projects.values, user).execute
+      end
+
+      def preload_group_associations(groups, user)
+        ::Preloaders::GroupPolicyPreloader.new(groups.values, user).execute
       end
     end
   end

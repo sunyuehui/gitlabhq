@@ -5,55 +5,64 @@
  *
  * Makes a post request when the button is clicked.
  */
-import eventHub from '../event_hub';
-import loadingIcon from '../../vue_shared/components/loading_icon.vue';
+import { GlDisclosureDropdownItem, GlModalDirective } from '@gitlab/ui';
+import { s__ } from '~/locale';
+import setEnvironmentToRollback from '../graphql/mutations/set_environment_to_rollback.mutation.graphql';
 
 export default {
+  name: 'EnvironmentRollback',
+  components: {
+    GlDisclosureDropdownItem,
+  },
+  directives: {
+    GlModal: GlModalDirective,
+  },
   props: {
-    retryUrl: {
-      type: String,
-      default: '',
-    },
-
     isLastDeployment: {
       type: Boolean,
       default: true,
+      required: false,
     },
-  },
 
-  components: {
-    loadingIcon,
+    environment: {
+      type: Object,
+      required: true,
+    },
+
+    retryUrl: {
+      type: String,
+      required: true,
+    },
   },
 
   data() {
     return {
-      isLoading: false,
+      item: {
+        text: this.isLastDeployment
+          ? s__('Environments|Re-deploy to environment')
+          : s__('Environments|Rollback environment'),
+      },
     };
   },
 
   methods: {
     onClick() {
-      this.isLoading = true;
+      const rollbackEnvironmentData = {
+        ...this.environment,
+        retryUrl: this.retryUrl,
+        isLastDeployment: this.isLastDeployment,
+      };
 
-      eventHub.$emit('postAction', this.retryUrl);
+      this.$apollo.mutate({
+        mutation: setEnvironmentToRollback,
+        variables: {
+          environment: rollbackEnvironmentData,
+        },
+      });
     },
   },
 };
 </script>
 <template>
-  <button
-    type="button"
-    class="btn hidden-xs hidden-sm"
-    @click="onClick"
-    :disabled="isLoading">
-
-    <span v-if="isLastDeployment">
-      Re-deploy
-    </span>
-    <span v-else>
-      Rollback
-    </span>
-
-    <loading-icon v-if="isLoading" />
-  </button>
+  <gl-disclosure-dropdown-item v-gl-modal.confirm-rollback-modal :item="item" @action="onClick" />
 </template>

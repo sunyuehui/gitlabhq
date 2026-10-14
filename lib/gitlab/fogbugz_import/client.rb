@@ -1,4 +1,4 @@
-require 'fogbugz'
+# frozen_string_literal: true
 
 module Gitlab
   module FogbugzImport
@@ -7,9 +7,9 @@ module Gitlab
 
       def initialize(options = {})
         if options[:uri] && options[:token]
-          @api = ::Fogbugz::Interface.new(options)
+          @api = Interface.new(options)
         elsif options[:uri] && options[:email] && options[:password]
-          @api = ::Fogbugz::Interface.new(options)
+          @api = Interface.new(options)
           @api.authenticate
           @api
         end
@@ -45,6 +45,7 @@ module Gitlab
         project_name = repo(project_id).name
         res = @api.command(:search, q: "project:'#{project_name}'", cols: 'ixPersonAssignedTo,ixPersonOpenedBy,ixPersonClosedBy,sStatus,sPriority,sCategory,fOpen,sTitle,sLatestTextSummary,dtOpened,dtClosed,dtResolved,dtLastUpdated,events')
         return [] unless res['cases']['count'].to_i > 0
+
         res['cases']['case']
       end
 

@@ -1,20 +1,38 @@
-require 'rake_helper'
+# frozen_string_literal: true
 
-describe 'gitlab:gitaly namespace rake task' do
-  before :all do
+require 'spec_helper'
+
+RSpec.describe 'gitlab:gitaly namespace rake task', :silence_stdout, feature_category: :source_code_management do
+  before(:all) do
     Rake.application.rake_require 'tasks/gitlab/gitaly'
   end
 
-  describe 'install' do
-    let(:repo) { 'https://gitlab.com/gitlab-org/gitaly.git' }
-    let(:clone_path) { Rails.root.join('tmp/tests/gitaly').to_s }
-    let(:version) { File.read(Rails.root.join(Gitlab::GitalyClient::SERVER_VERSION_FILE)).chomp }
+  let(:repo) { 'https://gitlab.com/gitlab-org/gitaly.git' }
+  let(:clone_path) { Rails.root.join('tmp/tests/gitaly').to_s }
+  let(:storage_path) { Rails.root.join('tmp/tests/repositories').to_s }
+  let(:version) { File.read(Rails.root.join(Gitlab::GitalyClient::SERVER_VERSION_FILE)).chomp }
+
+  before do
+    # The CI environment may set GITALY_REPO_URL (e.g. to the security fork with a
+    # deploy token); unset it so the canonical default URL is used deterministically.
+    stub_env('GITALY_REPO_URL', nil)
+  end
+
+  describe 'clone' do
+    subject { run_rake_task('gitlab:gitaly:clone', clone_path, storage_path) }
 
     context 'no dir given' do
       it 'aborts and display a help message' do
         # avoid writing task output to spec progress
         allow($stderr).to receive :write
-        expect { run_rake_task('gitlab:gitaly:install') }.to raise_error /Please specify the directory where you want to install gitaly/
+        expect { run_rake_task('gitlab:gitaly:clone') }.to raise_error(/Please specify the directory where you want to install gitaly and the path for the default storage/)
+      end
+    end
+
+    context 'no storage path given' do
+      it 'aborts and display a help message' do
+        allow($stderr).to receive :write
+        expect { run_rake_task('gitlab:gitaly:clone', clone_path) }.to raise_error(/Please specify the directory where you want to install gitaly and the path for the default storage/)
       end
     end
 
@@ -23,119 +41,122 @@ describe 'gitlab:gitaly namespace rake task' do
         expect(main_object)
           .to receive(:checkout_or_clone_version).and_raise 'Git error'
 
-        expect { run_rake_task('gitlab:gitaly:install', clone_path) }.to raise_error 'Git error'
+        expect { subject }.to raise_error 'Git error'
       end
     end
 
     describe 'checkout or clone' do
-      before do
-        expect(Dir).to receive(:chdir).with(clone_path)
-      end
-
       it 'calls checkout_or_clone_version with the right arguments' do
         expect(main_object)
-          .to receive(:checkout_or_clone_version).with(version: version, repo: repo, target_dir: clone_path)
+          .to receive(:checkout_or_clone_version).with(version: version, repo: repo, target_dir: clone_path, clone_opts: %w[--depth 1])
 
-        run_rake_task('gitlab:gitaly:install', clone_path)
+        subject
       end
     end
+  end
+
+  describe 'install' do
+    subject { run_rake_task('gitlab:gitaly:install', clone_path, storage_path) }
 
     describe 'gmake/make' do
-      let(:command_preamble) { %w[/usr/bin/env -u RUBYOPT -u BUNDLE_GEMFILE] }
-
-      before(:all) do
-        @old_env_ci = ENV.delete('CI')
-      end
-
-      after(:all) do
-        ENV['CI'] = @old_env_ci if @old_env_ci
-      end
-
       before do
+        stub_env('CI', false)
         FileUtils.mkdir_p(clone_path)
         expect(Dir).to receive(:chdir).with(clone_path).and_call_original
-        allow(Bundler).to receive(:bundle_path).and_return('/fake/bundle_path')
+        stub_rails_env('development')
       end
 
       context 'gmake is available' do
-        before do
-          expect(main_object).to receive(:checkout_or_clone_version)
+        it 'calls gmake in the gitaly directory' do
+          expect(Gitlab::Popen).to receive(:popen)
+            .with(%w[which gmake])
+            .and_return(['/usr/bin/gmake', 0])
+          expect(Gitlab::Popen).to receive(:popen)
+            .with(%w[gmake clean all])
+            .and_return(['ok', 0])
+
+          subject
         end
 
-        it 'calls gmake in the gitaly directory' do
-          expect(Gitlab::Popen).to receive(:popen).with(%w[which gmake]).and_return(['/usr/bin/gmake', 0])
-          expect(main_object).to receive(:run_command!).with(command_preamble + %w[gmake BUNDLE_PATH=/fake/bundle_path]).and_return(true)
+        context 'when gmake fails' do
+          it 'aborts process' do
+            expect(Gitlab::Popen).to receive(:popen)
+              .with(%w[which gmake])
+              .and_return(['/usr/bin/gmake', 0])
+            expect(Gitlab::Popen).to receive(:popen)
+              .with(%w[gmake clean all])
+              .and_return(['output', 1])
 
-          run_rake_task('gitlab:gitaly:install', clone_path)
+            expect { subject }.to raise_error(/Gitaly failed to compile: output/)
+          end
         end
       end
 
       context 'gmake is not available' do
         before do
-          expect(main_object).to receive(:checkout_or_clone_version)
-          expect(Gitlab::Popen).to receive(:popen).with(%w[which gmake]).and_return(['', 42])
+          expect(Gitlab::Popen).to receive(:popen)
+            .with(%w[which gmake])
+            .and_return(['', 42])
         end
 
         it 'calls make in the gitaly directory' do
-          expect(main_object).to receive(:run_command!).with(command_preamble + %w[make BUNDLE_PATH=/fake/bundle_path]).and_return(true)
+          expect(Gitlab::Popen).to receive(:popen)
+            .with(%w[make clean all])
+            .and_return(['output', 0])
 
-          run_rake_task('gitlab:gitaly:install', clone_path)
-        end
-
-        context 'when Rails.env is not "test"' do
-          before do
-            allow(Rails.env).to receive(:test?).and_return(false)
-          end
-
-          it 'calls make in the gitaly directory without BUNDLE_PATH' do
-            expect(main_object).to receive(:run_command!).with(command_preamble + ['make']).and_return(true)
-
-            run_rake_task('gitlab:gitaly:install', clone_path)
-          end
+          subject
         end
       end
     end
   end
 
-  describe 'storage_config' do
-    it 'prints storage configuration in a TOML format' do
-      config = {
-        'default' => {
-          'path' => '/path/to/default',
-          'gitaly_address' => 'unix:/path/to/my.socket'
-        },
-        'nfs_01' => {
-          'path' => '/path/to/nfs_01',
-          'gitaly_address' => 'unix:/path/to/my.socket'
-        }
-      }
-      allow(Gitlab.config.repositories).to receive(:storages).and_return(config)
-      allow(Rails.env).to receive(:test?).and_return(false)
+  describe 'update_removed_storage_projects' do
+    let(:removed_storage_name) { 'removed_storage' }
+    let(:target_storage_name) { 'target_storage' }
+    let(:message) { "1 projects from storage #{removed_storage_name} to #{target_storage_name} in the Rails database." }
+    let_it_be_with_reload(:project) { create(:project) } # rubocop: disable RSpec/AvoidTestProf -- This is not a migration spec
 
-      expected_output = ''
-      Timecop.freeze do
-        expected_output = <<~TOML
-          # Gitaly storage configuration generated from #{Gitlab.config.source} on #{Time.current.to_s(:long)}
-          # This is in TOML format suitable for use in Gitaly's config.toml file.
-          socket_path = "/path/to/my.socket"
-          [gitlab-shell]
-          dir = "#{Gitlab.config.gitlab_shell.path}"
-          [[storage]]
-          name = "default"
-          path = "/path/to/default"
-          [[storage]]
-          name = "nfs_01"
-          path = "/path/to/nfs_01"
-        TOML
+    before do
+      project.update_column(:repository_storage, removed_storage_name)
+    end
+
+    subject { run_rake_task('gitlab:gitaly:update_removed_storage_projects', removed_storage_name, target_storage_name) }
+
+    context 'no removed storage name given' do
+      it 'aborts and display a help message' do
+        # avoid writing task output to spec progresdoc/development/gotchas.mds
+        allow($stderr).to receive :write
+        expect { run_rake_task('gitlab:gitaly:update_removed_storage_projects') }.to raise_error(/Please specify the names of the removed storage and the storage to move projects to/)
       end
+    end
 
-      expect { run_rake_task('gitlab:gitaly:storage_config')}
-        .to output(expected_output).to_stdout
-
-      parsed_output = TOML.parse(expected_output)
-      config.each do |name, params|
-        expect(parsed_output['storage']).to include({ 'name' => name, 'path' => params['path'] })
+    context 'no target storage name given' do
+      it 'aborts and display a help message' do
+        allow($stderr).to receive :write
+        expect { run_rake_task('gitlab:gitaly:update_removed_storage_projects', removed_storage_name) }.to raise_error(/Please specify the names of the removed storage and the storage to move projects to/)
       end
+    end
+
+    context 'dry run' do
+      it 'displays the number of projects and does not update them' do
+        allow($stdout).to receive :write
+        expect { subject }.to output(match(/^DRY RUN: would have updated #{message}/)).to_stdout
+
+        project.reload
+
+        expect(project.repository_storage).to eq(removed_storage_name)
+      end
+    end
+
+    it 'updates the projects storage' do
+      stub_env('APPLY', '1')
+
+      allow($stdout).to receive :write
+      expect { subject }.to output(match(/^Updating #{message}$/)).to_stdout
+
+      project.reload
+
+      expect(project.repository_storage).to eq(target_storage_name)
     end
   end
 end

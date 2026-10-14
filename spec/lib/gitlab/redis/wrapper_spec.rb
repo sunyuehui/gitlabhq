@@ -1,27 +1,168 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
-describe Gitlab::Redis::Wrapper do
-  let(:config_file_name) { "config/resque.yml" }
-  let(:environment_config_file_name) { "GITLAB_REDIS_CONFIG_FILE" }
-  let(:config_old_format_socket) { "spec/fixtures/config/redis_old_format_socket.yml" }
-  let(:config_new_format_socket) { "spec/fixtures/config/redis_new_format_socket.yml" }
-  let(:old_socket_path) {"/path/to/old/redis.sock" }
-  let(:new_socket_path) {"/path/to/redis.sock" }
-  let(:config_old_format_host) { "spec/fixtures/config/redis_old_format_host.yml" }
-  let(:config_new_format_host) { "spec/fixtures/config/redis_new_format_host.yml" }
-  let(:redis_port) { 6379 }
-  let(:redis_database) { 99 }
-  let(:sentinel_port) { redis_port + 20000 }
-  let(:config_with_environment_variable_inside) { "spec/fixtures/config/redis_config_with_env.yml"}
-  let(:config_env_variable_url) {"TEST_GITLAB_REDIS_URL"}
-  let(:class_redis_url) { Gitlab::Redis::Wrapper::DEFAULT_REDIS_URL }
+require 'fast_spec_helper'
 
-  include_examples "redis_shared_examples"
+RSpec.describe Gitlab::Redis::Wrapper do
+  describe '.instrumentation_class' do
+    it 'raises a NameError' do
+      expect { described_class.instrumentation_class }.to raise_error(NameError)
+    end
+  end
 
-  describe '.config_file_path' do
-    it 'returns the absolute path to the configuration file' do
-      expect(described_class.config_file_path('foo.yml'))
-        .to eq Rails.root.join('config', 'foo.yml').to_s
+  describe '#ssl_params' do
+    let(:wrapper) { described_class.new }
+
+    context 'when ssl_params are present in the config' do
+      let(:ssl_params) do
+        {
+          ca_file: '/etc/gitlab/ssl/redis-bundle.crt',
+          cert: '/etc/gitlab/ssl/redis-client.crt',
+          key: '/etc/gitlab/ssl/redis-client.key'
+        }
+      end
+
+      before do
+        allow(wrapper).to receive(:raw_config_hash).and_return(
+          url: 'rediss://localhost:6379',
+          ssl_params: ssl_params
+        )
+      end
+
+      it 'returns the ssl_params from the config' do
+        expect(wrapper.ssl_params).to eq(ssl_params)
+      end
+    end
+
+    context 'when ssl_params are not present in the config' do
+      before do
+        allow(wrapper).to receive(:raw_config_hash).and_return(
+          url: 'redis://localhost:6379'
+        )
+      end
+
+      it 'returns nil' do
+        expect(wrapper.ssl_params).to be_nil
+      end
+    end
+  end
+
+  describe '.active?' do
+    it 'returns true by default' do
+      expect(described_class.active?).to be true
+    end
+  end
+
+  describe '.version' do
+    let(:redis_double) { instance_double(Redis) }
+
+    before do
+      allow(described_class).to receive(:with).and_yield(redis_double)
+    end
+
+    context 'when connected to Redis' do
+      before do
+        allow(redis_double).to receive(:info).and_return(
+          'redis_version' => '7.2.4'
+        )
+      end
+
+      it 'returns redis_version' do
+        expect(described_class.version).to eq('7.2.4')
+      end
+    end
+
+    context 'when connected to Valkey' do
+      before do
+        allow(redis_double).to receive(:info).and_return(
+          'redis_version' => '7.2.4',
+          'valkey_version' => '7.2.11',
+          'server_name' => 'valkey'
+        )
+      end
+
+      it 'returns valkey_version' do
+        expect(described_class.version).to eq('7.2.11')
+      end
+    end
+  end
+
+  describe '#params' do
+    let(:wrapper) { described_class.new }
+
+    context 'when Sentinel authentication is configured' do
+      before do
+        allow(wrapper).to receive(:redis_store_options).and_return(
+          sentinels: [
+            { host: '10.0.0.1', port: 26380 },
+            { host: '10.0.0.2', port: 26380 }
+          ],
+          host: 'gitlab-redis',
+          port: 6380,
+          password: 'redis-password',
+          sentinel_password: 'sentinel-password',
+          sentinel_username: 'sentinel-user'
+        )
+      end
+
+      it 'includes sentinel_password' do
+        params = wrapper.params
+        expect(params).to include(sentinel_password: 'sentinel-password')
+      end
+
+      it 'includes sentinel_username' do
+        params = wrapper.params
+        expect(params).to include(sentinel_username: 'sentinel-user')
+      end
+
+      it 'includes the name from host' do
+        params = wrapper.params
+        expect(params).to include(name: 'gitlab-redis')
+      end
+
+      it 'includes sentinels configuration' do
+        params = wrapper.params
+        expect(params[:sentinels]).to eq([
+          { host: '10.0.0.1', port: 26380 },
+          { host: '10.0.0.2', port: 26380 }
+        ])
+      end
+
+      it 'excludes scheme, instrumentation_class, host, and port' do
+        params = wrapper.params
+        expect(params).not_to include(:scheme, :instrumentation_class, :host, :port)
+      end
+    end
+
+    context 'when Sentinel authentication is not configured' do
+      before do
+        allow(wrapper).to receive(:redis_store_options).and_return(
+          sentinels: [
+            { host: '10.0.0.1', port: 26380 },
+            { host: '10.0.0.2', port: 26380 }
+          ],
+          host: 'gitlab-redis',
+          port: 6380,
+          password: 'redis-password'
+        )
+      end
+
+      it 'does not include sentinel_password' do
+        params = wrapper.params
+        expect(params).not_to include(:sentinel_password)
+      end
+
+      it 'does not include sentinel_username' do
+        params = wrapper.params
+        expect(params).not_to include(:sentinel_username)
+      end
+
+      it 'preserves sentinels configuration' do
+        params = wrapper.params
+        expect(params[:sentinels]).to eq([
+          { host: '10.0.0.1', port: 26380 },
+          { host: '10.0.0.2', port: 26380 }
+        ])
+      end
     end
   end
 end

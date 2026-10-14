@@ -1,44 +1,14 @@
+# frozen_string_literal: true
+
 class Admin::HooksController < Admin::ApplicationController
-  include HooksExecution
+  include ::WebHooks::HookActions
 
-  before_action :hook_logs, only: :edit
+  urgency :low, [:test]
 
-  def index
-    @hooks = SystemHook.all
-    @hook = SystemHook.new
-  end
-
-  def create
-    @hook = SystemHook.new(hook_params)
-
-    if @hook.save
-      redirect_to admin_hooks_path, notice: 'Hook was successfully created.'
-    else
-      @hooks = SystemHook.all
-      render :index
-    end
-  end
-
-  def edit
-  end
-
-  def update
-    if hook.update_attributes(hook_params)
-      flash[:notice] = 'System hook was successfully updated.'
-      redirect_to admin_hooks_path
-    else
-      render 'edit'
-    end
-  end
-
-  def destroy
-    hook.destroy
-
-    redirect_to admin_hooks_path, status: 302
-  end
+  before_action :not_found, unless: -> { system_hooks? }
 
   def test
-    result = TestHooks::SystemService.new(hook, current_user, params[:trigger]).execute
+    result = TestHooks::SystemService.new(hook, current_user, params.permit(:trigger)[:trigger]).execute
 
     set_hook_execution_notice(result)
 
@@ -47,23 +17,23 @@ class Admin::HooksController < Admin::ApplicationController
 
   private
 
+  def relation
+    admin_current_organization.system_hooks
+  end
+
+  def hook_organization
+    admin_current_organization
+  end
+
   def hook
-    @hook ||= SystemHook.find(params[:id])
+    @hook ||= relation.find(params.permit(:id)[:id])
   end
 
-  def hook_logs
-    @hook_logs ||=
-      Kaminari.paginate_array(hook.web_hook_logs.order(created_at: :desc)).page(params[:page])
+  def trigger_values
+    SystemHook.triggers.values
   end
 
-  def hook_params
-    params.require(:hook).permit(
-      :enable_ssl_verification,
-      :push_events,
-      :tag_push_events,
-      :repository_update_events,
-      :token,
-      :url
-    )
+  def system_hooks?
+    !Gitlab.com? # rubocop:disable Gitlab/AvoidGitlabInstanceChecks -- Not related to SaaS offerings
   end
 end

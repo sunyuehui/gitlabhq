@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module SlashCommands
     module Presenters
@@ -11,6 +13,10 @@ module Gitlab
 
         def action_not_found
           ephemeral_response(text: "Couldn't find a deployment manual action.")
+        end
+
+        def action_failed(message)
+          ephemeral_response(text: "Couldn't start the deployment: #{message}")
         end
       end
     end

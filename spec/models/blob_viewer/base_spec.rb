@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe BlobViewer::Base do
+RSpec.describe BlobViewer::Base do
   include FakeBlobHelpers
 
   let(:project) { build(:project) }
@@ -9,7 +11,7 @@ describe BlobViewer::Base do
     Class.new(described_class) do
       include BlobViewer::ServerSide
 
-      self.extensions = %w(pdf)
+      self.extensions = %w[pdf]
       self.binary = true
       self.collapse_limit = 1.megabyte
       self.size_limit = 5.megabytes
@@ -39,7 +41,7 @@ describe BlobViewer::Base do
 
     context 'when the file type is supported' do
       before do
-        viewer_class.file_types = %i(license)
+        viewer_class.file_types = %i[license]
         viewer_class.binary = false
       end
 

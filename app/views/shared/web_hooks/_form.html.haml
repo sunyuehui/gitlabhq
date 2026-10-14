@@ -1,82 +1,27 @@
+-# Shared form used by ProjectHook, GroupHook (EE), and SystemHook.
+-# Hook-type-specific sections are guarded by hook.is_a? checks below.
 = form_errors(hook)
+- has_group = defined?(@group) && @group.present?
+- help_path = hook.is_a?(SystemHook) ? help_page_path('administration/system_hooks.md', anchor: 'custom-webhook-template') : help_page_path('user/project/integrations/webhooks.md', anchor: 'custom-webhook-template')
+
+.js-vue-webhook-form{ data: webhook_form_data(hook).merge('has_group': has_group.to_s) }
+
+- if hook.is_a?(ProjectHook) && Feature.enabled?(:project_deploy_token_expiring_notifications, @project)
+  .form-group
+    = form.label :resource_deploy_token_events, s_('Webhooks|Additional Triggers'), class: 'label-bold'
+    - deploy_token_help_link = link_to _('Which project deploy token events trigger webhooks'), help_page_path('user/project/integrations/webhook_events.md', anchor: 'project-and-group-deploy-token-events')
+    = form.gitlab_ui_checkbox_component :resource_deploy_token_events,
+        integration_webhook_event_human_name(:resource_deploy_token_events),
+        help_text: s_('Webhooks|A deploy token is expiring soon. %{help_link}?').html_safe % { help_link: deploy_token_help_link }
 
 .form-group
-  = form.label :url, 'URL', class: 'label-light'
-  = form.text_field :url, class: 'form-control', placeholder: 'http://example.com/trigger-ci.json'
+  = form.label :custom_webhook_template, s_('Webhooks|Custom webhook template (optional)'), class: 'label-bold'
+  = form.text_area :custom_webhook_template, value: hook.custom_webhook_template, class: 'form-control gl-form-input gl-form-input-xl', rows: 8, maxlength: 4096
+  %p.form-text.gl-text-subtle
+    = link_to s_('Webhooks|How do I create a custom webhook template?'), help_path
+
+= render_if_exists 'shared/web_hooks/duo_agent_platform_section', form: form
+
 .form-group
-  = form.label :token, 'Secret Token', class: 'label-light'
-  = form.text_field :token, class: 'form-control', placeholder: ''
-  %p.help-block
-    Use this token to validate received payloads. It will be sent with the request in the X-Gitlab-Token HTTP header.
-.form-group
-  = form.label :url, 'Trigger', class: 'label-light'
-  %ul.list-unstyled
-    %li
-      = form.check_box :push_events, class: 'pull-left'
-      .prepend-left-20
-        = form.label :push_events, class: 'list-label' do
-          %strong Push events
-        %p.light
-          This URL will be triggered by a push to the repository
-    %li
-      = form.check_box :tag_push_events, class: 'pull-left'
-      .prepend-left-20
-        = form.label :tag_push_events, class: 'list-label' do
-          %strong Tag push events
-        %p.light
-          This URL will be triggered when a new tag is pushed to the repository
-    %li
-      = form.check_box :note_events, class: 'pull-left'
-      .prepend-left-20
-        = form.label :note_events, class: 'list-label' do
-          %strong Comments
-        %p.light
-          This URL will be triggered when someone adds a comment
-    %li
-      = form.check_box :issues_events, class: 'pull-left'
-      .prepend-left-20
-        = form.label :issues_events, class: 'list-label' do
-          %strong Issues events
-        %p.light
-          This URL will be triggered when an issue is created/updated/merged
-    %li
-      = form.check_box :confidential_issues_events, class: 'pull-left'
-      .prepend-left-20
-        = form.label :confidential_issues_events, class: 'list-label' do
-          %strong Confidential Issues events
-        %p.light
-          This URL will be triggered when a confidential issue is created/updated/merged
-    %li
-      = form.check_box :merge_requests_events, class: 'pull-left'
-      .prepend-left-20
-        = form.label :merge_requests_events, class: 'list-label' do
-          %strong Merge Request events
-        %p.light
-          This URL will be triggered when a merge request is created/updated/merged
-    %li
-      = form.check_box :job_events, class: 'pull-left'
-      .prepend-left-20
-        = form.label :job_events, class: 'list-label' do
-          %strong Job events
-        %p.light
-          This URL will be triggered when the job status changes
-    %li
-      = form.check_box :pipeline_events, class: 'pull-left'
-      .prepend-left-20
-        = form.label :pipeline_events, class: 'list-label' do
-          %strong Pipeline events
-        %p.light
-          This URL will be triggered when the pipeline status changes
-    %li
-      = form.check_box :wiki_page_events, class: 'pull-left'
-      .prepend-left-20
-        = form.label :wiki_page_events, class: 'list-label' do
-          %strong Wiki Page events
-        %p.light
-          This URL will be triggered when a wiki page is created/updated
-.form-group
-  = form.label :enable_ssl_verification, 'SSL verification', class: 'label-light checkbox'
-  .checkbox
-    = form.label :enable_ssl_verification do
-      = form.check_box :enable_ssl_verification
-      %strong Enable SSL verification
+  = form.label :enable_ssl_verification, s_('Webhooks|SSL verification'), class: 'label-bold'
+  = form.gitlab_ui_checkbox_component :enable_ssl_verification, s_('Webhooks|Enable SSL verification')

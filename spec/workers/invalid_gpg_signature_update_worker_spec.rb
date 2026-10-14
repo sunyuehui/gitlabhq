@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe InvalidGpgSignatureUpdateWorker do
+RSpec.describe InvalidGpgSignatureUpdateWorker, feature_category: :source_code_management do
   context 'when GpgKey is found' do
     it 'calls NotificationService.new.run' do
       gpg_key = create(:gpg_key)

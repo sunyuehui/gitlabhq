@@ -1,58 +1,109 @@
+# frozen_string_literal: true
+
 module TokenAuthenticatable
   extend ActiveSupport::Concern
 
-  private
-
-  def write_new_token(token_field)
-    new_token = generate_available_token(token_field)
-    write_attribute(token_field, new_token)
-  end
-
-  def generate_available_token(token_field)
-    loop do
-      token = generate_token(token_field)
-      break token unless self.class.unscoped.find_by(token_field => token)
-    end
-  end
-
-  def generate_token(token_field)
-    Devise.friendly_token
-  end
-
   class_methods do
-    def authentication_token_fields
-      @token_fields || []
+    def encrypted_token_authenticatable_fields
+      @encrypted_token_authenticatable_fields ||= []
     end
 
-    private # rubocop:disable Lint/UselessAccessModifier
+    # Stores fields that already have been configured via add_authentication_token_field
+    def token_authenticatable_fields
+      @token_authenticatable_fields ||= []
+    end
 
-    def add_authentication_token_field(token_field)
-      @token_fields = [] unless @token_fields
-      @token_fields << token_field
+    # Returns all sensitive fields related to the add_authentication_token_field
+    # e.g. token, token_encrypted, token_digest
+    def token_authenticatable_sensitive_fields
+      @token_authenticatable_sensitive_fields ||= []
+    end
 
-      define_singleton_method("find_by_#{token_field}") do |token|
-        find_by(token_field => token) if token
+    private
+
+    def add_authentication_token_field(token_field, options = {})
+      if token_authenticatable_fields.include?(token_field)
+        raise ArgumentError, "#{token_field} already configured via add_authentication_token_field"
       end
 
-      define_method("ensure_#{token_field}") do
-        current_token = read_attribute(token_field)
-        current_token.blank? ? write_new_token(token_field) : current_token
+      token_authenticatable_fields.push(token_field)
+      encrypted_token_authenticatable_fields.push(token_field) if options[:encrypted]
+
+      attr_accessor :cleartext_tokens
+
+      strategy = Authn::TokenField::Base.fabricate(self, token_field, options)
+
+      token_authenticatable_sensitive_fields.concat(strategy.sensitive_fields.map(&:to_sym))
+
+      if options.fetch(:unique, true)
+        define_singleton_method("find_by_#{token_field}") do |token|
+          strategy.find_token_authenticatable(token)
+        end
       end
 
-      define_method("set_#{token_field}") do |token|
-        write_attribute(token_field, token) if token
+      define_singleton_method("encode") do |token|
+        strategy.encode(token)
       end
 
-      define_method("ensure_#{token_field}!") do
-        send("reset_#{token_field}!") if read_attribute(token_field).blank? # rubocop:disable GitlabSecurity/PublicSend
-
-        read_attribute(token_field)
+      define_singleton_method(:encode_candidates) do |token|
+        strategy.encode_candidates(token)
       end
 
-      define_method("reset_#{token_field}!") do
-        write_new_token(token_field)
-        save!
+      if options[:encrypted] && respond_to?(:scope)
+        scope :with_encrypted_tokens, ->(token_values) do
+          where("#{token_field}_encrypted" => Array.wrap(token_values))
+        end
       end
+
+      mod = token_authenticatable_module
+
+      mod.define_method(token_field) do
+        strategy.get_token(self)
+      end
+
+      mod.define_method("set_#{token_field}") do |token|
+        strategy.set_token(self, token)
+      end
+
+      mod.define_method("ensure_#{token_field}") do
+        strategy.ensure_token(self)
+      end
+
+      # Returns a token, but only saves when the database is in read & write mode
+      mod.define_method("ensure_#{token_field}!") do
+        strategy.ensure_token!(self)
+      end
+
+      # Resets the token, but only saves when the database is in read & write mode
+      mod.define_method("reset_#{token_field}!") do
+        strategy.reset_token!(self)
+      end
+
+      mod.define_method("rewrite_#{token_field}") do
+        strategy.write_new_token(self)
+      end
+
+      mod.define_method("#{token_field}_matches?") do |other_token|
+        token = read_attribute(token_field)
+        token.present? && ActiveSupport::SecurityUtils.secure_compare(other_token, token)
+      end
+
+      mod.define_method("#{token_field}_expires_at") do
+        strategy.expires_at(self)
+      end
+
+      mod.define_method("#{token_field}_expired?") do
+        strategy.expired?(self)
+      end
+
+      mod.define_method("#{token_field}_with_expiration") do
+        strategy.token_with_expiration(self)
+      end
+    end
+
+    def token_authenticatable_module
+      @token_authenticatable_module ||=
+        const_set(:TokenAuthenticatable, Module.new).tap { |mod| include mod }
     end
   end
 end

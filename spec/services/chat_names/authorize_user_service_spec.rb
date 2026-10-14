@@ -1,24 +1,38 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ChatNames::AuthorizeUserService do
+RSpec.describe ChatNames::AuthorizeUserService, feature_category: :user_profile do
   describe '#execute' do
-    let(:service) { create(:service) }
+    let(:result) { subject.execute }
 
-    subject { described_class.new(service, params).execute }
+    subject { described_class.new(params) }
 
     context 'when all parameters are valid' do
       let(:params) { { team_id: 'T0001', team_domain: 'myteam', user_id: 'U0001', user_name: 'user' } }
 
+      it 'produces a valid HTTP URL' do
+        expect(result).to be_http_url
+      end
+
       it 'requests a new token' do
-        is_expected.to be_url
+        expect(subject).to receive(:request_token).once.and_call_original
+
+        subject.execute
       end
     end
 
     context 'when there are missing parameters' do
       let(:params) { {} }
 
+      it 'does not produce a URL' do
+        expect(result).to be_nil
+      end
+
       it 'does not request a new token' do
-        is_expected.to be_nil
+        expect(subject).not_to receive(:request_token)
+
+        subject.execute
       end
     end
   end

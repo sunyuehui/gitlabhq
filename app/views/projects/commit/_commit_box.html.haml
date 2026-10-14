@@ -1,81 +1,66 @@
-.page-content-header.js-commit-box{ 'data-commit-path' => branches_project_commit_path(@project, @commit.id) }
+- add_page_specific_style 'page_bundles/commit_description'
+
+.page-content-header
   .header-main-content
-    = render partial: 'signature', object: @commit.signature
+    - if @commit.has_signature?
+      = render partial: 'signature', object: @commit.signature
     %strong
       #{ s_('CommitBoxTitle|Commit') }
-      %span.commit-sha= @commit.short_id
-    = clipboard_button(text: @commit.id, title: _("Copy commit SHA to clipboard"))
-    %span.hidden-xs authored
+      %span.commit-sha{ data: { testid: 'commit-sha-content' } }= @commit.short_id
+    = clipboard_button(text: @commit.id, title: _('Copy commit SHA'))
+    %span.gl-hidden{ class: "@sm/panel:gl-inline" }= _('authored')
     #{time_ago_with_tooltip(@commit.authored_date)}
     %span= s_('ByAuthor|by')
-    = author_avatar(@commit, size: 24)
     %strong
+      = author_avatar(@commit, size: 24, has_tooltip: false)
       = commit_author_link(@commit, avatar: true, size: 24)
+    = user_status(@commit.author)
     - if @commit.different_committer?
-      %span.light= _('Committed by')
-      %strong
-        = commit_committer_link(@commit, avatar: true, size: 24)
+      %span.gl-text-subtle= _('Committed by')
+      = commit_committer_link(@commit, avatar: true, size: 24)
       #{time_ago_with_tooltip(@commit.committed_date)}
 
-  .header-action-buttons
-    - if defined?(@notes_count) && @notes_count > 0
-      %span.btn.disabled.btn-grouped.hidden-xs.append-right-10
-        = icon('comment')
-        = @notes_count
-    = link_to project_tree_path(@project, @commit), class: "btn btn-default append-right-10 hidden-xs hidden-sm" do
-      #{ _('Browse files') }
-    .dropdown.inline
-      %a.btn.btn-default.dropdown-toggle{ data: { toggle: "dropdown" } }
-        %span= _('Options')
-        = icon('caret-down')
-      %ul.dropdown-menu.dropdown-menu-align-right
-        %li.visible-xs-block.visible-sm-block
-          = link_to project_tree_path(@project, @commit) do
-            #{ _('Browse Files') }
-        - unless @commit.has_been_reverted?(current_user)
-          %li.clearfix
-            = revert_commit_link(@commit, project_commit_path(@project, @commit.id), has_tooltip: false)
-        %li.clearfix
-          = cherry_pick_commit_link(@commit, project_commit_path(@project, @commit.id), has_tooltip: false)
-        - if can_collaborate_with_project?
-          %li.clearfix
-            = link_to s_("CreateTag|Tag"), new_project_tag_path(@project, ref: @commit)
-        %li.divider
-        %li.dropdown-header
-          #{ _('Download') }
-        - unless @commit.parents.length > 1
-          %li= link_to s_("DownloadCommit|Email Patches"), project_commit_path(@project, @commit, format: :patch)
-        %li= link_to s_("DownloadCommit|Plain Diff"),    project_commit_path(@project, @commit, format: :diff)
+  = link_button_to _('Browse files'), project_tree_path(@project, @commit), class: 'gl-mr-3 gl-w-full @sm/panel:gl-w-auto gl-mb-3 @sm/panel:gl-mb-0'
+  #js-commit-options-dropdown{ data: commit_options_dropdown_data(@project, @commit) }
 
-.commit-box
-  %h3.commit-title
-    = markdown(@commit.title, pipeline: :single_line, author: @commit.author)
-  - if @commit.description.present?
-    %pre.commit-description
-      = preserve(markdown(@commit.description, pipeline: :single_line, author: @commit.author))
+.commit-box{ data: { project_path: project_path(@project) } }
+  = render ::Layouts::PageHeadingComponent.new(markdown_field(@commit, :title), options: { class: 'commit-title'}) do |c|
+    - if @commit.description.present?
+      - c.with_description do
+        %pre.commit-description<
+          = preserve(markdown_field(@commit, :description))
 
 .info-well
-  .well-segment.branch-info
+  .well-segment
     .icon-container.commit-icon
-      = custom_icon("icon_commit")
-    %span.cgray= n_('parent', 'parents', @commit.parents.count)
+      = sprite_icon('commit', variant: 'default')
+    %span.gl-text-default= n_('parent', 'parents', @commit.parents.count)
     - @commit.parents.each do |parent|
       = link_to parent.short_id, project_commit_path(@project, parent), class: "commit-sha"
-    %span.commit-info.branches
-      %i.fa.fa-spinner.fa-spin
+  #js-commit-branches-and-tags.gl-border-t.gl-border-t-section{ data: { full_path: @project.full_path, commit_sha: @commit.short_id } }
+    .well-segment
+      = sprite_icon('branch', variant: 'default', css_class: "gl-ml-2 gl-mr-3")
+      = gl_loading_icon(inline: true, css_class: 'gl-align-middle')
+    .well-segment
+      = sprite_icon('tag', variant: 'default', css_class: "gl-ml-2 gl-mr-3")
+      = gl_loading_icon(inline: true, css_class: 'gl-align-middle')
 
-  - if @commit.last_pipeline
-    - last_pipeline = @commit.last_pipeline
-    .well-segment.pipeline-info
-      .status-icon-container{ class: "ci-status-icon-#{@commit.status}" }
-        = link_to project_pipeline_path(@project, last_pipeline.id) do
-          = ci_icon_for_status(last_pipeline.status)
-      #{ _('Pipeline') }
-      = link_to "##{last_pipeline.id}", project_pipeline_path(@project, last_pipeline.id)
-      = ci_label_for_status(last_pipeline.status)
-      - if last_pipeline.stages_count.nonzero?
-        #{ n_(s_('Pipeline|with stage'), s_('Pipeline|with stages'), last_pipeline.stages_count) }
-        .mr-widget-pipeline-graph
-          = render 'shared/mini_pipeline_graph', pipeline: last_pipeline, klass: 'js-commit-pipeline-graph'
-      in
-      = time_interval_in_words last_pipeline.duration
+  .well-segment.merge-request-info
+    .icon-container
+      = sprite_icon('merge-request', variant: 'default')
+    %span.commit-info#js-commit-merge-requests{ 'data-project-commit-path' => merge_requests_project_commit_path(@project, @commit.id, format: :json) }
+      = gl_loading_icon(inline: true, css_class: 'gl-align-middle')
+
+  - pipeline_summary_data = commit_pipeline_summary_data(@project, @last_pipeline)
+  - if pipeline_summary_data
+    .well-segment
+      #js-commit-box-pipeline-summary{ data: pipeline_summary_data }
+        = sprite_icon('pipeline', variant: 'default', css_class: "gl-ml-2 gl-mr-3")
+        = gl_loading_icon(inline: true, css_class: 'gl-align-middle')
+
+  - if @merge_request
+    .well-segment
+      = sprite_icon('information-o', variant: 'default', css_class: '!gl-align-middle gl-mr-2')
+
+      - link_to_merge_request = link_to(@merge_request.to_reference, diffs_project_merge_request_path(@project, @merge_request, commit_id: @commit.id))
+      = _('This commit is part of merge request %{link_to_merge_request}. Comments created here will be created in the context of that merge request.').html_safe % { link_to_merge_request: link_to_merge_request }

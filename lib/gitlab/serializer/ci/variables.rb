@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Serializer
     module Ci
@@ -10,11 +12,12 @@ module Gitlab
         def load(string)
           return unless string
 
-          object = YAML.safe_load(string, [Symbol])
+          object = YAML.safe_load(string, permitted_classes: [Symbol])
 
           object.map do |variable|
-            variable[:key] = variable[:key].to_s
-            variable
+            variable.symbolize_keys.tap do |variable|
+              variable[:key] = variable[:key].to_s
+            end
           end
         end
 

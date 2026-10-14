@@ -1,31 +1,40 @@
-class BranchesFinder
-  def initialize(repository, params)
-    @repository = repository
-    @params = params
+# frozen_string_literal: true
+
+class BranchesFinder < GitRefsFinder
+  def execute(gitaly_pagination: false)
+    if gitaly_pagination && search.blank? && regex.blank?
+      repository.branches_sorted_by(sort, pagination_params).tap do |branches|
+        set_next_cursor(branches)
+      end
+    else
+      branches = repository.branches_sorted_by(sort)
+      branches = by_search(branches)
+      by_regex(branches)
+    end
   end
 
-  def execute
-    branches = @repository.branches_sorted_by(sort)
-    filter_by_name(branches)
+  def total
+    repository.branch_count
   end
 
   private
 
-  attr_reader :repository, :params
+  def regex
+    @params[:regex].to_s.presence
+  end
+  strong_memoize_attr :regex
 
-  def search
-    @params[:search].presence
+  def page_token
+    "#{Gitlab::Git::BRANCH_REF_PREFIX}#{@params[:page_token]}" if @params[:page_token]
   end
 
-  def sort
-    @params[:sort].presence || 'name'
-  end
+  def by_regex(branches)
+    return branches unless regex
 
-  def filter_by_name(branches)
-    if search
-      branches.select { |branch| branch.name.include?(search) }
-    else
-      branches
+    branch_filter = ::Gitlab::UntrustedRegexp.new(regex)
+
+    branches.select do |branch|
+      branch_filter.match?(branch.name)
     end
   end
 end

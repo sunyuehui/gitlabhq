@@ -2,7 +2,7 @@
   This service will be installed on the Mattermost instance at
   %strong= link_to Gitlab.config.mattermost.host, Gitlab.config.mattermost.host
 %hr
-= form_for(:mattermost, method: :post, url: project_mattermost_path(@project), html: { class: 'js-requires-input'} ) do |f|
+= gitlab_ui_form_for(:mattermost, method: :post, url: project_mattermost_path(@project)) do |f|
   %h4 Team
   %p
     = @teams.one? ? 'The team' : 'Select the team'
@@ -11,21 +11,21 @@
   - options = options_for_select(mattermost_teams_options(@teams), selected_id)
   = f.select(:team_id, options, { include_blank: 'Select team...'}, { class: 'form-control', disabled: @teams.one?, selected: selected_id, required: true })
   = f.hidden_field(:team_id, value: selected_id, required: true) if @teams.one?
-  .help-block
+  .form-text.gl-text-subtle
     - if @teams.one?
-      This is the only available team.
+      This is the only available team that you are a member of.
     - else
-      The list shows all available teams.
+      The list shows all available teams that you are a member of.
     To create a team,
     = link_to "#{Gitlab.config.mattermost.host}/create_team" do
       use Mattermost's interface
-      = icon('external-link')
+      = sprite_icon('external-link')
     or ask your Mattermost system administrator.
   %hr
   %h4 Command trigger word
   %p Choose the word that will trigger commands
   = f.text_field(:trigger, value: @project.path, class: 'form-control', required: true)
-  .help-block
+  .form-text.gl-text-subtle
     %p
       Trigger word must be unique, and can't begin with a slash or contain any spaces.
       Use the word that works best for your team.
@@ -38,9 +38,10 @@
       Reserved:
       = link_to 'https://docs.mattermost.com/help/messaging/executing-commands.html#built-in-commands', target: '__blank' do
         see list of built-in slash commands
-        = icon('external-link')
+        = sprite_icon('external-link')
   %hr
-  .clearfix
-    .pull-right
-      = link_to 'Cancel', edit_project_service_path(@project, @service), class: 'btn btn-lg'
-      = f.submit 'Install', class: 'btn btn-save btn-lg'
+  .gl-clearfix
+    .gl-float-right
+      = render Pajamas::ButtonComponent.new(href: edit_project_settings_integration_path(@project, @integration)) do
+        = _('Cancel')
+      = f.submit s_('MattermostService|Install'), pajamas_button: true

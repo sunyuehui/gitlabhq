@@ -22,6 +22,10 @@ Using serializers, instead of `to_json` method, has several benefits:
 * it makes it easier to reduce merge conflicts between CE -> EE
 * it makes it easier to benefit from domain driven development techniques
 
+## Security considerations
+
+Consult the `Serialization` section of our [Secure Coding Guidelines](../../doc/development/secure_coding_guidelines.md#serialization) to help avoiding leaking sensitive attributes when using serializers.
+
 ## What is a serializer?
 
 A serializer is a class that encapsulates all business rules for building a
@@ -47,11 +51,11 @@ representation. It rarely happens that a serialization entity exists without
 a corresponding domain model class. As an example, we have an `Issue` class and
 a corresponding `IssueSerializer`.
 
-Serialization entites are designed to reuse other serialization entities, which
+Serialization entities are designed to reuse other serialization entities, which
 is a convenient way to create a multi-level JSON representation of a piece of
 a domain model you want to serialize.
 
-See [documentation for Grape Entites][grape-entity-readme] for more details.
+See [documentation for Grape Entities][grape-entity-readme] for more details.
 
 ## How to implement a serializer?
 
@@ -64,7 +68,7 @@ A new serializer should inherit from a `BaseSerializer` class. It is necessary
 to specify which serialization entity will be used to serialize a resource.
 
 ```ruby
-class MyResourceSerializer < BaseSerialize
+class MyResourceSerializer < BaseSerializer
   entity MyResourceEntity
 end
 ```
@@ -99,7 +103,7 @@ create a JSON response according to your needs.
 
 ```ruby
 class PipelineSerializer < BaseSerializer
-  entity PipelineEntity
+  entity Ci::PipelineEntity
 
   def represent_details(resource)
     represent(resource, only: [:details])
@@ -180,7 +184,7 @@ def index
     render json: MyResourceSerializer
       .new(current_user: @current_user)
       .represent_details(@project.resources)
-  nd
+  end
 end
 ```
 
@@ -196,7 +200,7 @@ def index
         .represent_details(@project.resources),
       count: @project.resources.count
     }
-  nd
+  end
 end
 ```
 
@@ -284,7 +288,7 @@ MyObjectSerializer.new.represent(object.present)
     entity requires `request.user` attribute, but the second one wants
     `request.current_user`. When it happens that these two entities are used in
     the same serialization request, you might need to pass both parameters to
-    the serializer, which is obviously not a perfect situation.
+    the serializer, which is not a perfect situation.
 
     When in doubt, pass only `current_user` and `project` if these are required.
 
@@ -317,9 +321,9 @@ MyObjectSerializer.new.represent(object.present)
 [grape-entity-readme]: https://github.com/ruby-grape/grape-entity/blob/master/README.md
 [grape-entity-class]: https://github.com/ruby-grape/grape-entity/blob/master/lib/grape_entity/entity.rb
 [grape-entity-only]: https://github.com/ruby-grape/grape-entity/blob/master/README.md#returning-only-the-fields-you-want
-[presenters-readme]: https://gitlab.com/gitlab-org/gitlab-ce/blob/master/app/presenters/README.md
+[presenters-readme]: https://gitlab.com/gitlab-org/gitlab-foss/blob/master/app/presenters/README.md
 [fluent-interface]: https://en.wikipedia.org/wiki/Fluent_interface
 [json-schema-gem]: https://github.com/ruby-json-schema/json-schema
-[issue-20045]: https://gitlab.com/gitlab-org/gitlab-ce/issues/20045
-[issue-30898]: https://gitlab.com/gitlab-org/gitlab-ce/issues/30898
-[issue-27569]: https://gitlab.com/gitlab-org/gitlab-ce/issues/27569
+[issue-20045]: https://gitlab.com/gitlab-org/gitlab-foss/issues/20045
+[issue-30898]: https://gitlab.com/gitlab-org/gitlab-foss/issues/30898
+[issue-27569]: https://gitlab.com/gitlab-org/gitlab-foss/issues/27569

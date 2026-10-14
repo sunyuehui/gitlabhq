@@ -1,4 +1,4 @@
-require './spec/support/sidekiq'
+require './spec/support/sidekiq_middleware'
 
 class Gitlab::Seeder::Environments
   def initialize(project)
@@ -6,8 +6,8 @@ class Gitlab::Seeder::Environments
   end
 
   def seed!
-    @project.create_mock_deployment_service!(active: true)
-    @project.create_mock_monitoring_service!(active: true)
+    integration = @project.mock_monitoring_integration || @project.build_mock_monitoring_integration
+    integration.update!(active: true)
 
     create_master_deployments!('production')
     create_master_deployments!('staging')
@@ -28,12 +28,16 @@ class Gitlab::Seeder::Environments
   end
 
   def create_merge_request_review_deployments!
-    @project.merge_requests.sample(4).map do |merge_request|
+    @project
+      .merge_requests
+      .select { |mr| mr.source_branch.match?(/[a-zA-Z0-9]+/) }
+      .sample(4)
+      .each do |merge_request|
       next unless merge_request.diff_head_sha
 
       create_deployment!(
         merge_request.source_project,
-        "review/#{merge_request.source_branch.gsub(/[^a-zA-Z0-9]/, '')}",
+        "review/#{merge_request.source_branch.gsub(/[^a-zA-Z0-9]+/, '')}",
         merge_request.source_branch,
         merge_request.diff_head_sha
       )
@@ -63,7 +67,12 @@ class Gitlab::Seeder::Environments
 end
 
 Gitlab::Seeder.quiet do
-  Project.all.sample(5).each do |project|
+  projects_with_repo =
+    Project.not_mass_generated.select do |project|
+      !project.empty_repo?
+    end
+
+  projects_with_repo.sample(5).each do |project|
     project_environments = Gitlab::Seeder::Environments.new(project)
     project_environments.seed!
   end

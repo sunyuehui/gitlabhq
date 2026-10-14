@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module CycleAnalytics
     module MetricsTables
@@ -9,16 +11,16 @@ module Gitlab
         MergeRequest.arel_table
       end
 
+      def mr_approval_metrics_table
+        MergeRequest::ApprovalMetrics.arel_table
+      end
+
       def mr_diff_table
         MergeRequestDiff.arel_table
       end
 
-      def mr_diff_commits_table
-        MergeRequestDiffCommit.arel_table
-      end
-
       def mr_closing_issues_table
-        MergeRequestsClosingIssues.arel_table
+        MergeRequestIssue.arel_table
       end
 
       def issue_table
@@ -31,6 +33,14 @@ module Gitlab
 
       def user_table
         User.arel_table
+      end
+
+      def projects_table
+        Project.arel_table
+      end
+
+      def routes_table
+        Route.arel_table
       end
 
       def build_table

@@ -1,68 +1,117 @@
-# Confidential issues
+---
+stage: Plan
+group: Work Items
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Confidential issues
+description: Turn on confidentiality for an issue to limit visibility to project members with at least the Planner role.
+---
 
-> [Introduced][ce-3282] in GitLab 8.6.
+{{< details >}}
 
-Confidential issues are issues visible only to members of a project with
-[sufficient permissions](#permissions-and-access-to-confidential-issues).
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
+
+{{< /details >}}
+
+Confidential issues are [issues](_index.md) visible only to members of a project with
+[sufficient permissions](#who-can-see-confidential-issues).
 Confidential issues can be used by open source projects and companies alike to
 keep security vulnerabilities private or prevent surprises from leaking out.
 
-## Making an issue confidential
+## Make an issue confidential
 
-You can make an issue confidential either by creating a new issue or editing
-an existing one.
+{{< history >}}
+
+- Minimum role to make an issue confidential [changed](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/169256) from Reporter to Planner in GitLab 17.7.
+
+{{< /history >}}
+
+You can make an issue confidential when you create or edit an issue.
+
+Prerequisites:
+
+- You must have the Planner, Reporter, Developer, Maintainer, or Owner role for the project to convert an existing issue to confidential.
+- If the issue you want to make confidential has any child [tasks](../../tasks.md),
+  you must first make all the child tasks confidential.
+  A confidential issue can have only confidential children.
+
+### In a new issue
 
 When you create a new issue, a checkbox right below the text area is available
-to mark the issue as confidential. Check that box and hit the **Submit issue**
-button to create the issue. For existing issues, edit them, check the
-confidential checkbox and hit **Save changes**.
+to mark the issue as confidential. Check that box and select **Create issue**
+to create the issue.
 
-![Creating a new confidential issue](img/confidential_issues_create.png)
+When you create a confidential issue in a project, the project becomes listed in the **Contributed projects** section in your [profile](../../profile/_index.md). **Contributed projects** does not show information about the confidential issue. It only shows the project name.
 
-## Making an issue non-confidential
+To create a confidential issue:
 
-To make an issue non-confidential, all you have to do is edit it and unmark
-the confidential checkbox. Once you save the issue, it will gain the default
-visibility level you have chosen for your project.
+1. In the top bar, select **Search or go to** and find your project.
+1. In the upper-right corner, select **Create new** ({{< icon name="plus" >}}).
+1. From the dropdown list, select **New issue**.
+1. Complete the [fields](create_issues.md#fields-in-the-new-issue-form).
+   - Select the **Turn on confidentiality** checkbox.
+1. Select **Create issue**.
 
-Every change from regular to confidential and vice versa, is indicated by a
-system note in the issue's comments.
+### In an existing issue
 
-![Confidential issues system notes](img/confidential_issues_system_notes.png)
+To change the confidentiality of an existing issue:
 
-## Indications of a confidential issue
+1. In the top bar, select **Search or go to** and find your project.
+1. In the left sidebar, select **Plan** > **Work items**, then filter by **Type** = **Issue** and select your issue.
+1. In the upper-right corner, select **Issue actions** ({{< icon name="ellipsis_v" >}}) and then **Turn on confidentiality** (or **Turn off confidentiality** to make the issue non-confidential).
 
->**Note:** If you don't have [enough permissions](#permissions-and-access-to-confidential-issues),
-you won't be able to see the confidential issues at all.
+Alternatively, you can use the [`/confidential` quick action](../quick_actions.md#confidential).
 
-There are a few things that visually separate a confidential issue from a
-regular one. In the issues index page view, you can see the eye-slash icon
-next to the issues that are marked as confidential.
+## Who can see confidential issues
 
-![Confidential issues index page](img/confidential_issues_index_page.png)
+{{< history >}}
 
----
+- Minimum role to see confidential issues [changed](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/169256) from Reporter to Planner in GitLab 17.7.
 
-Likewise, while inside the issue, you can see the eye-slash icon right next to
-the issue number, but there is also an indicator in the comment area that the
+{{< /history >}}
+
+When an issue is made confidential, only users with the Planner, Reporter, Developer, Maintainer, or Owner role
+for the project have access to the issue.
+Users with Guest or [Minimal](../../permissions.md#users-with-minimal-access) roles can't access
+the issue even if they were actively participating before the change.
+
+However, a user with the **Guest role** can create confidential issues, but can only view the ones
+that they created themselves.
+
+Users with the Guest role or non-members can read the confidential issue if they are assigned to the issue.
+When a Guest user or non-member is unassigned from a confidential issue, they can no longer view it.
+
+Confidential issues are hidden in search results for users without the necessary permissions.
+
+## Confidential issue indicators
+
+Confidential issues are visually different from regular issues in a few ways.
+In the **Issues** and **Issue boards** pages, you can see the confidential ({{< icon name="eye-slash" >}}) icon
+next to issues marked as confidential.
+
+If you don't have [enough permissions](#who-can-see-confidential-issues),
+you cannot see confidential issues at all.
+
+Likewise, while inside the issue, you can see the confidential ({{< icon name="eye-slash" >}}) icon right next to
+the issue number. There is also an indicator in the comment area that the
 issue you are commenting on is confidential.
 
-![Confidential issue page](img/confidential_issues_issue_page.png)
+There is also an indicator in the sidebar denoting confidentiality.
 
-## Permissions and access to confidential issues
+Every change from regular to confidential and vice versa is indicated by a
+system note in the issue's comments, for example:
 
-There are two kinds of level access for confidential issues. The general rule
-is that confidential issues are visible only to members of a project with at
-least [Reporter access][permissions]. However, a guest user can also create
-confidential issues, but can only view the ones that they created themselves.
+- {{< icon name="eye-slash" >}} Jo Garcia made the issue confidential 5 minutes ago
+- {{< icon name="eye" >}} Jo Garcia made the issue visible to everyone just now
 
-Confidential issues are also hidden in search results for unprivileged users.
-For example, here's what a user with Master and Guest access sees in the
-project's search results respectively.
+## Merge requests for confidential issues
 
-| Master access | Guest access |
-| :-----------: | :----------: |
-| ![Confidential issues search master](img/confidential_issues_search_master.png) | ![Confidential issues search guest](img/confidential_issues_search_guest.png) |
+Although you can create confidential issues (and make existing issues confidential) in a public project, you cannot make confidential merge requests.
+Learn how to create [merge requests for confidential issues](../merge_requests/confidential.md) that prevent leaks of private data.
 
-[permissions]: ../../permissions.md#project
-[ce-3282]: https://gitlab.com/gitlab-org/gitlab-ce/merge_requests/3282
+## Related topics
+
+- [Merge requests for confidential issues](../merge_requests/confidential.md)
+- [Make an epic confidential](../../group/epics/manage_epics.md#make-an-epic-confidential)
+- [Add an internal note](../../discussions/_index.md#add-an-internal-note)
+- [Security practices for confidential merge requests](https://gitlab.com/gitlab-org/release/docs/blob/master/general/security/engineer.md#security-releases-critical-non-critical-as-a-developer) at GitLab

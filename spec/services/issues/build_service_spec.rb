@@ -1,41 +1,45 @@
-require 'spec_helper.rb'
+# frozen_string_literal: true
 
-describe Issues::BuildService do
-  let(:project) { create(:project, :repository) }
-  let(:user) { create(:user) }
+require 'spec_helper'
 
-  before do
-    project.team << [user, :developer]
+RSpec.describe Issues::BuildService, :request_store, feature_category: :team_planning do
+  using RSpec::Parameterized::TableSyntax
+
+  let_it_be(:project) { create(:project, :repository) }
+  let_it_be(:developer) { create(:user, developer_of: project) }
+  let_it_be(:reporter) { create(:user, reporter_of: project) }
+  let_it_be(:guest) { create(:user, guest_of: project) }
+
+  let(:user) { developer }
+
+  def build_issue(issue_params = {})
+    described_class.new(container: project, current_user: user, params: issue_params).execute
   end
 
   context 'for a single discussion' do
     describe '#execute' do
       let(:merge_request) { create(:merge_request, title: "Hello world", source_project: project) }
       let(:discussion) { create(:diff_note_on_merge_request, project: project, noteable: merge_request, note: "Almost done").to_discussion }
-      let(:service) { described_class.new(project, user, merge_request_to_resolve_discussions_of: merge_request.iid, discussion_to_resolve: discussion.id) }
+
+      subject { build_issue(merge_request_to_resolve_discussions_of: merge_request.iid, discussion_to_resolve: discussion.id) }
 
       it 'references the noteable title in the issue title' do
-        issue = service.execute
-
-        expect(issue.title).to include('Hello world')
+        expect(subject.title).to include('Hello world')
       end
 
       it 'adds the note content to the description' do
-        issue = service.execute
-
-        expect(issue.description).to include('Almost done')
+        expect(subject.description).to include('Almost done')
       end
     end
   end
 
   context 'for discussions in a merge request' do
     let(:merge_request) { create(:merge_request_with_diff_notes, source_project: project) }
-    let(:issue) { described_class.new(project, user, merge_request_to_resolve_discussions_of: merge_request.iid).execute }
 
     describe '#items_for_discussions' do
       it 'has an item for each discussion' do
         create(:diff_note_on_merge_request, noteable: merge_request, project: merge_request.source_project, line_number: 13)
-        service = described_class.new(project, user, merge_request_to_resolve_discussions_of: merge_request.iid)
+        service = described_class.new(container: project, current_user: user, params: { merge_request_to_resolve_discussions_of: merge_request.iid })
 
         service.execute
 
@@ -44,7 +48,7 @@ describe Issues::BuildService do
     end
 
     describe '#item_for_discussion' do
-      let(:service) { described_class.new(project, user, merge_request_to_resolve_discussions_of: merge_request.iid) }
+      let(:service) { described_class.new(container: project, current_user: user, params: { merge_request_to_resolve_discussions_of: merge_request.iid }) }
 
       it 'mentions the author of the note' do
         discussion = create(:diff_note_on_merge_request, author: create(:user, username: 'author')).to_discussion
@@ -53,41 +57,47 @@ describe Issues::BuildService do
 
       it 'wraps the note in a blockquote' do
         note_text = "This is a string\n"\
+                    "\n"\
                     ">>>\n"\
                     "with a blockquote\n"\
                     "> That has a quote\n"\
                     ">>>\n"
-        note_result = "    > This is a string\n"\
-                      "    > > with a blockquote\n"\
-                      "    > > > That has a quote\n"
+        note_result = "    > This is a string\n    "\
+                      "> \n    "\
+                      "> >>>\n    "\
+                      "> with a blockquote\n    "\
+                      "> > That has a quote\n    "\
+                      "> >>>\n"
         discussion = create(:diff_note_on_merge_request, note: note_text).to_discussion
         expect(service.item_for_discussion(discussion)).to include(note_result)
       end
     end
 
     describe '#execute' do
-      it 'has the merge request reference in the title' do
-        expect(issue.title).to include(merge_request.title)
+      let(:base_params) { { merge_request_to_resolve_discussions_of: merge_request.iid } }
+
+      context 'without additional params' do
+        subject { build_issue(base_params) }
+
+        it 'has the merge request reference in the title' do
+          expect(subject.title).to include(merge_request.title)
+        end
+
+        it 'has the reference of the merge request in the description' do
+          expect(subject.description).to include(merge_request.to_reference)
+        end
       end
 
-      it 'has the reference of the merge request in the description' do
-        expect(issue.description).to include(merge_request.to_reference)
-      end
-
-      it 'does not assign title when a title was given' do
-        issue = described_class.new(project, user,
-                                    merge_request_to_resolve_discussions_of: merge_request,
-                                    title: 'What an issue').execute
+      it 'uses provided title if title param given' do
+        issue = build_issue(base_params.merge(title: 'What an issue'))
 
         expect(issue.title).to eq('What an issue')
       end
 
-      it 'does not assign description when a description was given' do
-        issue = described_class.new(project, user,
-                                    merge_request_to_resolve_discussions_of: merge_request,
-                                    description: 'Fix at your earliest conveignance').execute
+      it 'uses provided description if description param given' do
+        issue = build_issue(base_params.merge(description: 'Fix at your earliest convenience'))
 
-        expect(issue.description).to eq('Fix at your earliest conveignance')
+        expect(issue.description).to eq('Fix at your earliest convenience')
       end
 
       describe 'with multiple discussions' do
@@ -96,20 +106,20 @@ describe Issues::BuildService do
         it 'mentions all the authors in the description' do
           authors = merge_request.resolvable_discussions.map(&:author)
 
-          expect(issue.description).to include(*authors.map(&:to_reference))
+          expect(build_issue(base_params).description).to include(*authors.map(&:to_reference))
         end
 
         it 'has a link for each unresolved discussion in the description' do
           notes = merge_request.resolvable_discussions.map(&:first_note)
           links = notes.map { |note| Gitlab::UrlBuilder.build(note) }
 
-          expect(issue.description).to include(*links)
+          expect(build_issue(base_params).description).to include(*links)
         end
 
         it 'mentions additional notes' do
           create_list(:diff_note_on_merge_request, 2, noteable: merge_request, project: merge_request.target_project, in_reply_to: diff_note)
 
-          expect(issue.description).to include('(+2 comments)')
+          expect(build_issue(base_params).description).to include('(+2 comments)')
         end
       end
     end
@@ -120,7 +130,7 @@ describe Issues::BuildService do
 
     describe '#execute' do
       it 'mentions the merge request in the description' do
-        issue = described_class.new(project, user, merge_request_to_resolve_discussions_of: merge_request.iid).execute
+        issue = build_issue(merge_request_to_resolve_discussions_of: merge_request.iid)
 
         expect(issue.description).to include("Review the conversation in #{merge_request.to_reference}")
       end
@@ -128,20 +138,221 @@ describe Issues::BuildService do
   end
 
   describe '#execute' do
-    let(:milestone) { create(:milestone, project: project) }
+    context 'about its container' do
+      let_it_be(:group) { build_stubbed(:group) }
 
-    it 'builds a new issues with given params' do
-      issue = described_class.new(
-        project,
-        user,
-        title: 'Issue #1',
-        description: 'Issue description',
-        milestone_id: milestone.id
-      ).execute
+      where(:container, :namespace_id) do
+        ref(:project) | lazy { project.namespace.id }
+        ref(:group) | lazy { group.id }
+      end
 
-      expect(issue.title).to eq('Issue #1')
-      expect(issue.description).to eq('Issue description')
-      expect(issue.milestone).to eq(milestone)
+      with_them do
+        let(:service) { described_class.new(container: container, current_user: user, params: {}) }
+
+        it 'ensures the proper namespace' do
+          issue = service.execute
+          expect(issue.namespace_id).to eq(namespace_id)
+        end
+      end
+    end
+
+    describe 'setting milestone' do
+      context 'when developer' do
+        it 'builds a new issues with given params' do
+          milestone = create(:milestone, project: project)
+          issue = build_issue(milestone_id: milestone.id)
+
+          expect(issue.milestone).to eq(milestone)
+        end
+
+        it 'sets milestone to nil if it is not available for the project' do
+          milestone = create(:milestone, project: create(:project))
+          issue = build_issue(milestone_id: milestone.id)
+
+          expect(issue.milestone).to be_nil
+        end
+      end
+
+      context 'when user is not a project member' do
+        let(:user) { create(:user) }
+
+        it 'cannot set milestone' do
+          milestone = create(:milestone, project: project)
+          issue = build_issue(milestone_id: milestone.id)
+
+          expect(issue.milestone).to be_nil
+        end
+      end
+    end
+
+    describe 'setting issue type' do
+      context 'with a corresponding WorkItem Type' do
+        let_it_be(:type_task) { build(:work_item_system_defined_type, :task) }
+        let_it_be(:type_task_id) { type_task.id }
+        let_it_be(:type_issue_id) { build(:work_item_system_defined_type, :issue).id }
+        let_it_be(:type_incident_id) { build(:work_item_system_defined_type, :incident).id }
+        let(:combined_params) { { work_item_type: type_task, issue_type: 'issue' } }
+        let(:work_item_params) { { work_item_type_id: type_task_id } }
+
+        where(:issue_params, :current_user, :work_item_type_id, :resulting_issue_type) do
+          { issue_type: nil }           | ref(:guest)    | ref(:type_issue_id)    | 'issue'
+          { issue_type: 'issue' }       | ref(:guest)    | ref(:type_issue_id)    | 'issue'
+          { issue_type: 'incident' }    | ref(:guest)    | ref(:type_issue_id)    | 'issue'
+          { issue_type: 'incident' }    | ref(:reporter) | ref(:type_incident_id) | 'incident'
+          ref(:combined_params)         | ref(:reporter) | ref(:type_task_id)     | 'task'
+          ref(:work_item_params)        | ref(:reporter) | ref(:type_task_id)     | 'task'
+          # update once support for test_case is enabled
+          { issue_type: 'test_case' }   | ref(:guest)    | ref(:type_issue_id)    | 'issue'
+          # update once support for requirement is enabled
+          { issue_type: 'requirement' } | ref(:guest)    | ref(:type_issue_id)    | 'issue'
+          { issue_type: 'invalid' }     | ref(:guest)    | ref(:type_issue_id)    | 'issue'
+          # ensure that we don't set a value which has a permission check but is an invalid issue type
+          { issue_type: 'project' }     | ref(:guest)    | ref(:type_issue_id)    | 'issue'
+        end
+
+        with_them do
+          let(:user) { current_user }
+
+          it 'builds an issue' do
+            issue = build_issue(**issue_params)
+
+            expect(issue.work_item_type_id).to eq(work_item_type_id)
+          end
+        end
+      end
+
+      context 'when an explicit work_item_type_id is provided but cannot be resolved' do
+        it 'adds an error to the issue instead of falling back to issue type' do
+          issue = build_issue(work_item_type_id: non_existing_record_id)
+
+          expect(issue.errors[:work_item_type]).to include(
+            s_('WorkItem|could not be found or is not accessible.')
+          )
+        end
+      end
+
+      context 'when an explicit work_item_type is provided but cannot be resolved' do
+        it 'adds an error to the issue instead of falling back to issue type' do
+          issue = build_issue(work_item_type: non_existing_record_id)
+
+          expect(issue.errors[:work_item_type]).to include(
+            s_('WorkItem|could not be found or is not accessible.')
+          )
+        end
+      end
+
+      context 'when an explicit work_item_type_id is resolved but creation is not allowed' do
+        let(:user) { guest }
+
+        it 'adds an error instead of silently falling back to issue type' do
+          incident_type = build(:work_item_system_defined_type, :incident)
+          issue = build_issue(work_item_type_id: incident_type.id)
+
+          expect(issue.work_item_type).to eq(WorkItems::TypesFramework::Provider.new.default_issue_type)
+          expect(issue.errors[:work_item_type]).to include(
+            s_('WorkItem|could not be found or is not accessible.')
+          )
+        end
+      end
+
+      context 'when type is resolved but not enabled' do
+        let_it_be(:task_type) { build(:work_item_system_defined_type, :task) }
+
+        shared_examples 'rejects the type and adds an error' do
+          it 'adds an error' do
+            service = described_class.new(
+              container: project, current_user: user, params: { work_item_type_id: task_type.id }
+            )
+            allow(service).to receive(:work_item_type_provider).and_return(
+              instance_double(
+                WorkItems::TypesFramework::Provider,
+                fetch_work_item_type: namespaced_type,
+                default_issue_type: WorkItems::TypesFramework::Provider.new.default_issue_type
+              )
+            )
+
+            issue = service.execute
+
+            expect(issue.errors[:work_item_type]).to include(
+              s_('WorkItem|could not be found or is not accessible.')
+            )
+          end
+        end
+
+        context 'when disabled via visibility controls' do
+          let(:namespaced_type) do
+            WorkItems::TypesFramework::NamespacedType.new(
+              task_type, enabled: false, is_a_group: false, tasks_on_boards: false
+            )
+          end
+
+          it_behaves_like 'rejects the type and adds an error'
+        end
+
+        context 'when type is archived' do
+          let(:namespaced_type) do
+            archived_type = instance_double(
+              WorkItems::TypesFramework::SystemDefined::Type,
+              base_type: 'task',
+              archived?: true,
+              only_for_group?: false,
+              creatable?: true
+            )
+
+            WorkItems::TypesFramework::NamespacedType.new(
+              archived_type, enabled: true, is_a_group: false, tasks_on_boards: false
+            )
+          end
+
+          it_behaves_like 'rejects the type and adds an error'
+        end
+
+        context 'when importing' do
+          let(:namespaced_type) do
+            WorkItems::TypesFramework::NamespacedType.new(
+              task_type, enabled: false, is_a_group: false, tasks_on_boards: false
+            )
+          end
+
+          it 'skips the visibility check and assigns the disabled type' do
+            service = described_class.new(
+              container: project, current_user: user, params: { work_item_type_id: task_type.id }
+            )
+            allow(service).to receive(:work_item_type_provider).and_return(
+              instance_double(
+                WorkItems::TypesFramework::Provider,
+                fetch_work_item_type: namespaced_type,
+                default_issue_type: WorkItems::TypesFramework::Provider.new.default_issue_type
+              )
+            )
+
+            allow(Issue).to receive(:new).and_wrap_original do |method, *args, **kwargs|
+              method.call(*args, **kwargs).tap { |issue| issue.importing = true }
+            end
+
+            issue = service.execute
+
+            expect(issue.errors[:work_item_type]).to be_empty
+          end
+        end
+      end
+    end
+
+    context 'when a service account with composite identity is in use' do
+      let_it_be(:service_account) { create(:user, :service_account, composite_identity_enforced: true) }
+
+      # Use a separate let to prevent interference with other specs
+      let(:user) { create(:user) }
+
+      before do
+        ::Gitlab::Auth::Identity.link_from_scoped_user(service_account, user, context: :authentication)
+      end
+
+      it 'attributes the change to the service account' do
+        issue = build_issue(title: 'What an issue')
+
+        expect(issue.author).to eq(service_account)
+      end
     end
   end
 end

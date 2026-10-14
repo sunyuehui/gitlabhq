@@ -1,93 +1,47 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Users::DestroyService do
-  describe "Deletes a user and all their personal projects" do
-    let!(:user)      { create(:user) }
-    let!(:admin)     { create(:admin) }
-    let!(:namespace) { create(:namespace, owner: user) }
-    let!(:project)   { create(:project, namespace: namespace) }
-    let(:service)    { described_class.new(admin) }
+RSpec.describe Users::DestroyService, feature_category: :user_management do
+  let!(:user)        { create(:user) }
+  let_it_be(:admin)  { create(:admin) }
+  let(:namespace)    { user.namespace }
+  let(:service)      { described_class.new(admin) }
+  let(:gitlab_shell) { Gitlab::Shell.new }
+
+  describe "Initiates user deletion and deletes all their personal projects", :enable_admin_mode do
+    let!(:project) { create(:project, namespace: namespace) }
 
     context 'no options are given' do
-      it 'deletes the user' do
-        user_data = service.execute(user)
-
-        expect { user_data['email'].to eq(user.email) }
-        expect { User.find(user.id) }.to raise_error(ActiveRecord::RecordNotFound)
-        expect { Namespace.with_deleted.find(user.namespace.id) }.to raise_error(ActiveRecord::RecordNotFound)
+      it 'creates GhostUserMigration record to handle migration in a worker' do
+        expect { service.execute(user) }
+          .to(
+            change do
+              Users::GhostUserMigration.where(user: user, user_type: user.user_type, initiator_user: admin).exists?
+            end.from(false).to(true))
       end
 
-      it 'will delete the project' do
-        expect_any_instance_of(Projects::DestroyService).to receive(:execute).once
+      it 'deletes the personal project' do
+        expect_next_instance_of(Projects::DestroyService) do |destroy_service|
+          expect(destroy_service).to receive(:execute).once.and_return(true)
+        end
 
         service.execute(user)
       end
     end
 
-    context 'projects in pending_delete' do
+    context 'personal projects in pending_delete' do
       before do
         project.pending_delete = true
-        project.save
+        project.save!
       end
 
-      it 'destroys a project in pending_delete' do
-        expect_any_instance_of(Projects::DestroyService).to receive(:execute).once
+      it 'destroys a personal project in pending_delete' do
+        expect_next_instance_of(Projects::DestroyService) do |destroy_service|
+          expect(destroy_service).to receive(:execute).once.and_return(true)
+        end
 
         service.execute(user)
-
-        expect { Project.find(project.id) }.to raise_error(ActiveRecord::RecordNotFound)
-      end
-    end
-
-    context "a deleted user's issues" do
-      let(:project) { create(:project) }
-
-      before do
-        project.add_developer(user)
-      end
-
-      context "for an issue the user was assigned to" do
-        let!(:issue) { create(:issue, project: project, assignees: [user]) }
-
-        before do
-          service.execute(user)
-        end
-
-        it 'does not delete issues the user is assigned to' do
-          expect(Issue.find_by_id(issue.id)).to be_present
-        end
-
-        it 'migrates the issue so that it is "Unassigned"' do
-          migrated_issue = Issue.find_by_id(issue.id)
-
-          expect(migrated_issue.assignees).to be_empty
-        end
-      end
-    end
-
-    context "a deleted user's merge_requests" do
-      let(:project) { create(:project, :repository) }
-
-      before do
-        project.add_developer(user)
-      end
-
-      context "for an merge request the user was assigned to" do
-        let!(:merge_request) { create(:merge_request, source_project: project, assignee: user) }
-
-        before do
-          service.execute(user)
-        end
-
-        it 'does not delete merge requests the user is assigned to' do
-          expect(MergeRequest.find_by_id(merge_request.id)).to be_present
-        end
-
-        it 'migrates the merge request so that it is "Unassigned"' do
-          migrated_merge_request = MergeRequest.find_by_id(merge_request.id)
-
-          expect(migrated_merge_request.assignee).to be_nil
-        end
       end
     end
 
@@ -98,11 +52,19 @@ describe Users::DestroyService do
 
       before do
         solo_owned.group_members = [member]
-        service.execute(user)
       end
 
-      it 'does not delete the user' do
+      it 'returns the user with attached errors' do
+        expect(service.execute(user)).to be(user)
+        expect(user.errors.full_messages).to(
+          contain_exactly('You must transfer ownership or delete groups before you can remove user'))
+      end
+
+      it 'does not delete the user, nor the group' do
+        service.execute(user)
+
         expect(User.find(user.id)).to eq user
+        expect(Group.find(solo_owned.id)).to eq solo_owned
       end
     end
 
@@ -117,52 +79,231 @@ describe Users::DestroyService do
       end
 
       it 'deletes solo owned groups' do
-        expect { Project.find(solo_owned.id) }.to raise_error(ActiveRecord::RecordNotFound)
-      end
-
-      it 'deletes the user' do
-        expect { User.find(user.id) }.to raise_error(ActiveRecord::RecordNotFound)
+        expect { Group.find(solo_owned.id) }.to raise_error(ActiveRecord::RecordNotFound)
       end
     end
 
-    context "deletion permission checks" do
-      it 'does not delete the user when user is not an admin' do
-        other_user = create(:user)
+    context 'deletions with inherited group owners' do
+      let(:group) { create(:group, :nested) }
+      let(:user) { create(:user) }
+      let(:inherited_owner) { create(:user) }
 
-        expect { described_class.new(other_user).execute(user) }.to raise_error(Gitlab::Access::AccessDeniedError)
-        expect(User.exists?(user.id)).to be(true)
+      before do
+        group.parent.add_owner(inherited_owner)
+        group.add_owner(user)
+
+        service.execute(user, delete_solo_owned_groups: true)
       end
 
-      it 'allows admins to delete anyone' do
-        described_class.new(admin).execute(user)
-
-        expect(User.exists?(user.id)).to be(false)
-      end
-
-      it 'allows users to delete their own account' do
-        described_class.new(user).execute(user)
-
-        expect(User.exists?(user.id)).to be(false)
+      it 'does not delete the group' do
+        expect(Group.exists?(id: group)).to be_truthy
       end
     end
 
-    context "migrating associated records" do
-      let!(:issue)     { create(:issue, author: user) }
+    describe "user personal's repository removal" do
+      context 'storages' do
+        before do
+          perform_enqueued_jobs { service.execute(user) }
+        end
 
-      it 'delegates to the `MigrateToGhostUser` service to move associated records to the ghost user' do
-        expect_any_instance_of(Users::MigrateToGhostUserService).to receive(:execute).once.and_call_original
+        context 'legacy storage' do
+          let!(:project) { create(:project, :empty_repo, :legacy_storage, namespace: user.namespace) }
+
+          it 'removes repository' do
+            expect(
+              gitlab_shell.repository_exists?(project.repository_storage, "#{project.disk_path}.git")
+            ).to be_falsey
+          end
+        end
+
+        context 'hashed storage' do
+          let!(:project) { create(:project, :empty_repo, namespace: user.namespace) }
+
+          it 'removes repository' do
+            expect(
+              gitlab_shell.repository_exists?(project.repository_storage, "#{project.disk_path}.git")
+            ).to be_falsey
+          end
+        end
+      end
+
+      context 'repository removal status is taken into account' do
+        it 'raises exception' do
+          expect_next_instance_of(::Projects::DestroyService) do |destroy_service|
+            expect(destroy_service).to receive(:execute).and_return(false)
+          end
+
+          expect { service.execute(user) }
+            .to raise_error(Users::DestroyService::DestroyError, "Project #{project.id} can't be deleted")
+        end
+      end
+    end
+
+    describe "calls the before/after callbacks" do
+      it 'of project_members' do
+        expect_any_instance_of(ProjectMember).to receive(:run_callbacks).with(:find).once
+        expect_any_instance_of(ProjectMember).to receive(:run_callbacks).with(:initialize).once
+        expect_any_instance_of(ProjectMember).to receive(:run_callbacks).with(:destroy).once
 
         service.execute(user)
-
-        expect(issue.reload.author).to be_ghost
       end
 
-      it 'does not run `MigrateToGhostUser` if hard_delete option is given' do
-        expect_any_instance_of(Users::MigrateToGhostUserService).not_to receive(:execute)
+      it 'of group_members' do
+        group_member = create(:group_member)
+        group_member.group.group_members.create!(user: user, access_level: 40)
 
-        service.execute(user, hard_delete: true)
+        expect_any_instance_of(GroupMember).to receive(:run_callbacks).with(:find).once
+        expect_any_instance_of(GroupMember).to receive(:run_callbacks).with(:initialize).once
+        expect_any_instance_of(GroupMember).to receive(:run_callbacks).with(:destroy).once
 
-        expect(Issue.exists?(issue.id)).to be_falsy
+        service.execute(user)
+      end
+    end
+
+    describe 'authorization refresh priority' do
+      shared_examples 'destroying memberships with a refresh priority of' do |expected_priority|
+        it "passes #{expected_priority.inspect} to the destroyed memberships" do
+          expect_next_found_instances_of(GroupMember, 1) do |member|
+            expect(member).to receive(:authorized_projects_refresh_priority=)
+              .with(expected_priority).and_call_original
+          end
+
+          service.execute(user)
+        end
+      end
+
+      before do
+        create(:group).add_developer(user)
+      end
+
+      context 'when the user is a project bot' do
+        let!(:user) { create(:user, :project_bot) }
+        # A project bot may hold only one membership (Member validates user_id
+        # uniqueness for project bots), so the bot must not also own a personal
+        # project: that membership would take the slot and the group membership
+        # below would fail to save.
+        let!(:project) { create(:project) }
+
+        it_behaves_like 'destroying memberships with a refresh priority of',
+          UserProjectAccessChangedService::MEDIUM_PRIORITY
+      end
+
+      context 'when the user is not a project bot' do
+        it_behaves_like 'destroying memberships with a refresh priority of', nil
+      end
+    end
+
+    describe 'prometheus metrics', :prometheus do
+      context 'scheduled records' do
+        context 'with a single record' do
+          it 'updates the scheduled records gauge' do
+            service.execute(user)
+
+            gauge = Gitlab::Metrics.client.get(:gitlab_ghost_user_migration_scheduled_records_total)
+            expect(gauge.get).to eq(1)
+          end
+        end
+
+        context 'with approximate count due to large number of records' do
+          it 'updates the scheduled records gauge' do
+            allow(Users::GhostUserMigration)
+              .to(receive_message_chain(:limit, :count).and_return(1001))
+            allow(Users::GhostUserMigration).to(receive(:minimum)).and_return(42)
+            allow(Users::GhostUserMigration).to(receive(:maximum)).and_return(9042)
+
+            service.execute(user)
+
+            gauge = Gitlab::Metrics.client.get(:gitlab_ghost_user_migration_scheduled_records_total)
+            expect(gauge.get).to eq(9000)
+          end
+        end
+      end
+
+      context 'lag' do
+        it 'update the lag gauge', :freeze_time do
+          create(:ghost_user_migration, created_at: 10.minutes.ago)
+
+          service.execute(user)
+
+          gauge = Gitlab::Metrics.client.get(:gitlab_ghost_user_migration_lag_seconds)
+          expect(gauge.get).to eq(600)
+        end
+      end
+    end
+  end
+
+  describe "Deletion permission checks" do
+    it 'does not delete the user when user is not an admin' do
+      other_user = create(:user)
+
+      expect { described_class.new(other_user).execute(user) }.to raise_error(Gitlab::Access::AccessDeniedError)
+
+      expect(Users::GhostUserMigration).not_to be_exists
+    end
+
+    context 'when admin mode is enabled', :enable_admin_mode do
+      it 'allows admins to delete anyone' do
+        expect { described_class.new(admin).execute(user) }
+          .to(
+            change do
+              Users::GhostUserMigration.where(user: user, initiator_user: admin).exists?
+            end.from(false).to(true))
+      end
+    end
+
+    context 'when admin mode is disabled' do
+      it 'disallows admins to delete anyone' do
+        expect { described_class.new(admin).execute(user) }.to raise_error(Gitlab::Access::AccessDeniedError)
+
+        expect(Users::GhostUserMigration).not_to be_exists
+      end
+    end
+
+    context 'when running the service twice for a user with no personal projects' do
+      let!(:project) { nil }
+
+      it 'does not create a second ghost user migration and does not raise an exception' do
+        expect { described_class.new(user).execute(user) }
+          .to change { Users::GhostUserMigration.where(user: user).count }.by(1)
+
+        expect do
+          expect { described_class.new(user).execute(user) }.not_to raise_exception
+        end.not_to change { Users::GhostUserMigration.where(user: user).count }
+      end
+    end
+
+    it 'allows users to delete their own account' do
+      expect { described_class.new(user).execute(user) }
+        .to(
+          change do
+            Users::GhostUserMigration.where(user: user, initiator_user: user).exists?
+          end.from(false).to(true))
+    end
+
+    it 'allows user to be deleted if skip_authorization: true' do
+      other_user = create(:user)
+
+      expect do
+        described_class.new(user)
+                       .execute(other_user, skip_authorization: true)
+      end.to(
+        change do
+          Users::GhostUserMigration.where(user: other_user, initiator_user: user).exists?
+        end.from(false).to(true))
+    end
+
+    describe 'user is the only organization owner' do
+      let(:organization) { create(:organization) }
+
+      before do
+        organization.add_owner(user)
+      end
+
+      it 'returns the user with attached errors' do
+        described_class.new(user).execute(user)
+
+        expect(user.errors.full_messages).to(
+          contain_exactly('You must transfer ownership of organizations before you can remove user'))
       end
     end
   end

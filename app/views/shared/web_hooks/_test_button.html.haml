@@ -1,12 +1,5 @@
-- triggers = local_assigns.fetch(:triggers)
-- button_class = local_assigns.fetch(:button_class, '')
 - hook = local_assigns.fetch(:hook)
+- size = local_assigns.fetch(:size, 'medium')
+- triggers = hook.class.triggers.each_value
 
-.hook-test-button.dropdown.inline
-  %button.btn{ 'data-toggle' => 'dropdown', class: button_class }
-    Test
-    = icon('caret-down')
-  %ul.dropdown-menu.dropdown-menu-align-right{ role: 'menu' }
-    - triggers.each_value do |event|
-      %li
-        = link_to_test_hook(hook, event)
+.js-webhook-test-dropdown{ data: { items: webhook_test_items(hook, triggers).to_json, size: size } }

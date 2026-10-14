@@ -1,18 +1,21 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-feature 'Profile > GPG Keys' do
+require 'spec_helper'
+
+RSpec.describe 'User Settings > GPG keys', feature_category: :user_profile do
   let(:user) { create(:user, email: GpgHelpers::User2.emails.first) }
 
   before do
-    login_as(user)
+    sign_in(user)
   end
 
   describe 'User adds a key' do
     before do
-      visit profile_gpg_keys_path
+      visit user_settings_gpg_keys_path
     end
 
-    scenario 'saves the new key' do
+    it 'saves the new key' do
+      click_button('Add new key')
       fill_in('Key', with: GpgHelpers::User2.public_key)
       click_button('Add key')
 
@@ -20,39 +23,110 @@ feature 'Profile > GPG Keys' do
       expect(page).to have_content('bette.cartwright@example.net Unverified')
       expect(page).to have_content(GpgHelpers::User2.fingerprint)
     end
+
+    it 'with multiple subkeys' do
+      click_button('Add new key')
+      fill_in('Key', with: GpgHelpers::User3.public_key)
+      click_button('Add key')
+
+      expect(page).to have_content('john.doe@example.com Unverified')
+      expect(page).to have_content(GpgHelpers::User3.fingerprint)
+
+      GpgHelpers::User3.subkey_fingerprints.each do |fingerprint|
+        expect(page).to have_content(fingerprint)
+      end
+    end
   end
 
-  scenario 'User sees their key' do
-    create(:gpg_key, user: user, key: GpgHelpers::User2.public_key)
-    visit profile_gpg_keys_path
+  it 'user sees their key' do
+    gpg_key = create(:gpg_key, user: user, key: GpgHelpers::User2.public_key)
+    visit user_settings_gpg_keys_path
 
     expect(page).to have_content('bette.cartwright@example.com Verified')
     expect(page).to have_content('bette.cartwright@example.net Unverified')
     expect(page).to have_content(GpgHelpers::User2.fingerprint)
+    expect(page).to have_selector('time.js-timeago', text: gpg_key.created_at.strftime('%b %d, %Y'))
   end
 
-  scenario 'User removes a key via the key index' do
+  it 'user does not see the email of a revoked uid', :aggregate_failures do
+    create(:email, :confirmed, user: user, email: GpgHelpers::UserWithRevokedUid.emails.first)
+    create(:email, :confirmed, user: user, email: GpgHelpers::UserWithRevokedUid.revoked_emails.first)
+    create(:gpg_key, user: user, key: GpgHelpers::UserWithRevokedUid.public_key)
+    visit user_settings_gpg_keys_path
+
+    expect(page).to have_content("#{GpgHelpers::UserWithRevokedUid.emails.first} Verified")
+    expect(page).not_to have_content(GpgHelpers::UserWithRevokedUid.revoked_emails.first)
+    expect(page).to have_content(GpgHelpers::UserWithRevokedUid.fingerprint)
+  end
+
+  it 'user sees no email for a key whose every uid is revoked', :aggregate_failures do
+    create(:email, :confirmed, user: user, email: GpgHelpers::UserWithOnlyRevokedUid.revoked_emails.first)
+    create(:gpg_key, user: user, key: GpgHelpers::UserWithOnlyRevokedUid.public_key)
+    visit user_settings_gpg_keys_path
+
+    expect(page).to have_content(GpgHelpers::UserWithOnlyRevokedUid.fingerprint)
+    expect(page).not_to have_content(GpgHelpers::UserWithOnlyRevokedUid.revoked_emails.first)
+    expect(page).not_to have_content('Verified')
+    expect(page).not_to have_content('Unverified')
+  end
+
+  it 'user removes a key via the key index' do
     create(:gpg_key, user: user, key: GpgHelpers::User2.public_key)
-    visit profile_gpg_keys_path
+    visit user_settings_gpg_keys_path
 
     click_link('Remove')
 
-    expect(page).to have_content('Your GPG keys (0)')
+    expect(page).to have_content('Your GPG keys')
+    within_testid('crud-count') do
+      expect(page).to have_content('0')
+    end
   end
 
-  scenario 'User revokes a key via the key index' do
+  it 'user revokes a key via the key index' do
     gpg_key = create :gpg_key, user: user, key: GpgHelpers::User2.public_key
-    gpg_signature = create :gpg_signature, gpg_key: gpg_key, valid_signature: true
+    gpg_signature = create :gpg_signature, gpg_key: gpg_key, verification_status: :verified
 
-    visit profile_gpg_keys_path
+    visit user_settings_gpg_keys_path
 
     click_link('Revoke')
 
-    expect(page).to have_content('Your GPG keys (0)')
+    expect(page).to have_content('Your GPG keys')
+    within_testid('crud-count') do
+      expect(page).to have_content('0')
+    end
 
     expect(gpg_signature.reload).to have_attributes(
-      valid_signature: false,
+      verification_status: 'unknown_key',
       gpg_key: nil
     )
+  end
+
+  context 'when external verification is required' do
+    let!(:beyond_identity_integration) { create(:beyond_identity_integration, :instance) }
+    let!(:gpg_key) do
+      create :gpg_key, externally_verified: externally_verified, user: user, key: GpgHelpers::User2.public_key
+    end
+
+    before do
+      visit user_settings_gpg_keys_path
+    end
+
+    context 'and user has a key that is externally verified' do
+      let(:externally_verified) { true }
+
+      it 'considers the key Verified' do
+        expect(page).to have_content('bette.cartwright@example.com Verified')
+      end
+    end
+
+    context 'and user has a key that is not externally verified' do
+      let(:externally_verified) { false }
+
+      it 'considers the key Unverified' do
+        expect(page).not_to have_content('bette.cartwright@example.com')
+        expect(page).not_to have_content('Verified')
+        expect(page).not_to have_content('Unverified')
+      end
+    end
   end
 end

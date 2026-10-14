@@ -1,40 +1,21 @@
-@import "framework/variables";
-@import "peek/views/performance_bar";
-@import "peek/views/rblineprof";
+@import 'framework/variables';
+@import 'framework/variables_overrides';
 
-#peek {
-  position: fixed;
-  left: 0;
-  top: 0;
+// stylelint-disable-next-line gitlab/no-js-class
+#js-peek {
   width: 100%;
-  z-index: 2000;
-  overflow-x: hidden;
 
   height: $performance-bar-height;
-  background: $black;
+  font-size: $gl-font-size-small;
   line-height: $performance-bar-height;
-  color: $perf-bar-text;
+  color: $gray-50;
+
+  option {
+    color: initial;
+  }
 
   &.disabled {
     display: none;
-  }
-
-  &.production {
-    background-color: $perf-bar-production;
-  }
-
-  &.staging {
-    background-color: $perf-bar-staging;
-  }
-
-  &.development {
-    background-color: $perf-bar-development;
-  }
-
-  .wrapper {
-    width: 80%;
-    height: $performance-bar-height;
-    margin: 0 auto;
   }
 
   // UI Elements
@@ -42,11 +23,11 @@
     background: $perf-bar-bucket-bg;
     display: inline-block;
     padding: 4px 6px;
-    font-family: Consolas, "Liberation Mono", Courier, monospace;
+    font-family: Consolas, 'Liberation Mono', Courier, monospace;
     line-height: 1;
-    color: $perf-bar-bucket-color;
     border-radius: 3px;
-    box-shadow: 0 1px 0 $perf-bar-bucket-box-shadow-from, inset 0 1px 2px $perf-bar-bucket-box-shadow-to;
+    box-shadow: 0 1px 0 $perf-bar-bucket-box-shadow-from,
+      inset 0 1px 2px $perf-bar-bucket-box-shadow-to;
 
     .hidden {
       display: none;
@@ -57,55 +38,31 @@
     }
   }
 
-  strong {
-    color: $white-light;
-  }
-
-  table {
-    color: $black;
-
-    strong {
-      color: $black;
-    }
+  .canary {
+    color: $perf-bar-canary-text;
   }
 
   .view {
-    margin-right: 15px;
-    float: left;
+    flex-shrink: 0;
 
     &:last-child {
       margin-right: 0;
     }
   }
 
-  .css-truncate {
-    &.css-truncate-target,
-    .css-truncate-target {
-      display: inline-block;
-      max-width: 125px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      vertical-align: top;
+  .view-performance-container,
+  .view-reports-container {
+    margin-right: $gl-padding-24;
+
+    .view:not(:first-child) {
+      margin-right: 0;
+
+      &::before {
+        content: '•';
+        opacity: .5;
+        display: inline-block;
+        margin: 0 $gl-padding-8;
+      }
     }
-
-    &.expandable:hover .css-truncate-target,
-    &.expandable:hover.css-truncate-target {
-      max-width: 10000px !important;
-    }
-  }
-}
-
-#modal-peek-pg-queries-content {
-  color: $black;
-}
-
-.peek-rblineprof-file {
-  pre.duration {
-    width: 280px;
-  }
-
-  .data {
-    overflow: visible;
   }
 }

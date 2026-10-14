@@ -1,14 +1,20 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Mentionable do
-  class Example
-    include Mentionable
+RSpec.describe Mentionable, feature_category: :shared do
+  before do
+    stub_const('Example', Class.new)
+    Example.class_eval do
+      include Mentionable
 
-    attr_accessor :project, :message
-    attr_mentionable :message
+      attr_accessor :project, :message
 
-    def author
-      nil
+      attr_mentionable :message
+
+      def author
+        nil
+      end
     end
   end
 
@@ -16,7 +22,7 @@ describe Mentionable do
     let(:project) { create(:project) }
     let(:mentionable) { Example.new }
 
-    it 'excludes JIRA references' do
+    it 'excludes Jira references' do
       allow(project).to receive_messages(jira_tracker?: true)
 
       mentionable.project = project
@@ -26,19 +32,19 @@ describe Mentionable do
   end
 end
 
-describe Issue, "Mentionable" do
+RSpec.describe Issue, "Mentionable", feature_category: :team_planning do
   describe '#mentioned_users' do
-    let!(:user) { create(:user, username: 'stranger') }
-    let!(:user2) { create(:user, username: 'john') }
-    let!(:user3) { create(:user, username: 'jim') }
-    let(:issue) { create(:issue, description: "#{user.to_reference} mentioned") }
+    let_it_be(:user) { create(:user, username: 'stranger') }
+    let_it_be(:user2) { create(:user, username: 'john') }
+    let_it_be(:user3) { create(:user, username: 'jim') }
+    let_it_be(:issue) { create(:issue, description: "#{user.to_reference} mentioned") }
 
     subject { issue.mentioned_users }
 
     it { expect(subject).to contain_exactly(user) }
 
     context 'when a note on personal snippet' do
-      let!(:note) { create(:note_on_personal_snippet, note: "#{user.to_reference} mentioned #{user3.to_reference}") }
+      let(:note) { create(:note_on_personal_snippet, note: "#{user.to_reference} mentioned #{user3.to_reference}") }
 
       subject { note.mentioned_users }
 
@@ -62,7 +68,7 @@ describe Issue, "Mentionable" do
 
       context 'when the current user can see the issue' do
         before do
-          private_project.team << [user, Gitlab::Access::DEVELOPER]
+          private_project.add_developer(user)
         end
 
         it 'includes the reference' do
@@ -85,12 +91,12 @@ describe Issue, "Mentionable" do
   end
 
   describe '#create_cross_references!' do
-    let(:project) { create(:project, :repository) }
+    let_it_be(:project) { create(:project, :small_repo) }
     let(:author)  { build(:user) }
     let(:commit)  { project.commit }
     let(:commit2) { project.commit }
 
-    let!(:issue) do
+    let(:issue) do
       create(:issue, project: project, description: "See #{commit.to_reference}")
     end
 
@@ -107,7 +113,7 @@ describe Issue, "Mentionable" do
     let(:issues)  { create_list(:issue, 2, project: project, author: author) }
 
     before do
-      project.team << [author, Gitlab::Access::DEVELOPER]
+      project.add_developer(author)
     end
 
     context 'before changes are persisted' do
@@ -136,7 +142,7 @@ describe Issue, "Mentionable" do
 
         expect(SystemNoteService).not_to receive(:cross_reference)
 
-        issue.update_attributes(description: 'New description')
+        issue.update!(description: 'New description')
         issue.create_new_cross_references!
       end
 
@@ -145,17 +151,17 @@ describe Issue, "Mentionable" do
 
         expect(SystemNoteService).to receive(:cross_reference).with(issues[1], any_args)
 
-        issue.update_attributes(description: issues[1].to_reference)
+        issue.update!(description: issues[1].to_reference)
         issue.create_new_cross_references!
       end
 
       it 'notifies new references from project snippet note' do
-        snippet = create(:snippet, project: project)
+        snippet = create(:project_snippet, project: project)
         note = create(:note, note: issues[0].to_reference, noteable: snippet, project: project, author: author)
 
         expect(SystemNoteService).to receive(:cross_reference).with(issues[1], any_args)
 
-        note.update_attributes(note: issues[1].to_reference)
+        note.update!(note: issues[1].to_reference)
         note.create_new_cross_references!
       end
     end
@@ -164,11 +170,26 @@ describe Issue, "Mentionable" do
       create(:issue, project: project, description: description, author: author)
     end
   end
+
+  describe '#store_mentions!' do
+    it_behaves_like 'mentions in description', :issue
+    it_behaves_like 'mentions in notes', :issue do
+      let(:note) { create(:note_on_issue) }
+      let(:mentionable) { note.noteable }
+    end
+  end
+
+  describe 'load mentions' do
+    it_behaves_like 'load mentions from DB', :issue do
+      let(:note) { create(:note_on_issue) }
+      let(:mentionable) { note.noteable }
+    end
+  end
 end
 
-describe Commit, 'Mentionable' do
-  let(:project) { create(:project, :public, :repository) }
-  let(:commit)  { project.commit }
+RSpec.describe Commit, 'Mentionable', feature_category: :source_code_management do
+  let_it_be(:project) { create(:project, :public, :small_repo) }
+  let(:commit) { project.commit }
 
   describe '#matches_cross_reference_regex?' do
     it "is false when message doesn't reference anything" do
@@ -204,7 +225,7 @@ describe Commit, 'Mentionable' do
     end
 
     context 'with external issue tracker' do
-      let(:project) { create(:jira_project, :repository) }
+      let_it_be(:project) { create(:project, :with_jira_integration, :small_repo) }
 
       it 'is true if external issues referenced' do
         allow(commit.raw).to receive(:message).and_return 'JIRA-123'
@@ -217,6 +238,155 @@ describe Commit, 'Mentionable' do
 
         expect(commit.matches_cross_reference_regex?).to be_truthy
       end
+    end
+  end
+
+  describe '#store_mentions!' do
+    it_behaves_like 'mentions in notes', :commit do
+      let(:note) { create(:note_on_commit) }
+      let(:mentionable) { note.noteable }
+    end
+
+    context 'with sharding_key trigger' do
+      let_it_be(:user) { create(:user) }
+      let_it_be(:project) { create(:project, :public, :small_repo) }
+      let_it_be(:commit) { project.commit }
+
+      let(:note) { create(:note_on_commit, commit_id: commit.id, project: project) }
+      let(:note_desc) { user.to_reference }
+      let(:mentionable) { note.noteable }
+
+      context 'with user mention creation' do
+        it 'syncs value with notes column namespace_id' do
+          note.update!(note: note_desc)
+          # Set namespace_id after the save: ensure_namespace_id clears it for a
+          # project-scoped note, so update_column reinstates the dual-key state
+          # this example exercises without re-triggering the callback.
+          note.update_column(:namespace_id, project.project_namespace_id)
+          # delete user mentions created when saving the note
+          mentionable.user_mentions.delete_all
+
+          expect { note.store_mentions! }.to change { mentionable.user_mentions.count }.by(1)
+          expect(mentionable.user_mentions.last.namespace_id).to eq(note.namespace_id)
+        end
+
+        it 'syncs value with notes project namespace' do
+          note.update!(note: note_desc)
+          mentionable.user_mentions.delete_all
+
+          expect(note.namespace_id).to be_nil
+
+          expect { note.store_mentions! }.to change { mentionable.user_mentions.count }.by(1)
+          expect(mentionable.user_mentions.last.namespace_id).to eq(note.project.project_namespace_id)
+        end
+      end
+
+      context 'with user mention update' do
+        let(:note) { create(:note_on_commit, commit_id: commit.id, project: project) }
+
+        it 'syncs value with notes column namespace_id' do
+          note.update!(note: note_desc)
+          # See note above: reinstate namespace_id after the callback clears it.
+          note.update_column(:namespace_id, project.project_namespace_id)
+          mentionable.user_mentions.last.update_column(:namespace_id, nil)
+
+          # updates user mention created when saving the note
+          expect { note.store_mentions! }.not_to change { mentionable.user_mentions.count }
+
+          expect(mentionable.user_mentions.count).to eq 1
+          expect(mentionable.user_mentions.last.reload.namespace_id).to eq(note.namespace_id)
+        end
+
+        it 'syncs value with notes column project_id' do
+          note.update!(note: note_desc)
+          mentionable.user_mentions.last.update_column(:namespace_id, nil)
+
+          expect(note.namespace_id).to be_nil
+
+          expect { note.store_mentions! }.not_to change { mentionable.user_mentions.count }
+
+          expect(mentionable.user_mentions.count).to eq 1
+          expect(mentionable.user_mentions.last.reload.namespace_id).to eq(note.project.project_namespace_id)
+        end
+      end
+    end
+  end
+
+  describe 'load mentions' do
+    it_behaves_like 'load mentions from DB', :commit do
+      let(:note) { create(:note_on_commit) }
+      let(:mentionable) { note.noteable }
+    end
+  end
+end
+
+RSpec.describe MergeRequest, 'Mentionable', feature_category: :code_review_workflow do
+  describe '#store_mentions!' do
+    it_behaves_like 'mentions in description', :merge_request
+    it_behaves_like 'mentions in notes', :merge_request do
+      let(:project) { create(:project) }
+      let(:merge_request) { create(:merge_request, source_project: project, target_project: project) }
+      let(:note) { create(:note_on_merge_request, noteable: merge_request, project: merge_request.project) }
+      let(:mentionable) { note.noteable }
+    end
+  end
+
+  describe 'load mentions' do
+    it_behaves_like 'load mentions from DB', :merge_request do
+      let(:project) { create(:project) }
+      let(:merge_request) { create(:merge_request, source_project: project, target_project: project) }
+      let(:note) { create(:note_on_merge_request, noteable: merge_request, project: merge_request.project) }
+      let(:mentionable) { note.noteable }
+    end
+  end
+end
+
+RSpec.describe Snippet, 'Mentionable', feature_category: :source_code_management do
+  describe '#store_mentions!' do
+    it_behaves_like 'mentions in description', :project_snippet
+    it_behaves_like 'mentions in notes', :project_snippet do
+      let(:note) { create(:note_on_project_snippet) }
+      let(:mentionable) { note.noteable }
+    end
+  end
+
+  describe 'load mentions' do
+    it_behaves_like 'load mentions from DB', :project_snippet do
+      let(:note) { create(:note_on_project_snippet) }
+      let(:mentionable) { note.noteable }
+    end
+  end
+end
+
+RSpec.describe PersonalSnippet, 'Mentionable', feature_category: :source_code_management do
+  describe '#store_mentions!' do
+    it_behaves_like 'mentions in description', :personal_snippet
+    it_behaves_like 'mentions in notes', :personal_snippet do
+      let(:note) { create(:note_on_personal_snippet) }
+      let(:mentionable) { note.noteable }
+    end
+  end
+
+  describe 'load mentions' do
+    it_behaves_like 'load mentions from DB', :personal_snippet do
+      let(:note) { create(:note_on_personal_snippet) }
+      let(:mentionable) { note.noteable }
+    end
+  end
+end
+
+RSpec.describe DesignManagement::Design, feature_category: :team_planning do
+  describe '#store_mentions!' do
+    it_behaves_like 'mentions in notes', :design do
+      let(:note) { create(:diff_note_on_design) }
+      let(:mentionable) { note.noteable }
+    end
+  end
+
+  describe 'load mentions' do
+    it_behaves_like 'load mentions from DB', :design do
+      let(:note) { create(:diff_note_on_design) }
+      let(:mentionable) { note.noteable }
     end
   end
 end

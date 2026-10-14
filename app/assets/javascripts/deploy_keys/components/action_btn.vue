@@ -1,55 +1,71 @@
 <script>
-  import eventHub from '../eventhub';
-  import loadingIcon from '../../vue_shared/components/loading_icon.vue';
+import { GlButton } from '@gitlab/ui';
+import { glSlotsMixin } from '~/lib/utils/vue3compat/gl_slots_mixin';
 
-  export default {
-    data() {
-      return {
-        isLoading: false,
-      };
+export default {
+  name: 'ActionBtn',
+  components: {
+    GlButton,
+  },
+  mixins: [glSlotsMixin],
+  props: {
+    deployKey: {
+      type: Object,
+      required: true,
     },
-    props: {
-      deployKey: {
-        type: Object,
-        required: true,
-      },
-      type: {
-        type: String,
-        required: true,
-      },
-      btnCssClass: {
-        type: String,
-        required: false,
-        default: 'btn-default',
-      },
+    category: {
+      type: String,
+      required: false,
+      default: 'tertiary',
     },
-
-    components: {
-      loadingIcon,
+    variant: {
+      type: String,
+      required: false,
+      default: 'default',
     },
-
-    methods: {
-      doAction() {
-        this.isLoading = true;
-
-        eventHub.$emit(`${this.type}.key`, this.deployKey);
-      },
+    icon: {
+      type: String,
+      required: false,
+      default: '',
     },
-    computed: {
-      text() {
-        return `${this.type.charAt(0).toUpperCase()}${this.type.slice(1)}`;
-      },
+    mutation: {
+      type: Object,
+      required: true,
     },
-  };
+  },
+  emits: ['error'],
+  data() {
+    return {
+      isLoading: false,
+    };
+  },
+  methods: {
+    doAction() {
+      this.isLoading = true;
+      this.$apollo
+        .mutate({
+          mutation: this.mutation,
+          variables: { id: this.deployKey.id },
+        })
+        .catch((error) => this.$emit('error', error))
+        .finally(() => {
+          this.isLoading = false;
+        });
+    },
+  },
+};
 </script>
 
 <template>
-  <button
-    class="btn btn-sm prepend-left-10"
-    :class="[{ disabled: isLoading }, btnCssClass]"
-    :disabled="isLoading"
-    @click="doAction">
-    {{ text }}
-    <loading-icon v-if="isLoading" />
-  </button>
+  <gl-button
+    v-bind="$attrs"
+    :category="category"
+    :variant="variant"
+    :icon="icon"
+    :loading="isLoading"
+    class="btn"
+    @click="doAction"
+  >
+    <template v-if="glSlots().default" #default><slot></slot></template>
+  </gl-button>
 </template>

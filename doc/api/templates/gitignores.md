@@ -1,15 +1,42 @@
-# Gitignores API
+---
+stage: Create
+group: Source Code
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: .gitignore API
+---
 
-## List gitignore templates
+{{< details >}}
 
-Get all gitignore templates.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-```
+{{< /details >}}
+
+Use this API to retrieve .gitignore templates. For more information,
+see the [Git documentation for `.gitignore`](https://git-scm.com/docs/gitignore).
+
+Users with the Guest role can't access the `.gitignore` templates. For more information, see
+[Project and group visibility](../../user/public_access.md).
+
+## List all `.gitignore` templates
+
+Lists all `.gitignore` templates.
+
+```plaintext
 GET /templates/gitignores
 ```
 
-```bash
-curl https://gitlab.example.com/api/v4/templates/gitignores
+If successful, returns [`200 OK`](../rest/troubleshooting.md#status-codes) and the following response attributes:
+
+| Attribute | Type   | Description |
+|-----------|--------|-------------|
+| `key`     | string | Key identifier for the `.gitignore` template. |
+| `name`    | string | Display name of the `.gitignore` template. |
+
+Example request:
+
+```shell
+curl "https://gitlab.example.com/api/v4/templates/gitignores"
 ```
 
 Example response:
@@ -17,556 +44,113 @@ Example response:
 ```json
 [
   {
-    "name": "AppEngine"
-  },
-  {
-    "name": "Laravel"
-  },
-  {
-    "name": "Elisp"
-  },
-  {
-    "name": "SketchUp"
-  },
-  {
-    "name": "Ada"
-  },
-  {
-    "name": "Ruby"
-  },
-  {
-    "name": "Kohana"
-  },
-  {
-    "name": "Nanoc"
-  },
-  {
-    "name": "Erlang"
-  },
-  {
-    "name": "OCaml"
-  },
-  {
-    "name": "Lithium"
-  },
-  {
-    "name": "Fortran"
-  },
-  {
-    "name": "Scala"
-  },
-  {
-    "name": "Node"
-  },
-  {
-    "name": "Fancy"
-  },
-  {
-    "name": "Perl"
-  },
-  {
-    "name": "Zephir"
-  },
-  {
-    "name": "WordPress"
-  },
-  {
-    "name": "Symfony"
-  },
-  {
-    "name": "FuelPHP"
-  },
-  {
-    "name": "DM"
-  },
-  {
-    "name": "Sdcc"
-  },
-  {
-    "name": "Rust"
-  },
-  {
-    "name": "C"
-  },
-  {
-    "name": "Umbraco"
-  },
-  {
+    "key": "Actionscript",
     "name": "Actionscript"
   },
   {
-    "name": "Android"
+    "key": "Ada",
+    "name": "Ada"
   },
   {
-    "name": "Grails"
-  },
-  {
-    "name": "Composer"
-  },
-  {
-    "name": "ExpressionEngine"
-  },
-  {
-    "name": "Gcov"
-  },
-  {
-    "name": "Qt"
-  },
-  {
-    "name": "Phalcon"
-  },
-  {
-    "name": "ArchLinuxPackages"
-  },
-  {
-    "name": "TeX"
-  },
-  {
-    "name": "SCons"
-  },
-  {
-    "name": "Lilypond"
-  },
-  {
-    "name": "CommonLisp"
-  },
-  {
-    "name": "Rails"
-  },
-  {
-    "name": "Mercury"
-  },
-  {
-    "name": "Magento"
-  },
-  {
-    "name": "ChefCookbook"
-  },
-  {
-    "name": "GitBook"
-  },
-  {
-    "name": "C++"
-  },
-  {
-    "name": "Eagle"
-  },
-  {
-    "name": "Go"
-  },
-  {
-    "name": "OpenCart"
-  },
-  {
-    "name": "Scheme"
-  },
-  {
-    "name": "Typo3"
-  },
-  {
-    "name": "SeamGen"
-  },
-  {
-    "name": "Swift"
-  },
-  {
-    "name": "Elm"
-  },
-  {
-    "name": "Unity"
-  },
-  {
+    "key": "Agda",
     "name": "Agda"
   },
   {
-    "name": "CUDA"
+    "key": "Android",
+    "name": "Android"
   },
   {
-    "name": "VVVV"
+    "key": "AppEngine",
+    "name": "AppEngine"
   },
   {
-    "name": "Finale"
-  },
-  {
-    "name": "LemonStand"
-  },
-  {
-    "name": "Textpattern"
-  },
-  {
-    "name": "Julia"
-  },
-  {
-    "name": "Packer"
-  },
-  {
-    "name": "Scrivener"
-  },
-  {
-    "name": "Dart"
-  },
-  {
-    "name": "Plone"
-  },
-  {
-    "name": "Jekyll"
-  },
-  {
-    "name": "Xojo"
-  },
-  {
-    "name": "LabVIEW"
-  },
-  {
-    "name": "Autotools"
-  },
-  {
-    "name": "KiCad"
-  },
-  {
-    "name": "Prestashop"
-  },
-  {
-    "name": "ROS"
-  },
-  {
-    "name": "Smalltalk"
-  },
-  {
-    "name": "GWT"
-  },
-  {
-    "name": "OracleForms"
-  },
-  {
-    "name": "SugarCRM"
-  },
-  {
-    "name": "Nim"
-  },
-  {
-    "name": "SymphonyCMS"
-  },
-  {
-    "name": "Maven"
-  },
-  {
-    "name": "CFWheels"
-  },
-  {
-    "name": "Python"
-  },
-  {
-    "name": "ZendFramework"
-  },
-  {
-    "name": "CakePHP"
-  },
-  {
-    "name": "Concrete5"
-  },
-  {
-    "name": "PlayFramework"
-  },
-  {
-    "name": "Terraform"
-  },
-  {
-    "name": "Elixir"
-  },
-  {
-    "name": "CMake"
-  },
-  {
-    "name": "Joomla"
-  },
-  {
-    "name": "Coq"
-  },
-  {
-    "name": "Delphi"
-  },
-  {
-    "name": "Haskell"
-  },
-  {
-    "name": "Yii"
-  },
-  {
-    "name": "Java"
-  },
-  {
-    "name": "UnrealEngine"
-  },
-  {
+    "key": "AppceleratorTitanium",
     "name": "AppceleratorTitanium"
   },
   {
-    "name": "CraftCMS"
+    "key": "ArchLinuxPackages",
+    "name": "ArchLinuxPackages"
   },
   {
-    "name": "ForceDotCom"
+    "key": "Autotools",
+    "name": "Autotools"
   },
   {
-    "name": "ExtJs"
+    "key": "C",
+    "name": "C"
   },
   {
-    "name": "MetaProgrammingSystem"
+    "key": "C++",
+    "name": "C++"
   },
   {
-    "name": "D"
+    "key": "CFWheels",
+    "name": "CFWheels"
   },
   {
-    "name": "Objective-C"
+    "key": "CMake",
+    "name": "CMake"
   },
   {
-    "name": "RhodesRhomobile"
+    "key": "CUDA",
+    "name": "CUDA"
   },
   {
-    "name": "R"
+    "key": "CakePHP",
+    "name": "CakePHP"
   },
   {
-    "name": "EPiServer"
+    "key": "ChefCookbook",
+    "name": "ChefCookbook"
   },
   {
-    "name": "Yeoman"
-  },
-  {
-    "name": "VisualStudio"
-  },
-  {
-    "name": "Processing"
-  },
-  {
-    "name": "Leiningen"
-  },
-  {
-    "name": "Stella"
-  },
-  {
-    "name": "Opa"
-  },
-  {
-    "name": "Drupal"
-  },
-  {
-    "name": "TurboGears2"
-  },
-  {
-    "name": "Idris"
-  },
-  {
-    "name": "Jboss"
-  },
-  {
-    "name": "CodeIgniter"
-  },
-  {
-    "name": "Qooxdoo"
-  },
-  {
-    "name": "Waf"
-  },
-  {
-    "name": "Sass"
-  },
-  {
-    "name": "Lua"
-  },
-  {
+    "key": "Clojure",
     "name": "Clojure"
   },
   {
-    "name": "IGORPro"
+    "key": "CodeIgniter",
+    "name": "CodeIgniter"
   },
   {
-    "name": "Gradle"
+    "key": "CommonLisp",
+    "name": "CommonLisp"
   },
   {
-    "name": "Archives"
+    "key": "Composer",
+    "name": "Composer"
   },
   {
-    "name": "SynopsysVCS"
-  },
-  {
-    "name": "Ninja"
-  },
-  {
-    "name": "Tags"
-  },
-  {
-    "name": "OSX"
-  },
-  {
-    "name": "Dreamweaver"
-  },
-  {
-    "name": "CodeKit"
-  },
-  {
-    "name": "NotepadPP"
-  },
-  {
-    "name": "VisualStudioCode"
-  },
-  {
-    "name": "Mercurial"
-  },
-  {
-    "name": "BricxCC"
-  },
-  {
-    "name": "DartEditor"
-  },
-  {
-    "name": "Eclipse"
-  },
-  {
-    "name": "Cloud9"
-  },
-  {
-    "name": "TortoiseGit"
-  },
-  {
-    "name": "NetBeans"
-  },
-  {
-    "name": "GPG"
-  },
-  {
-    "name": "Espresso"
-  },
-  {
-    "name": "Redcar"
-  },
-  {
-    "name": "Xcode"
-  },
-  {
-    "name": "Matlab"
-  },
-  {
-    "name": "LyX"
-  },
-  {
-    "name": "SlickEdit"
-  },
-  {
-    "name": "Dropbox"
-  },
-  {
-    "name": "CVS"
-  },
-  {
-    "name": "Calabash"
-  },
-  {
-    "name": "JDeveloper"
-  },
-  {
-    "name": "Vagrant"
-  },
-  {
-    "name": "IPythonNotebook"
-  },
-  {
-    "name": "TextMate"
-  },
-  {
-    "name": "Ensime"
-  },
-  {
-    "name": "WebMethods"
-  },
-  {
-    "name": "VirtualEnv"
-  },
-  {
-    "name": "Emacs"
-  },
-  {
-    "name": "Momentics"
-  },
-  {
-    "name": "JetBrains"
-  },
-  {
-    "name": "SublimeText"
-  },
-  {
-    "name": "Kate"
-  },
-  {
-    "name": "ModelSim"
-  },
-  {
-    "name": "Redis"
-  },
-  {
-    "name": "KDevelop4"
-  },
-  {
-    "name": "Bazaar"
-  },
-  {
-    "name": "Linux"
-  },
-  {
-    "name": "Windows"
-  },
-  {
-    "name": "XilinxISE"
-  },
-  {
-    "name": "Lazarus"
-  },
-  {
-    "name": "EiffelStudio"
-  },
-  {
-    "name": "Anjuta"
-  },
-  {
-    "name": "Vim"
-  },
-  {
-    "name": "Otto"
-  },
-  {
-    "name": "MicrosoftOffice"
-  },
-  {
-    "name": "LibreOffice"
-  },
-  {
-    "name": "SBT"
-  },
-  {
-    "name": "MonoDevelop"
-  },
-  {
-    "name": "SVN"
-  },
-  {
-    "name": "FlexBuilder"
+    "key": "Concrete5",
+    "name": "Concrete5"
   }
 ]
 ```
 
-## Single gitignore template
+## Retrieve a single `.gitignore` template
 
-Get a single gitignore template.
+Retrieves a single `.gitignore` template.
 
-```
+```plaintext
 GET /templates/gitignores/:key
 ```
 
-| Attribute  | Type   | Required | Description |
-| ---------- | ------ | -------- | ----------- |
-| `key`      | string | yes      | The key of the gitignore template |
+Supported attributes:
 
-```bash
-curl https://gitlab.example.com/api/v4/templates/gitignores/Ruby
+| Attribute | Type   | Required | Description |
+|-----------|--------|----------|-------------|
+| `key`     | string | Yes      | Key of the `.gitignore` template. |
+
+If successful, returns [`200 OK`](../rest/troubleshooting.md#status-codes) and the following response attributes:
+
+| Attribute | Type   | Description |
+|-----------|--------|-------------|
+| `content` | string | Content of the `.gitignore` template. |
+| `name`    | string | Display name of the `.gitignore` template. |
+
+Example request:
+
+```shell
+curl "https://gitlab.example.com/api/v4/templates/gitignores/Ruby"
 ```
 
 Example response:

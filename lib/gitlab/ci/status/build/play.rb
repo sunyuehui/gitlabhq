@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
@@ -8,15 +10,19 @@ module Gitlab
           end
 
           def has_action?
-            can?(user, :update_build, subject)
+            can?(user, :play_job, subject)
           end
 
           def action_icon
-            'icon_action_play'
+            'play'
           end
 
           def action_title
-            'Play'
+            'Run'
+          end
+
+          def action_button_title
+            _('Run job')
           end
 
           def action_path
@@ -25,6 +31,10 @@ module Gitlab
 
           def action_method
             :post
+          end
+
+          def confirmation_message
+            subject.manual_confirmation_message
           end
 
           def self.matches?(build, user)

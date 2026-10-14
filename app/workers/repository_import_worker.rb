@@ -1,45 +1,78 @@
-class RepositoryImportWorker
-  ImportError = Class.new(StandardError)
+# frozen_string_literal: true
 
-  include Sidekiq::Worker
-  include DedicatedSidekiqQueue
+class RepositoryImportWorker # rubocop:disable Scalability/IdempotentWorker
+  include ApplicationWorker
 
-  sidekiq_options status_expiration: StuckImportJobsWorker::IMPORT_JOBS_EXPIRATION
+  data_consistency :always
+  include ExceptionBacktrace
+  include ProjectStartImport
+  include Sidekiq::InterruptionsExhausted
+
+  feature_category :importers
+  worker_has_external_dependencies!
+  # Do not retry on Import/Export until https://gitlab.com/gitlab-org/gitlab/-/issues/16812 is solved.
+  sidekiq_options retry: false, dead: false
+  sidekiq_options status_expiration: Gitlab::Import::StuckImportJob::IMPORT_JOBS_EXPIRATION
+  worker_resource_boundary :memory
+
+  concurrency_limit -> { Gitlab::CurrentSettings.import_jobs_concurrency_limit }
+
+  sidekiq_interruptions_exhausted do |job|
+    new.perform_failure(job['args'].first)
+  end
 
   def perform(project_id)
-    project = Project.find(project_id)
+    Gitlab::QueryLimiting.disable!('https://gitlab.com/gitlab-org/gitlab/-/issues/464677')
 
-    return unless start_import(project)
+    @project = Project.find_by_id(project_id)
+    return if project.nil? || !start_import?
 
-    Gitlab::Metrics.add_event(:import_repository,
-                              import_url: project.import_url,
-                              path: project.full_path)
+    Gitlab::Metrics.add_event(:import_repository)
 
-    result = Projects::ImportService.new(project, project.creator).execute
-    raise ImportError, result[:message] if result[:status] == :error
+    service = Projects::ImportService.new(project, project.creator)
+    result = service.execute
 
-    project.repository.after_import
-    project.import_finish
-  rescue ImportError => ex
-    fail_import(project, ex.message)
-    raise
-  rescue => ex
-    return unless project
+    # Some importers may perform their work asynchronously. In this case it's up
+    # to those importers to mark the import process as complete.
+    return if service.async?
 
-    fail_import(project, ex.message)
-    raise ImportError, "#{ex.class} #{ex.message}"
+    if result[:status] == :error
+      project.reset_counters_and_iids
+      fail_import(result[:message])
+    else
+      project.after_import
+    end
+  end
+
+  def perform_failure(project_id)
+    @project = Project.find_by_id(project_id)
+    import_export_upload = @project.import_export_uploads.find_by_user_id(project.creator.id)
+
+    fail_import('Import process reached the maximum number of interruptions')
+
+    ::Gitlab::Import::RemoveImportFileWorker.perform_async(import_export_upload.id)
   end
 
   private
 
-  def start_import(project)
-    return true if project.import_start
+  attr_reader :project
 
-    Rails.logger.info("Project #{project.full_path} was in inconsistent state (#{project.import_status}) while importing.")
+  def start_import?
+    return true if start(project.import_state)
+
+    ::Import::Framework::Logger.info(
+      message: 'Project was in inconsistent state while importing',
+      Labkit::Fields::GL_ORGANIZATION_ID => project.organization_id,
+      project_full_path: project.full_path,
+      project_import_status: project.import_status
+    )
+
     false
   end
 
-  def fail_import(project, message)
-    project.mark_import_as_failed(message)
+  def fail_import(message)
+    project.import_state.mark_as_failed(message)
   end
 end
+
+RepositoryImportWorker.prepend_mod_with('RepositoryImportWorker')

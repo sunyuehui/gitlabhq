@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::InlineDiffFilter do
+RSpec.describe Banzai::Filter::InlineDiffFilter, feature_category: :source_code_management do
   include FilterSpecHelper
 
   it 'adds inline diff span tags for deletions when using square brackets' do
@@ -23,7 +25,7 @@ describe Banzai::Filter::InlineDiffFilter do
     expect(filter(doc).to_html).to eq('START <span class="idiff left right addition">something added</span> END')
   end
 
-  it 'adds inline span tags for additions  when using curley braces' do
+  it 'adds inline span tags for additions when using curley braces' do
     doc = "START {+something added+} END"
     expect(filter(doc).to_html).to eq('START <span class="idiff left right addition">something added</span> END')
   end
@@ -64,5 +66,20 @@ describe Banzai::Filter::InlineDiffFilter do
   it 'preserves content inside tt tags' do
     doc = "<tt>START {+something added+} END</tt>"
     expect(filter(doc).to_html).to eq(doc)
+  end
+
+  it 'protects against malicious backtracking' do
+    doc = '[-{-' * 250_000
+
+    expect do
+      Timeout.timeout(BANZAI_FILTER_TIMEOUT_MAX) { filter(doc) }
+    end.not_to raise_error
+  end
+
+  it_behaves_like 'pipeline timing check'
+
+  it_behaves_like 'limits the number of filtered items' do
+    let(:text) { '[+added+] [+added+] [+added+]' }
+    let(:ends_with) { '</span> [+added+]' }
   end
 end

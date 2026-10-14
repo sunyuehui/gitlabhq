@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require './spec/support/import_export/configuration_helper'
 
 module ExportFileHelper
@@ -19,29 +21,34 @@ module ExportFileHelper
 
     create(:label_link, label: label, target: issue)
 
-    ci_pipeline = create(:ci_pipeline,
-                         project: project,
-                         sha: merge_request.diff_head_sha,
-                         ref: merge_request.source_branch,
-                         statuses: [commit_status])
+    ci_pipeline = create(
+      :ci_pipeline,
+      project: project,
+      sha: merge_request.diff_head_sha,
+      ref: merge_request.source_branch,
+      statuses: [commit_status]
+    )
 
     create(:ci_build, pipeline: ci_pipeline, project: project)
     create(:milestone, project: project)
     create(:note, noteable: issue, project: project)
     create(:note, noteable: merge_request, project: project)
     create(:note, noteable: snippet, project: project)
-    create(:note_on_commit,
-           author: user,
-           project: project,
-           commit_id: ci_pipeline.sha)
+    create(
+      :note_on_commit,
+      author: user,
+      project: project,
+      commit_id: ci_pipeline.sha
+    )
 
-    create(:event, :created, target: milestone, project: project, author: user)
-    create(:project_member, :master, user: user, project: project)
+    event = create(:event, :created, target: milestone, project: project, author: user, action: 5)
+    create(:push_event_payload, event: event)
+    create(:project_member, :maintainer, user: user, project: project)
     create(:ci_variable, project: project)
     create(:ci_trigger, project: project)
     key = create(:deploy_key)
     key.projects << project
-    create(:service, project: project)
+    create(:integration, project: project)
     create(:project_hook, project: project, token: 'token')
     create(:protected_branch, project: project)
 
@@ -49,10 +56,10 @@ module ExportFileHelper
   end
 
   # Expands the compressed file for an exported project into +tmpdir+
-  def in_directory_with_expanded_export(project)
+  def in_directory_with_expanded_export(project, user)
     Dir.mktmpdir do |tmpdir|
-      export_file = project.export_project_path
-      _output, exit_status = Gitlab::Popen.popen(%W{tar -zxf #{export_file} -C #{tmpdir}})
+      export_file = project.export_file(user).path
+      _output, exit_status = Gitlab::Popen.popen(%W[tar -zxf #{export_file} -C #{tmpdir}])
 
       yield(exit_status, tmpdir)
     end
@@ -85,12 +92,12 @@ module ExportFileHelper
   end
 
   # Returns the offended ObjectWithParent object if a sensitive word is found inside a hash,
-  # excluding the whitelisted safe hashes.
+  # excluding the allowlisted safe hashes.
   def find_sensitive_attributes(sensitive_word, project_hash)
     loop do
       object_with_parent = deep_find_with_parent(sensitive_word, project_hash)
 
-      return nil unless object_with_parent && object_with_parent.object
+      return unless object_with_parent && object_with_parent.object
 
       if is_safe_hash?(object_with_parent.parent, sensitive_word)
         # It's in the safe list, remove hash and keep looking
@@ -114,15 +121,15 @@ module ExportFileHelper
       # Check whether this is a hash attribute inside a model
       if model.is_a?(Symbol)
         return true if (safe_hashes[model] - parent.keys).empty?
-      else
-        return true if safe_model?(model, excluded_attributes, parent)
+      elsif safe_model?(model, excluded_attributes, parent)
+        return true
       end
     end
 
     false
   end
 
-  # Compares model attributes with those those found in the hash
+  # Compares model attributes with those found in the hash
   # and returns true if there is a match, ignoring some excluded attributes.
   def safe_model?(model, excluded_attributes, parent)
     excluded_attributes += associations_for(model)
@@ -132,6 +139,6 @@ module ExportFileHelper
   end
 
   def file_permissions(file)
-    File.stat(file).mode & 0777
+    File.lstat(file).mode & 0777
   end
 end

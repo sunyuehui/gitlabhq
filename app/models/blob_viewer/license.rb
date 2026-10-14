@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 module BlobViewer
   class License < Base
     include Auxiliary
     include Static
 
     self.partial_name = 'license'
-    self.file_types = %i(license)
+    self.file_types = %i[license]
     self.binary = false
 
     def license

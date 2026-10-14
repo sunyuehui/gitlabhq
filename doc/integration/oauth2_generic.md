@@ -1,65 +1,226 @@
-# Sign into GitLab with (almost) any OAuth2 provider
+---
+stage: Software Supply Chain Security
+group: Authentication
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Use Generic OAuth2 gem as an OAuth 2.0 authentication provider
+---
 
-The `omniauth-oauth2-generic` gem allows Single Sign On between GitLab and your own OAuth2 provider
-(or any OAuth2 provider compatible with this gem) 
+{{< details >}}
 
-This strategy is designed to allow configuration of the simple OmniAuth SSO process outlined below:
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab Self-Managed
 
-1. Strategy directs client to your authorization URL (**configurable**), with specified ID and key
-1. OAuth provider handles authentication of request, user, and (optionally) authorization to access user's profile
-1. OAuth provider directs client back to GitLab where Strategy handles retrieval of access token
-1. Strategy requests user information from a **configurable** "user profile" URL (using the access token)
-1. Strategy parses user information from the response, using a **configurable** format
-1. GitLab finds or creates the returned user and logs them in
+{{< /details >}}
 
-### Limitations of this Strategy:
+> [!note]
+> If your provider supports the OpenID specification, you should use [`omniauth-openid-connect`](../administration/auth/oidc.md) as your authentication provider.
 
-- It can only be used for Single Sign on, and will not provide any other access granted by any OAuth provider
-  (importing projects or users, etc)
-- It only supports the Authorization Grant flow (most common for client-server applications, like GitLab)
-- It is not able to fetch user information from more than one URL
-- It has not been tested with user information formats other than JSON
+The [`omniauth-oauth2-generic` gem](https://gitlab.com/satorix/omniauth-oauth2-generic) allows single sign-on (SSO) between GitLab
+and your OAuth 2.0 provider, or any OAuth 2.0 provider compatible with this gem.
 
-### Config Instructions
+This strategy allows for the configuration of this OmniAuth SSO process:
 
-1. Register your application in the OAuth2 provider you wish to authenticate with.
+1. Strategy directs the client to your authorization URL (configurable), with
+   the specified ID and key.
+1. The OAuth 2.0 provider handles authentication of the request, user, and (optionally)
+   authorization to access the user's profile.
+1. The OAuth 2.0 provider directs the client back to GitLab where Strategy
+   retrieves the access token.
+1. Strategy requests user information from a configurable "user profile"
+   URL using the access token.
+1. Strategy parses user information from the response using a configurable
+   format.
+1. GitLab finds or creates the returned user and signs them in.
+
+This strategy:
+
+- Can only be used for single sign-on, and does not provide any other access
+  granted by any OAuth 2.0 provider. For example, importing projects or users.
+- Only supports the Authorization Grant flow, which is most common for client-server
+  applications like GitLab.
+- Cannot fetch user information from more than one URL.
+- Cannot fetch user information from the access token in JWT format.
+- Has not been tested with user information formats, except JSON.
+
+## Configure the OAuth 2.0 provider
+
+To configure the provider:
+
+1. Register your application in the OAuth 2.0 provider you want to authenticate with.
 
    The redirect URI you provide when registering the application should be:
 
-   ```
+   ```plaintext
    http://your-gitlab.host.com/users/auth/oauth2_generic/callback
    ```
 
-1. You should now be able to get a Client ID and Client Secret.
-   Where this shows up will differ for each provider.
-   This may also be called Application ID and Secret
+   You should now be able to get a client ID and client secret. Where these
+   appear is different for each provider. This may also be called application ID
+   and application secret.
+1. On your GitLab server, complete the following steps.
 
-1. On your GitLab server, open the configuration file.
+   {{< tabs >}}
 
-   For Omnibus package:
+   {{< tab title="Linux package (Omnibus)" >}}
 
-   ```sh
-   sudo editor /etc/gitlab/gitlab.rb
-   ```
+   1. Configure the [common settings](omniauth.md#configure-common-settings)
+      to add `oauth2_generic` as a single sign-on provider. This enables Just-In-Time
+      account provisioning for users who do not have an existing GitLab account.
+   1. Edit `/etc/gitlab/gitlab.rb` to add the configuration for your provider. For example:
 
-   For installations from source:
+      ```ruby
+      gitlab_rails['omniauth_providers'] = [
+        {
+          name: "oauth2_generic",
+          label: "Provider name", # optional label for login button, defaults to "Oauth2 Generic"
+          app_id: "<your_app_client_id>",
+          app_secret: "<your_app_client_secret>",
+          args: {
+            client_options: {
+              site: "<your_auth_server_url>",
+              user_info_url: "/oauth2/v1/userinfo",
+              authorize_url: "/oauth2/v1/authorize",
+              token_url: "/oauth2/v1/token"
+            },
+            user_response_structure: {
+              root_path: [],
+              id_path: ["sub"],
+              attributes: {
+                email: "email",
+                name: "name"
+              }
+            },
+            authorize_params: {
+              scope: "openid profile email"
+            },
+            strategy_class: "OmniAuth::Strategies::OAuth2Generic"
+          }
+        }
+      ]
+      ```
 
-   ```sh
-   cd /home/git/gitlab
-   sudo -u git -H editor config/gitlab.yml
-   ```
+   1. Save the file and reconfigure GitLab:
 
-1. See [Initial OmniAuth Configuration](omniauth.md#initial-omniauth-configuration) for initial settings
+      ```shell
+      sudo gitlab-ctl reconfigure
+      ```
 
-1. Add the provider-specific configuration for your provider, as [described in the gem's README][1]
+   {{< /tab >}}
 
-1. Save the configuration file
+   {{< tab title="Helm chart (Kubernetes)" >}}
 
-1. Restart GitLab for the changes to take effect
+   1. Configure the [common settings](omniauth.md#configure-common-settings)
+      to add `oauth2_generic` as a single sign-on provider. This enables Just-In-Time
+      account provisioning for users who do not have an existing GitLab account.
+   1. Export the Helm values:
 
-On the sign in page there should now be a new button below the regular sign in form. 
-Click the button to begin your provider's authentication process. This will direct
-the browser to your OAuth2 Provider's authentication page. If everything goes well
-the user will be returned to your GitLab instance and will be signed in.
+      ```shell
+      helm get values gitlab > gitlab_values.yaml
+      ```
 
-[1]: https://gitlab.com/satorix/omniauth-oauth2-generic#gitlab-config-example
+   1. Put the following content in a file named `oauth2_generic.yaml` for use as a
+      [Kubernetes Secret](https://docs.gitlab.com/charts/charts/globals/#providers):
+
+      ```yaml
+      name: "oauth2_generic"
+      label: "Provider name" # optional label for login button defaults to "Oauth2 Generic"
+      app_id: "<your_app_client_id>"
+      app_secret: "<your_app_client_secret>"
+      args:
+        client_options:
+          site: "<your_auth_server_url>"
+          user_info_url: "/oauth2/v1/userinfo"
+          authorize_url: "/oauth2/v1/authorize"
+          token_url: "/oauth2/v1/token"
+        user_response_structure:
+          root_path: []
+          id_path: ["sub"]
+          attributes:
+            email: "email"
+            name: "name"
+        authorize_params:
+          scope: "openid profile email"
+        strategy_class: "OmniAuth::Strategies::OAuth2Generic"
+      ```
+
+   1. Create the Kubernetes Secret:
+
+      ```shell
+      kubectl create secret generic -n <namespace> gitlab-oauth2-generic --from-file=provider=oauth2_generic.yaml
+      ```
+
+   1. Edit `gitlab_values.yaml` and add the provider configuration:
+
+      ```yaml
+      global:
+        appConfig:
+          omniauth:
+            providers:
+              - secret: gitlab-oauth2-generic
+      ```
+
+   1. Save the file and apply the new values:
+
+      ```shell
+      helm upgrade -f gitlab_values.yaml gitlab gitlab/gitlab
+      ```
+
+   {{< /tab >}}
+
+   {{< tab title="Self-compiled (source)" >}}
+
+   1. Configure the [common settings](omniauth.md#configure-common-settings)
+      to add `oauth2_generic` as a single sign-on provider. This enables Just-In-Time
+      account provisioning for users who do not have an existing GitLab account.
+   1. Edit `/home/git/gitlab/config/gitlab.yml`:
+
+      ```yaml
+      production: &base
+        omniauth:
+          providers:
+            - { name: "oauth2_generic",
+                label: "Provider name", # optional label for login button, defaults to "Oauth2 Generic"
+                app_id: "<your_app_client_id>",
+                app_secret: "<your_app_client_secret>",
+                args: {
+                  client_options: {
+                    site: "<your_auth_server_url>",
+                    user_info_url: "/oauth2/v1/userinfo",
+                    authorize_url: "/oauth2/v1/authorize",
+                    token_url: "/oauth2/v1/token"
+                  },
+                  user_response_structure: {
+                    root_path: [],
+                    id_path: ["sub"],
+                    attributes: {
+                      email: "email",
+                      name: "name"
+                    }
+                  },
+                  authorize_params: {
+                    scope: "openid profile email"
+                  },
+                  strategy_class: "OmniAuth::Strategies::OAuth2Generic"
+                }
+              }
+      ```
+
+   1. Save the file and restart GitLab:
+
+      ```shell
+      # For systems running systemd
+      sudo systemctl restart gitlab.target
+
+      # For systems running SysV init
+      sudo service gitlab restart
+      ```
+
+   {{< /tab >}}
+
+   {{< /tabs >}}
+
+On the sign-in page there should now be a new icon below the regular sign-in
+form. Select that icon to begin your provider's authentication process. This
+directs the browser to your OAuth 2.0 provider's authentication page. If
+everything goes well, you are returned to your GitLab instance and
+signed in.

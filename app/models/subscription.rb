@@ -1,4 +1,9 @@
-class Subscription < ActiveRecord::Base
+# frozen_string_literal: true
+
+class Subscription < ApplicationRecord
+  include FromUnion
+  include EachBatch
+
   belongs_to :user
   belongs_to :project
   belongs_to :subscribable, polymorphic: true # rubocop:disable Cop/PolymorphicAssociations
@@ -6,4 +11,7 @@ class Subscription < ActiveRecord::Base
   validates :user, :subscribable, presence: true
 
   validates :project_id, uniqueness: { scope: [:subscribable_id, :subscribable_type, :user_id] }
+
+  scope :for_subscribables, ->(ids, type) { where(subscribable_id: ids, subscribable_type: type) }
+  scope :for_user, ->(user) { where(user: user) }
 end

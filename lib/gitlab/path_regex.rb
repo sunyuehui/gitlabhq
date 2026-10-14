@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module PathRegex
     extend self
@@ -19,27 +21,22 @@ module Gitlab
       500.html
       502.html
       503.html
-      abuse_reports
       admin
       api
-      apple-touch-icon-precomposed.png
       apple-touch-icon.png
       assets
-      autocomplete
-      ci
       dashboard
       deploy.html
       explore
       favicon.ico
-      files
+      favicon.png
       groups
       health_check
       help
       import
-      invites
       jwt
-      koding
-      notification_settings
+      login
+      o
       oauth
       profile
       projects
@@ -47,16 +44,21 @@ module Gitlab
       robots.txt
       s
       search
-      sent_notifications
+      sitemap
+      sitemap.xml
+      sitemap.xml.gz
       slash-command-logo.png
       snippets
-      u
-      unicorn_test
       unsubscribes
       uploads
       users
+      v2
     ].freeze
 
+    # NOTE: Do not add new items to this list unless necessary as this will
+    # cause conflicts with existing namespaced routes for groups or projects.
+    # See https://docs.gitlab.com/ee/development/routing.html#project-routes
+    #
     # This list should contain all words following `/*namespace_id/:project_id` in
     # routes that contain a second wildcard.
     #
@@ -103,6 +105,10 @@ module Gitlab
       wikis
     ].freeze
 
+    # NOTE: Do not add new items to this list unless necessary as this will
+    # cause conflicts with existing namespaced routes for groups or projects.
+    # See https://docs.gitlab.com/ee/development/routing.html#group-routes
+    #
     # These are all the paths that follow `/groups/*id/ or `/groups/*group_id`
     # We need to reject these because we have a `/groups/*id` page that is the same
     # as the `/*id`.
@@ -112,27 +118,11 @@ module Gitlab
     # this would map to the activity-page of its parent.
     GROUP_ROUTES = %w[
       -
-      activity
-      analytics
-      audit_events
-      avatar
-      edit
-      group_members
-      hooks
-      issues
-      labels
-      ldap
-      ldap_group_links
-      merge_requests
-      milestones
-      notification_setting
-      pipeline_quota
-      projects
-      subgroups
     ].freeze
 
     ILLEGAL_PROJECT_PATH_WORDS = PROJECT_WILDCARD_ROUTES
     ILLEGAL_GROUP_PATH_WORDS = (PROJECT_WILDCARD_ROUTES | GROUP_ROUTES).freeze
+    ILLEGAL_ORGANIZATION_PATH_WORDS = (TOP_LEVEL_ROUTES | PROJECT_WILDCARD_ROUTES | GROUP_ROUTES).freeze
 
     # The namespace regex is used in JavaScript to validate usernames in the "Register" form. However, Javascript
     # does not support the negative lookbehind assertion (?<!) that disallows usernames ending in `.git` and `.atom`.
@@ -140,13 +130,28 @@ module Gitlab
     # allow non-regex validations, etc), `NAMESPACE_FORMAT_REGEX_JS` serves as a Javascript-compatible version of
     # `NAMESPACE_FORMAT_REGEX`, with the negative lookbehind assertion removed. This means that the client-side validation
     # will pass for usernames ending in `.atom` and `.git`, but will be caught by the server-side validation.
-    PATH_REGEX_STR = '[a-zA-Z0-9_\.][a-zA-Z0-9_\-\.]*'.freeze
-    NAMESPACE_FORMAT_REGEX_JS = PATH_REGEX_STR + '[a-zA-Z0-9_\-]|[a-zA-Z0-9_]'.freeze
+    PATH_START_CHAR = '[a-zA-Z0-9_\.]'
+    PATH_REGEX_STR = PATH_START_CHAR + '[a-zA-Z0-9_\-\.]' + "{0,#{Namespace::URL_MAX_LENGTH - 1}}"
+    NAMESPACE_FORMAT_REGEX_JS = PATH_REGEX_STR + '[a-zA-Z0-9_\-]|[a-zA-Z0-9_]'
 
-    NO_SUFFIX_REGEX = /(?<!\.git|\.atom)/.freeze
-    NAMESPACE_FORMAT_REGEX = /(?:#{NAMESPACE_FORMAT_REGEX_JS})#{NO_SUFFIX_REGEX}/.freeze
-    PROJECT_PATH_FORMAT_REGEX = /(?:#{PATH_REGEX_STR})#{NO_SUFFIX_REGEX}/.freeze
-    FULL_NAMESPACE_FORMAT_REGEX = %r{(#{NAMESPACE_FORMAT_REGEX}/)*#{NAMESPACE_FORMAT_REGEX}}.freeze
+    NO_SUFFIX_REGEX = /(?<!\.git|\.atom)/
+    NAMESPACE_FORMAT_REGEX = /(?:#{NAMESPACE_FORMAT_REGEX_JS})#{NO_SUFFIX_REGEX}/
+    PROJECT_PATH_FORMAT_REGEX = /(?:#{PATH_REGEX_STR})#{NO_SUFFIX_REGEX}/
+    FULL_NAMESPACE_FORMAT_REGEX = %r{(#{NAMESPACE_FORMAT_REGEX}/){,#{Namespace::NUMBER_OF_ANCESTORS_ALLOWED}}#{NAMESPACE_FORMAT_REGEX}}
+
+    ORGANIZATION_PATH_REGEX_STR = '[a-zA-Z0-9_][a-zA-Z0-9_\-]' + "{0,#{Namespace::URL_MAX_LENGTH - 1}}"
+    ORGANIZATION_PATH_FORMAT_REGEX = /(?:#{ORGANIZATION_PATH_REGEX_STR})/
+
+    def organization_route_regex
+      @organization_route_regex ||= begin
+        illegal_words = Regexp.new(Regexp.union(ILLEGAL_ORGANIZATION_PATH_WORDS).source, Regexp::IGNORECASE)
+
+        single_line_regexp %r{
+          (?!(#{illegal_words})/)
+          #{ORGANIZATION_PATH_FORMAT_REGEX}
+        }x
+      end
+    end
 
     def root_namespace_route_regex
       @root_namespace_route_regex ||= begin
@@ -185,32 +190,55 @@ module Gitlab
       end
     end
 
-    def project_git_route_regex
-      @project_git_route_regex ||= /#{project_route_regex}\.git/.freeze
+    def repository_route_regex
+      @repository_route_regex ||= /(#{full_namespace_route_regex}|#{personal_snippet_repository_path_regex})\.*/
     end
 
-    def root_namespace_path_regex
-      @root_namespace_path_regex ||= %r{\A#{root_namespace_route_regex}/\z}
+    # Unanchored, so it matches .git anywhere in a path; routing anchors it, the auth finders do not.
+    def repository_git_route_regex
+      @repository_git_route_regex ||= /#{repository_route_regex}\.git/
+    end
+
+    # Git over HTTP for the rate limiters. Anchored like the router's constraint on the path, and also matches
+    # info/refs without .git, which the router redirects, so a clone can start there.
+    def repository_git_http_route_regex
+      @repository_git_http_route_regex ||= %r{\A/#{repository_route_regex}(?:\.git|/info/refs\z)}
+    end
+
+    def repository_git_lfs_route_regex
+      @repository_git_lfs_route_regex ||= %r{#{repository_git_route_regex}\/(info\/lfs|gitlab-lfs)\/}
+    end
+
+    def repository_wiki_git_route_regex
+      @repository_wiki_git_route_regex ||= /#{full_namespace_route_regex}\.*\.wiki\.git/
     end
 
     def full_namespace_path_regex
       @full_namespace_path_regex ||= %r{\A#{full_namespace_route_regex}/\z}
     end
 
-    def project_path_regex
-      @project_path_regex ||= %r{\A#{project_route_regex}/\z}
+    def organization_path_regex
+      @organization_path_regex ||= %r{\A#{organization_route_regex}/\z}
     end
 
     def full_project_path_regex
       @full_project_path_regex ||= %r{\A#{full_namespace_route_regex}/#{project_route_regex}/\z}
     end
 
-    def full_namespace_format_regex
-      @namespace_format_regex ||= /A#{FULL_NAMESPACE_FORMAT_REGEX}\z/.freeze
+    def full_project_git_path_regex
+      @full_project_git_path_regex ||= %r{\A\/?(?<namespace_path>#{full_namespace_route_regex})\/(?<project_path>#{project_route_regex})\.git\z}
+    end
+
+    def organization_format_regex
+      @organization_format_regex ||= /\A#{ORGANIZATION_PATH_FORMAT_REGEX}\z/o
+    end
+
+    def organization_format_message
+      "can contain only letters, digits, '_' and '-'. Cannot start with '-'."
     end
 
     def namespace_format_regex
-      @namespace_format_regex ||= /\A#{NAMESPACE_FORMAT_REGEX}\z/.freeze
+      @namespace_format_regex ||= /\A#{NAMESPACE_FORMAT_REGEX}\z/o
     end
 
     def namespace_format_message
@@ -219,7 +247,7 @@ module Gitlab
     end
 
     def project_path_format_regex
-      @project_path_format_regex ||= /\A#{PROJECT_PATH_FORMAT_REGEX}\z/.freeze
+      @project_path_format_regex ||= /\A#{PROJECT_PATH_FORMAT_REGEX}\z/o
     end
 
     def project_path_format_message
@@ -229,7 +257,7 @@ module Gitlab
 
     def archive_formats_regex
       #                           |zip|tar|    tar.gz    |         tar.bz2         |
-      @archive_formats_regex ||= /(zip|tar|tar\.gz|tgz|gz|tar\.bz2|tbz|tbz2|tb2|bz2)/.freeze
+      @archive_formats_regex ||= /(zip|tar|tar\.gz|tgz|gz|tar\.bz2|tbz|tbz2|tb2|bz2)/
     end
 
     def git_reference_regex
@@ -255,12 +283,53 @@ module Gitlab
       }x
     end
 
+    def full_snippets_repository_path_regex
+      %r{\A(#{personal_snippet_repository_path_regex}|#{project_snippet_repository_path_regex})\z}
+    end
+
+    def container_image_regex
+      @container_image_regex ||= %r{([\w\.-]+\/){0,4}[\w\.-]+}
+    end
+
+    def container_image_blob_sha_regex
+      @container_image_blob_sha_regex ||= %r{[\w+.-]+:?\w+}
+    end
+
+    def dependency_proxy_route_regex
+      @dependency_proxy_route_regex ||= %r{\A/v2/#{full_namespace_route_regex}/dependency_proxy/containers/#{container_image_regex}/(manifests|blobs)/#{container_image_blob_sha_regex}\z}
+    end
+
+    # Unlike dependency_proxy_route_regex, also covers the GET /v2 auth ping and the cache-write uploads.
+    # Virtual registry clients send the same GET /v2 ping, so it matches for them too.
+    def dependency_proxy_containers_route_regex
+      @dependency_proxy_containers_route_regex ||=
+        %r{\A/v2(?:/?\z|/#{full_namespace_route_regex}/dependency_proxy/containers/)}
+    end
+
     private
+
+    def personal_snippet_path_regex
+      /snippets/
+    end
+
+    def personal_snippet_repository_path_regex
+      %r{#{personal_snippet_path_regex}/\d+}
+    end
+
+    def project_snippet_path_regex
+      %r{#{full_namespace_route_regex}/#{project_route_regex}/snippets}
+    end
+
+    def project_snippet_repository_path_regex
+      %r{#{project_snippet_path_regex}/\d+}
+    end
 
     def single_line_regexp(regex)
       # Turns a multiline extended regexp into a single line one,
-      # beacuse `rake routes` breaks on multiline regexes.
+      # because `rake routes` breaks on multiline regexes.
       Regexp.new(regex.source.gsub(/\(\?#.+?\)/, '').gsub(/\s*/, ''), regex.options ^ Regexp::EXTENDED).freeze
     end
   end
 end
+
+Gitlab::PathRegex.prepend_mod_with('Gitlab::PathRegex')

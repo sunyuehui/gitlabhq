@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::SlashCommands::Presenters::Deploy do
-  let(:build) { create(:ci_build) }
+RSpec.describe Gitlab::SlashCommands::Presenters::Deploy, feature_category: :deployment_management do
+  let(:build) { build_stubbed(:ci_build) }
 
   describe '#present' do
     subject { described_class.new(build).present('staging', 'prod') }
@@ -28,6 +30,15 @@ describe Gitlab::SlashCommands::Presenters::Deploy do
     it 'tells the user there is no action' do
       expect(subject[:response_type]).to be(:ephemeral)
       expect(subject[:text]).to eq "Couldn't find a deployment manual action."
+    end
+  end
+
+  describe '#action_failed' do
+    subject { described_class.new(nil).action_failed('Too many requests') }
+
+    it 'tells the user why the deployment did not start' do
+      expect(subject[:response_type]).to be(:ephemeral)
+      expect(subject[:text]).to eq "Couldn't start the deployment: Too many requests"
     end
   end
 end

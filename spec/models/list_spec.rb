@@ -1,80 +1,58 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe List do
+require 'spec_helper'
+
+RSpec.describe List do
+  it_behaves_like 'having unique enum values'
+  it_behaves_like 'boards listable model', :list
+  it_behaves_like 'list_preferences_for user', :list, :list_id
+
   describe 'relationships' do
     it { is_expected.to belong_to(:board) }
     it { is_expected.to belong_to(:label) }
   end
 
   describe 'validations' do
+    let_it_be(:group) { create(:group) }
+    let_it_be(:project) { create(:project, group: group) }
+    let_it_be(:group_board) { create(:board, group: group) }
+    let_it_be(:project_board) { create(:board, project: project) }
+
     it { is_expected.to validate_presence_of(:board) }
     it { is_expected.to validate_presence_of(:label) }
     it { is_expected.to validate_presence_of(:list_type) }
-    it { is_expected.to validate_presence_of(:position) }
-    it { is_expected.to validate_numericality_of(:position).only_integer.is_greater_than_or_equal_to(0) }
 
-    context 'when list_type is set to closed' do
-      subject { described_class.new(list_type: :closed) }
+    describe 'group presence' do
+      it { is_expected.to validate_presence_of(:group) }
 
-      it { is_expected.not_to validate_presence_of(:label) }
-      it { is_expected.not_to validate_presence_of(:position) }
-    end
-  end
+      context 'when project is present' do
+        subject { described_class.new(board: project_board) }
 
-  describe '#destroy' do
-    it 'can be destroyed when when list_type is set to label' do
-      subject = create(:list)
-
-      expect(subject.destroy).to be_truthy
+        it { is_expected.not_to validate_presence_of(:group) }
+      end
     end
 
-    it 'can not be destroyed when when list_type is set to closed' do
-      subject = create(:closed_list)
+    describe 'project presence' do
+      it { is_expected.to validate_presence_of(:project) }
 
-      expect(subject.destroy).to be_falsey
-    end
-  end
+      context 'when group is present' do
+        subject { described_class.new(board: group_board) }
 
-  describe '#destroyable?' do
-    it 'returns true when list_type is set to label' do
-      subject.list_type = :label
-
-      expect(subject).to be_destroyable
+        it { is_expected.not_to validate_presence_of(:project) }
+      end
     end
 
-    it 'returns false when list_type is set to closed' do
-      subject.list_type = :closed
+    describe 'group and project mutually exclusive' do
+      context 'when project is present' do
+        it 'validates that project and group are mutually exclusive' do
+          expect(described_class.new(board: project_board)).to validate_absence_of(:group)
+            .with_message(_("can't be specified if a project was already provided"))
+        end
+      end
 
-      expect(subject).not_to be_destroyable
-    end
-  end
-
-  describe '#movable?' do
-    it 'returns true when list_type is set to label' do
-      subject.list_type = :label
-
-      expect(subject).to be_movable
-    end
-
-    it 'returns false when list_type is set to closed' do
-      subject.list_type = :closed
-
-      expect(subject).not_to be_movable
-    end
-  end
-
-  describe '#title' do
-    it 'returns label name when list_type is set to label' do
-      subject.list_type = :label
-      subject.label = Label.new(name: 'Development')
-
-      expect(subject.title).to eq 'Development'
-    end
-
-    it 'returns Closed when list_type is set to closed' do
-      subject.list_type = :closed
-
-      expect(subject.title).to eq 'Closed'
+      context 'when project is not present' do
+        it { is_expected.not_to validate_absence_of(:group) }
+      end
     end
   end
 end

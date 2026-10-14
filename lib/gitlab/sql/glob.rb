@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module SQL
     module Glob
@@ -15,7 +17,7 @@ module Gitlab
       end
 
       def q(string)
-        ActiveRecord::Base.connection.quote(string)
+        ApplicationRecord.connection.quote(string)
       end
     end
   end

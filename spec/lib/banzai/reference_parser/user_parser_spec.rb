@@ -1,13 +1,16 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::ReferenceParser::UserParser do
+RSpec.describe Banzai::ReferenceParser::UserParser, feature_category: :markdown do
   include ReferenceParserHelpers
 
-  let(:group) { create(:group) }
-  let(:user) { create(:user) }
-  let(:project) { create(:project, :public, group: group, creator: user) }
-  subject { described_class.new(project, user) }
+  let_it_be_with_reload(:group) { create(:group) }
+  let_it_be(:user) { create(:user) }
+  let_it_be(:project) { create(:project, :public, group: group, creator: user) }
   let(:link) { empty_html_link }
+
+  subject { described_class.new(Banzai::RenderContext.new(project, user)) }
 
   describe '#referenced_by' do
     context 'when the link has a data-group attribute' do
@@ -16,14 +19,28 @@ describe Banzai::ReferenceParser::UserParser do
           link['data-group'] = project.group.id.to_s
         end
 
-        it 'returns the users of the group' do
-          create(:group_member, group: group, user: user)
-
-          expect(subject.referenced_by([link])).to eq([user])
-        end
-
         it 'returns an empty Array when the group has no users' do
           expect(subject.referenced_by([link])).to eq([])
+        end
+
+        context 'when group has members' do
+          let_it_be(:group_member) { create(:group_member, group: group, user: user) }
+          let_it_be(:user2) { create(:user) }
+          let_it_be(:user3) { create(:user) }
+          let_it_be(:user4) { create(:user) }
+          let_it_be(:group_member2) { create(:group_member, :minimal_access, group: group, user: user2) }
+          let_it_be(:group_member3) { create(:group_member, :access_request, group: group, user: user3) }
+          let_it_be(:group_member4) { create(:group_member, :invited, group: group, user: user4) }
+
+          it 'returns the relevant users of the group with enough access' do
+            expect(subject.referenced_by([link])).to eq([user])
+          end
+
+          it 'returns an empty Array when the group has mentions disabled' do
+            group.update!(mentions_disabled: true)
+
+            expect(subject.referenced_by([link])).to eq([])
+          end
         end
       end
 
@@ -60,11 +77,11 @@ describe Banzai::ReferenceParser::UserParser do
 
     context 'when the link has a data-project attribute' do
       context 'using an existing project ID' do
-        let(:contributor) { create(:user) }
+        let_it_be(:contributor) { create(:user) }
 
-        before do
-          project.team << [user, :developer]
-          project.team << [contributor, :developer]
+        before_all do
+          project.add_developer(user)
+          project.add_developer(contributor)
         end
 
         it 'returns the members of a project' do
@@ -114,6 +131,8 @@ describe Banzai::ReferenceParser::UserParser do
 
       context 'when the link does not have a data-group attribute' do
         context 'with a data-project attribute' do
+          let_it_be(:other_project) { create(:project, :public) }
+
           it 'returns the nodes if the attribute value equals the current project ID' do
             link['data-project'] = project.id.to_s
 
@@ -125,8 +144,6 @@ describe Banzai::ReferenceParser::UserParser do
           end
 
           it 'returns the nodes if the user can read the project' do
-            other_project = create(:project, :public)
-
             link['data-project'] = other_project.id.to_s
 
             expect(Ability).to receive(:allowed?)
@@ -137,8 +154,6 @@ describe Banzai::ReferenceParser::UserParser do
           end
 
           it 'returns an empty Array if the user can not read the project' do
-            other_project = create(:project, :public)
-
             link['data-project'] = other_project.id.to_s
 
             expect(Ability).to receive(:allowed?)
@@ -160,9 +175,11 @@ describe Banzai::ReferenceParser::UserParser do
 
   describe '#nodes_user_can_reference' do
     context 'when the link has a data-author attribute' do
+      let_it_be(:other_project) { create(:project) }
+
       it 'returns the nodes when the user is a member of the project' do
         other_project = create(:project)
-        other_project.team << [user, :developer]
+        other_project.add_developer(user)
 
         link['data-project'] = other_project.id.to_s
         link['data-author'] = user.id.to_s
@@ -178,8 +195,6 @@ describe Banzai::ReferenceParser::UserParser do
       end
 
       it 'returns an empty Array when the user could not be found' do
-        other_project = create(:project)
-
         link['data-project'] = other_project.id.to_s
         link['data-author'] = ''
 
@@ -187,8 +202,6 @@ describe Banzai::ReferenceParser::UserParser do
       end
 
       it 'returns an empty Array when the user is not a team member' do
-        other_project = create(:project)
-
         link['data-project'] = other_project.id.to_s
         link['data-author'] = user.id.to_s
 

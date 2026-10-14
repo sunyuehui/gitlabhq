@@ -1,4 +1,6 @@
-describe QA::Runtime::Release do
+# frozen_string_literal: true
+
+RSpec.describe QA::Runtime::Release do
   context 'when release version has extension strategy' do
     let(:strategy) { spy('strategy') }
 
@@ -25,25 +27,6 @@ describe QA::Runtime::Release do
 
         expect(strategy).to have_received(:some_method)
           .with(1, 2)
-      end
-    end
-  end
-
-  context 'when release version does not have extension strategy' do
-    before do
-      allow_any_instance_of(described_class)
-        .to receive(:version).and_return('something')
-    end
-
-    describe '#strategy' do
-      it 'raises error' do
-        expect { subject.strategy }.to raise_error(LoadError)
-      end
-    end
-
-    describe 'delegated class methods' do
-      it 'raises error' do
-        expect { described_class.some_method(2, 3) }.to raise_error(LoadError)
       end
     end
   end

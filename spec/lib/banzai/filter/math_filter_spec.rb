@@ -1,127 +1,135 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::MathFilter do
+# note that extensive syntax test are performed in the parser,
+# https://gitlab.com/gitlab-org/ruby/gems/gitlab-glfm-markdown/blob/main/spec/math_spec.rb
+RSpec.describe Banzai::Filter::MathFilter, feature_category: :markdown do
   include FilterSpecHelper
 
-  it 'leaves regular inline code unchanged' do
-    input = "<code>2+2</code>"
-    doc = filter(input)
+  it 'add js-render to all math' do
+    markdown = <<~MARKDOWN
+    $`2+2`$ + $3+3$ + $$4+4$$
 
-    expect(doc.to_s).to eq input
+    $$
+    5+5
+    $$
+
+    ```math
+    6+6
+    ```
+    MARKDOWN
+
+    doc = pipeline_filter(markdown)
+
+    expect(doc.search('.js-render-math').count).to eq(6)
   end
 
-  it 'removes surrounding dollar signs and adds class code, math and js-render-math' do
-    doc = filter("$<code>2+2</code>$")
+  context 'when limiting how many elements can be marked as math' do
+    let_it_be(:context) { {} }
 
-    expect(doc.to_s).to eq '<code class="code math js-render-math" data-math-style="inline">2+2</code>'
+    subject { pipeline_filter('$`2+2`$ + $3+3$ + $$4+4$$', context) }
+
+    before do
+      stub_const('Banzai::Filter::MathFilter::RENDER_NODES_LIMIT', 2)
+    end
+
+    it 'enforces limits by default' do
+      expect(subject.search('.js-render-math').count).to eq(2)
+    end
+
+    context 'when project with user namespace (no group)' do
+      let_it_be(:project) { create(:project, :public) }
+      let_it_be(:context) { { project: project } }
+
+      it 'limits' do
+        expect(subject.search('.js-render-math').count).to eq(2)
+      end
+    end
+
+    context 'when project with group, no namespace settings' do
+      let_it_be_with_reload(:group) { create(:group) }
+      let_it_be(:project) { create(:project, :public, group: group) }
+      let_it_be(:context) { { project: project } }
+
+      it 'limits' do
+        expect(subject.search('.js-render-math').count).to eq(2)
+      end
+    end
+
+    context 'when project with group, default namespace settings' do
+      let_it_be_with_reload(:namespace_settings) { create(:namespace_settings) }
+      let_it_be_with_reload(:group) { create(:group, namespace_settings: namespace_settings) }
+      let_it_be(:project) { create(:project, :public, group: group) }
+      let_it_be(:context) { { project: project } }
+
+      it 'limits' do
+        expect(subject.search('.js-render-math').count).to eq(2)
+      end
+    end
+
+    context 'when limits math_rendering_limits_enabled is false' do
+      let_it_be_with_reload(:namespace_settings) do
+        create(:namespace_settings, math_rendering_limits_enabled: false)
+      end
+
+      let_it_be_with_reload(:group) { create(:group, namespace_settings: namespace_settings) }
+      let_it_be(:project) { create(:project, :public, group: group) }
+      let_it_be(:context) { { project: project } }
+
+      it 'does not limit' do
+        expect(subject.search('.js-render-math').count).to eq(3)
+      end
+    end
+
+    context 'when for wikis' do
+      let_it_be(:context) { { wiki: true } }
+
+      it 'does limit' do
+        expect(subject.search('.js-render-math').count).to eq(2)
+      end
+    end
+
+    context 'when for blobs' do
+      let_it_be(:context) { { text_source: :blob } }
+
+      it 'does limit for blobs' do
+        expect(subject.search('.js-render-math').count).to eq(2)
+      end
+    end
   end
 
-  it 'only removes surrounding dollar signs' do
-    doc = filter("test $<code>2+2</code>$ test")
-    before = doc.xpath('descendant-or-self::text()[1]').first
-    after = doc.xpath('descendant-or-self::text()[3]').first
+  context 'on pre elements with data-math-style' do
+    let(:doc) { filter(html, {}) }
+    let(:pre) { doc.at_css('pre') }
 
-    expect(before.to_s).to eq 'test '
-    expect(after.to_s).to eq ' test'
+    context 'when a <pre data-canonical-lang="math"> has no data-math-style' do
+      let(:html) { '<pre data-canonical-lang="math"><code>\sqrt{2}</code></pre>' }
+
+      it 'sets the math style attribute' do
+        expect(pre['data-math-style']).to eq('display')
+        expect(pre[:class]).to eq('js-render-math')
+      end
+    end
+
+    context 'when a <pre data-canonical-lang="math"> already has data-math-style' do
+      let(:html) { '<pre data-canonical-lang="math" data-math-style="inline"><code>\sqrt{2}</code></pre>' }
+
+      it 'preserves the math style attribute' do
+        expect(pre['data-math-style']).to eq('inline')
+        expect(pre[:class]).to eq('js-render-math')
+      end
+    end
   end
 
-  it 'only removes surrounding single dollar sign' do
-    doc = filter("test $$<code>2+2</code>$$ test")
-    before = doc.xpath('descendant-or-self::text()[1]').first
-    after = doc.xpath('descendant-or-self::text()[3]').first
+  it_behaves_like 'pipeline timing check'
 
-    expect(before.to_s).to eq 'test $'
-    expect(after.to_s).to eq '$ test'
-  end
+  def pipeline_filter(text, context = {})
+    context = { project: nil, no_sourcepos: true }.merge(context)
 
-  it 'adds data-math-style inline attribute to inline math' do
-    doc = filter('$<code>2+2</code>$')
-    code = doc.xpath('descendant-or-self::code').first
+    doc = Banzai::Pipeline::PreProcessPipeline.call(text, {})
+    doc = Banzai::Pipeline::FullPipeline.call(doc[:output], context)
 
-    expect(code['data-math-style']).to eq 'inline'
-  end
-
-  it 'adds class code and math to inline math' do
-    doc = filter('$<code>2+2</code>$')
-    code = doc.xpath('descendant-or-self::code').first
-
-    expect(code[:class]).to include("code")
-    expect(code[:class]).to include("math")
-  end
-
-  it 'adds js-render-math class to inline math' do
-    doc = filter('$<code>2+2</code>$')
-    code = doc.xpath('descendant-or-self::code').first
-
-    expect(code[:class]).to include("js-render-math")
-  end
-
-  # Cases with faulty syntax. Should be a no-op
-
-  it 'ignores cases with missing dolar sign at the end' do
-    input = "test $<code>2+2</code> test"
-    doc = filter(input)
-
-    expect(doc.to_s).to eq input
-  end
-
-  it 'ignores cases with missing dolar sign at the beginning' do
-    input = "test <code>2+2</code>$ test"
-    doc = filter(input)
-
-    expect(doc.to_s).to eq input
-  end
-
-  it 'ignores dollar signs if it is not adjacent' do
-    input = '<p>We check strictly $<code>2+2</code> and  <code>2+2</code>$ </p>'
-    doc = filter(input)
-
-    expect(doc.to_s).to eq input
-  end
-
-  it 'ignores dollar signs if they are inside another element' do
-    input = '<p>We check strictly <em>$</em><code>2+2</code><em>$</em></p>'
-    doc = filter(input)
-
-    expect(doc.to_s).to eq input
-  end
-
-  # Display math
-
-  it 'adds data-math-style display attribute to display math' do
-    doc = filter('<pre class="code highlight js-syntax-highlight math" v-pre="true"><code>2+2</code></pre>')
-    pre = doc.xpath('descendant-or-self::pre').first
-
-    expect(pre['data-math-style']).to eq 'display'
-  end
-
-  it 'adds js-render-math class to display math' do
-    doc = filter('<pre class="code highlight js-syntax-highlight math" v-pre="true"><code>2+2</code></pre>')
-    pre = doc.xpath('descendant-or-self::pre').first
-
-    expect(pre[:class]).to include("js-render-math")
-  end
-
-  it 'ignores code blocks that are not math' do
-    input = '<pre class="code highlight js-syntax-highlight plaintext" v-pre="true"><code>2+2</code></pre>'
-    doc = filter(input)
-
-    expect(doc.to_s).to eq input
-  end
-
-  it 'requires the pre to contain both code and math' do
-    input = '<pre class="highlight js-syntax-highlight plaintext math" v-pre="true"><code>2+2</code></pre>'
-    doc = filter(input)
-
-    expect(doc.to_s).to eq input
-  end
-
-  it 'dollar signs around to display math' do
-    doc = filter('$<pre class="code highlight js-syntax-highlight math" v-pre="true"><code>2+2</code></pre>$')
-    before = doc.xpath('descendant-or-self::text()[1]').first
-    after = doc.xpath('descendant-or-self::text()[3]').first
-
-    expect(before.to_s).to eq '$'
-    expect(after.to_s).to eq '$'
+    doc[:output]
   end
 end

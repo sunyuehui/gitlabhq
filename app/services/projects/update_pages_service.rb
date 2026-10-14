@@ -1,174 +1,112 @@
+# frozen_string_literal: true
+
 module Projects
   class UpdatePagesService < BaseService
-    BLOCK_SIZE = 32.kilobytes
-    MAX_SIZE = 1.terabyte
-    SITE_PATH = 'public/'.freeze
+    include Gitlab::InternalEventsTracking
+    include Gitlab::Utils::StrongMemoize
 
-    attr_reader :build
+    # old deployment can be cached by pages daemon
+    # so we need to give pages daemon some time update cache
+    # 10 minutes is enough, but 30 feels safer
+    OLD_DEPLOYMENTS_DESTRUCTION_DELAY = 30.minutes
+
+    attr_reader :build, :deployment_validations
 
     def initialize(project, build)
-      @project, @build = project, build
+      @project = project
+      @build = build
+      @deployment_validations = ::Gitlab::Pages::DeploymentValidations.new(project, build)
     end
 
     def execute
-      # Create status notifying the deployment of pages
-      @status = create_status
-      @status.enqueue!
-      @status.run!
-
-      raise 'missing pages artifacts' unless build.artifacts_file?
-      raise 'pages are outdated' unless latest?
-
-      # Create temporary directory in which we will extract the artifacts
-      FileUtils.mkdir_p(tmp_path)
-      Dir.mktmpdir(nil, tmp_path) do |archive_path|
-        extract_archive!(archive_path)
-
-        # Check if we did extract public directory
-        archive_public_path = File.join(archive_path, 'public')
-        raise 'pages miss the public folder' unless Dir.exist?(archive_public_path)
-        raise 'pages are outdated' unless latest?
-
-        deploy_page!(archive_public_path)
-        success
-      end
-    rescue => e
-      register_failure
-      error(e.message)
-    ensure
       register_attempt
-      build.erase_artifacts! unless build.has_expiring_artifacts?
+
+      ::Ci::Pipelines::AddJobService.new(@build.pipeline).execute!(commit_status) do |job|
+        job.enqueue!
+        job.run!
+      end
+
+      return error(deployment_validations.errors.first.full_message) unless deployment_validations.valid?
+
+      handle_deployment_with_open_file
+    rescue StandardError => e
+      error(e.message)
+      raise e
     end
 
     private
 
+    def config
+      build.pages.is_a?(Hash) ? build.pages : {}
+    end
+
+    def extra_deployment?
+      path_prefix.present?
+    end
+
+    def path_prefix
+      project.pages_url_builder(config).path_prefix
+    end
+
     def success
-      @status.success
+      commit_status.success
       super
     end
 
-    def error(message, http_status = nil)
+    def error(message)
+      register_failure
       log_error("Projects::UpdatePagesService: #{message}")
-      @status.allow_failure = !latest?
-      @status.description = message
-      @status.drop
+      commit_status.allow_failure = !deployment_validations.latest_build?
+      commit_status.description = message
+      commit_status.drop(:script_failure)
       super
     end
 
-    def create_status
+    # Create status notifying the deployment of pages
+    def commit_status
       GenericCommitStatus.new(
-        project: project,
-        pipeline: build.pipeline,
         user: build.user,
-        ref: build.ref,
-        stage: 'deploy',
-        name: 'pages:deploy'
+        ci_stage: stage,
+        name: 'pages:deploy',
+        stage_idx: stage.position
       )
     end
+    strong_memoize_attr :commit_status
 
-    def extract_archive!(temp_path)
-      if artifacts.ends_with?('.tar.gz') || artifacts.ends_with?('.tgz')
-        extract_tar_archive!(temp_path)
-      elsif artifacts.ends_with?('.zip')
-        extract_zip_archive!(temp_path)
-      else
-        raise 'unsupported artifacts format'
+    # rubocop: disable Performance/ActiveRecordSubtransactionMethods
+    def stage
+      build.pipeline.stages.safe_find_or_create_by(name: 'deploy', pipeline_id: build.pipeline.id) do |stage|
+        stage.position = GenericCommitStatus::EXTERNAL_STAGE_IDX
+        stage.project = build.project
       end
     end
+    strong_memoize_attr :stage
+    # rubocop: enable Performance/ActiveRecordSubtransactionMethods
 
-    def extract_tar_archive!(temp_path)
-      results = Open3.pipeline(%W(gunzip -c #{artifacts}),
-                               %W(dd bs=#{BLOCK_SIZE} count=#{blocks}),
-                               %W(tar -x -C #{temp_path} #{SITE_PATH}),
-                               err: '/dev/null')
-      raise 'pages failed to extract' unless results.compact.all?(&:success?)
+    def create_pages_deployment(file, build)
+      attributes = pages_deployment_attributes(file, build)
+      deployment = project.pages_deployments.build(**attributes)
+
+      return if deployment.file.size != file.size
+
+      deployment.tap(&:save!)
     end
 
-    def extract_zip_archive!(temp_path)
-      raise 'missing artifacts metadata' unless build.artifacts_metadata?
-
-      # Calculate page size after extract
-      public_entry = build.artifacts_metadata_entry(SITE_PATH, recursive: true)
-
-      if public_entry.total_size > max_size
-        raise "artifacts for pages are too large: #{public_entry.total_size}"
-      end
-
-      # Requires UnZip at least 6.00 Info-ZIP.
-      # -qq be (very) quiet
-      # -n  never overwrite existing files
-      # We add * to end of SITE_PATH, because we want to extract SITE_PATH and all subdirectories
-      site_path = File.join(SITE_PATH, '*')
-      unless system(*%W(unzip -qq -n #{artifacts} #{site_path} -d #{temp_path}))
-        raise 'pages failed to extract'
-      end
+    # overridden on EE
+    def pages_deployment_attributes(file, build)
+      {
+        file: file,
+        file_count: deployment_validations.entries_count,
+        file_sha256: build.job_artifacts_archive.file_sha256,
+        ci_build_id: build.id,
+        root_directory: build.pages[:publish]
+      }
     end
 
-    def deploy_page!(archive_public_path)
-      # Do atomic move of pages
-      # Move and removal may not be atomic, but they are significantly faster then extracting and removal
-      # 1. We move deployed public to previous public path (file removal is slow)
-      # 2. We move temporary public to be deployed public
-      # 3. We remove previous public path
-      FileUtils.mkdir_p(pages_path)
-      begin
-        FileUtils.move(public_path, previous_public_path)
-      rescue
-      end
-      FileUtils.move(archive_public_path, public_path)
-    ensure
-      FileUtils.rm_r(previous_public_path, force: true)
-    end
-
-    def latest?
-      # check if sha for the ref is still the most recent one
-      # this helps in case when multiple deployments happens
-      sha == latest_sha
-    end
-
-    def blocks
-      # Calculate dd parameters: we limit the size of pages
-      1 + max_size / BLOCK_SIZE
-    end
-
-    def max_size
-      max_pages_size = current_application_settings.max_pages_size.megabytes
-
-      return MAX_SIZE if max_pages_size.zero?
-
-      [max_pages_size, MAX_SIZE].min
-    end
-
-    def tmp_path
-      @tmp_path ||= File.join(::Settings.pages.path, 'tmp')
-    end
-
-    def pages_path
-      @pages_path ||= project.pages_path
-    end
-
-    def public_path
-      @public_path ||= File.join(pages_path, 'public')
-    end
-
-    def previous_public_path
-      @previous_public_path ||= File.join(pages_path, "public.#{SecureRandom.hex}")
-    end
-
-    def ref
-      build.ref
-    end
-
-    def artifacts
-      build.artifacts_file.path
-    end
-
-    def latest_sha
-      project.commit(build.ref).try(:sha).to_s
-    end
-
-    def sha
-      build.sha
+    def deactive_old_deployments(deployment)
+      PagesDeployment.deactivate_deployments_older_than(
+        deployment,
+        time: OLD_DEPLOYMENTS_DESTRUCTION_DELAY.from_now)
     end
 
     def register_attempt
@@ -180,11 +118,51 @@ module Projects
     end
 
     def pages_deployments_total_counter
-      @pages_deployments_total_counter ||= Gitlab::Metrics.counter(:pages_deployments_total, "Counter of GitLab Pages deployments triggered")
+      Gitlab::Metrics.counter(:pages_deployments_total, "Counter of GitLab Pages deployments triggered")
     end
+    strong_memoize_attr :pages_deployments_total_counter
 
     def pages_deployments_failed_total_counter
-      @pages_deployments_failed_total_counter ||= Gitlab::Metrics.counter(:pages_deployments_failed_total, "Counter of GitLab Pages deployments which failed")
+      Gitlab::Metrics.counter(:pages_deployments_failed_total, "Counter of GitLab Pages deployments which failed")
+    end
+    strong_memoize_attr :pages_deployments_failed_total_counter
+
+    def handle_deployment_with_open_file
+      build.artifacts_file.use_open_file(unlink_early: false) do |file|
+        handle_deployment(file)
+      end
+    end
+
+    def handle_deployment(file)
+      deployment = create_pages_deployment(file, build)
+
+      return error('The uploaded artifact size does not match the expected value') unless deployment
+      return error(deployment_validations.errors.first.full_message) unless deployment_validations.valid?
+
+      track_deployment_events
+
+      deactive_old_deployments(deployment)
+      success
+    end
+
+    def track_deployment_events
+      track_internal_event(
+        'create_pages_deployment',
+        project: project,
+        namespace: project.namespace,
+        user: build.user
+      )
+
+      return unless extra_deployment?
+
+      track_internal_event(
+        'create_pages_extra_deployment',
+        project: project,
+        namespace: project.namespace,
+        user: build.user
+      )
     end
   end
 end
+
+::Projects::UpdatePagesService.prepend_mod

@@ -1,87 +1,213 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Projects::GroupLinksController do
-  let(:group) { create(:group, :private) }
-  let(:group2) { create(:group, :private) }
-  let(:project) { create(:project, :private, group: group2) }
-  let(:user) { create(:user) }
+RSpec.describe Projects::GroupLinksController, feature_category: :system_access do
+  let_it_be(:group) { create(:group, :private) }
+  let_it_be(:group2) { create(:group, :private) }
+  let_it_be(:project) { create(:project, :private, group: group2) }
+  let_it_be(:user) { create(:user) }
 
   before do
-    project.team << [user, :master]
+    travel_to DateTime.new(2019, 4, 1)
+    project.add_owner(user)
     sign_in(user)
   end
 
-  describe '#create' do
-    shared_context 'link project to group' do
-      before do
-        post(:create, namespace_id: project.namespace,
-                      project_id: project,
-                      link_group_id: group.id,
-                      link_group_access: ProjectGroupLink.default_access)
+  after do
+    travel_back
+  end
+
+  describe '#update' do
+    let_it_be(:link) do
+      create(
+        :project_group_link,
+        {
+          project: project,
+          group: group
+        }
+      )
+    end
+
+    let_it_be(:expiry_date) { 1.month.from_now.to_date }
+    let_it_be(:group_access) { Gitlab::Access::GUEST }
+
+    subject(:update_link) do
+      put(
+        :update,
+        params: {
+          namespace_id: project.namespace.to_param,
+          project_id: project.to_param,
+          id: link.id,
+          group_link: { group_access: group_access, expires_at: expiry_date }
+        },
+        format: :json
+      )
+    end
+
+    before do
+      travel_to Time.now.utc.beginning_of_day
+    end
+
+    context 'when `expires_at` is set' do
+      it 'returns correct json response' do
+        update_link
+
+        expect(json_response).to eq({ "expires_in" => controller.helpers.time_ago_with_tooltip(expiry_date), "expires_soon" => false })
       end
     end
 
-    context 'when user has access to group he want to link project to' do
-      before do
-        group.add_developer(user)
+    context 'when `expires_at` is not set' do
+      let(:expiry_date) { nil }
+
+      it 'returns empty json response' do
+        update_link
+
+        expect(json_response).to be_empty
       end
+    end
 
-      include_context 'link project to group'
+    it "returns an error when link is not updated" do
+      allow(::Projects::GroupLinks::UpdateService).to receive_message_chain(:new, :execute)
+        .and_return(ServiceResponse.error(message: '404 Not Found', reason: :not_found))
 
-      it 'links project with selected group' do
-        expect(group.shared_projects).to include project
-      end
+      update_link
 
-      it 'redirects to project group links page' do
-        expect(response).to redirect_to(
-          project_project_members_path(project)
+      expect(response).to have_gitlab_http_status(:not_found)
+      expect(json_response['message']).to eq('404 Not Found')
+    end
+  end
+
+  describe '#destroy' do
+    let_it_be(:group_owner) { create(:user) }
+    let_it_be(:group_access) { Gitlab::Access::DEVELOPER }
+    let(:format) { :html }
+
+    let_it_be_with_reload(:link) do
+      create(:project_group_link, project: project, group: group, group_access: group_access)
+    end
+
+    subject(:destroy_link) do
+      post(:destroy, params: { namespace_id: project.namespace.to_param,
+                               project_id: project.to_param,
+                               id: link.id }, format: format)
+    end
+
+    shared_examples 'success response' do
+      it 'deletes the project group link' do
+        expect { destroy_link }.to change { project.reload.project_group_links.count }
+
+        expect(response).to redirect_to(project_project_members_path(project))
+        expect(response).to have_gitlab_http_status(:found)
+        expect(flash[:notice]).to eq(
+          'Group invite removed. It might take a few minutes for the changes to user access levels to take effect.'
         )
       end
     end
 
-    context 'when user doers not have access to group he want to link to' do
-      include_context 'link project to group'
-
-      it 'renders 404' do
-        expect(response.status).to eq 404
+    context 'when user is group owner' do
+      before do
+        link.group.add_owner(group_owner)
+        sign_in(group_owner)
       end
 
-      it 'does not share project with that group' do
-        expect(group.shared_projects).not_to include project
+      context 'when user is not project maintainer' do
+        it 'deletes the project group link and redirects to group show page' do
+          destroy_link
+
+          expect(response).to redirect_to(group_path(group))
+          expect(response).to have_gitlab_http_status(:found)
+        end
+      end
+
+      context 'when user is a project maintainer' do
+        before do
+          project.add_maintainer(group_owner)
+        end
+
+        it 'deletes the project group link and redirects to group show page' do
+          destroy_link
+
+          expect(response).to redirect_to(group_path(group))
+          expect(response).to have_gitlab_http_status(:found)
+        end
       end
     end
 
-    context 'when project group id equal link group id' do
-      before do
-        post(:create, namespace_id: project.namespace,
-                      project_id: project,
-                      link_group_id: group2.id,
-                      link_group_access: ProjectGroupLink.default_access)
+    context 'when user is not a group owner' do
+      context 'when user is a project owner' do
+        before do
+          project.add_owner(user)
+          sign_in(user)
+        end
+
+        it_behaves_like 'success response'
+
+        it 'returns an error when link is not destroyed' do
+          allow(::Projects::GroupLinks::DestroyService).to receive_message_chain(:new, :execute)
+            .and_return(ServiceResponse.error(message: 'The error message'))
+
+          expect { destroy_link }.not_to change { project.reload.project_group_links.count }
+          expect(flash[:alert]).to eq('The project-group link could not be removed.')
+        end
+
+        context 'when format is js' do
+          let(:format) { :js }
+
+          it "returns an error when link is not destroyed" do
+            allow(::Projects::GroupLinks::DestroyService).to receive_message_chain(:new, :execute)
+              .and_return(ServiceResponse.error(message: '404 Not Found', reason: :not_found))
+
+            expect { destroy_link }.not_to change { project.reload.project_group_links.count }
+            expect(response).to have_gitlab_http_status(:not_found)
+            expect(json_response['message']).to eq('404 Not Found')
+          end
+        end
       end
 
-      it 'does not share project with selected group' do
-        expect(group2.shared_projects).not_to include project
-      end
+      context 'when user does not have permission to destroy the link' do
+        before do
+          project.add_maintainer(user)
+          sign_in(user)
+        end
 
-      it 'redirects to project group links page' do
-        expect(response).to redirect_to(
-          project_project_members_path(project)
-        )
+        it 'returns 404' do
+          expect { destroy_link }.to not_change { project.reload.project_group_links.count }
+
+          expect(response).to redirect_to(project_project_members_path(project, tab: :groups))
+          expect(flash[:alert]).to include('The project-group link could not be removed.')
+        end
       end
     end
 
-    context 'when link group id is not present' do
+    context 'when the user is a project maintainer' do
       before do
-        post(:create, namespace_id: project.namespace,
-                      project_id: project,
-                      link_group_access: ProjectGroupLink.default_access)
+        project.add_maintainer(user)
+        sign_in(user)
       end
 
-      it 'redirects to project group links page' do
-        expect(response).to redirect_to(
-          project_project_members_path(project)
-        )
-        expect(flash[:alert]).to eq('Please select a group.')
+      context 'when they try to destroy a link with OWNER access level' do
+        before do
+          link.update!(group_access: Gitlab::Access::OWNER)
+        end
+
+        it 'does not destroy the link' do
+          expect { destroy_link }.to not_change { project.reload.project_group_links.count }
+
+          expect(response).to redirect_to(project_project_members_path(project, tab: :groups))
+          expect(flash[:alert]).to include('The project-group link could not be removed.')
+        end
+
+        context 'when format is js' do
+          let(:format) { :js }
+
+          it 'returns 403' do
+            expect { destroy_link }.to not_change { project.reload.project_group_links.count }
+
+            expect(json_response).to eq({ "message" => "Forbidden" })
+            expect(response).to have_gitlab_http_status(:forbidden)
+          end
+        end
       end
     end
   end

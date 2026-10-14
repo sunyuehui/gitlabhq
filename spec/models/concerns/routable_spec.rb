@@ -1,91 +1,61 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Group, 'Routable' do
-  let!(:group) { create(:group, name: 'foo') }
-
-  describe 'Validations' do
-    it { is_expected.to validate_presence_of(:route) }
-  end
-
-  describe 'Associations' do
-    it { is_expected.to have_one(:route).dependent(:destroy) }
-    it { is_expected.to have_many(:redirect_routes).dependent(:destroy) }
-  end
-
-  describe 'Callbacks' do
-    it 'creates route record on create' do
-      expect(group.route.path).to eq(group.path)
-      expect(group.route.name).to eq(group.name)
+RSpec.shared_examples 'routable resource' do
+  shared_examples_for '.find_by_full_path' do
+    it 'finds records by their full path' do
+      expect(described_class.find_by_full_path(record.full_path)).to eq(record)
+      expect(described_class.find_by_full_path(record.full_path.upcase)).to eq(record)
     end
 
-    it 'updates route record on path change' do
-      group.update_attributes(path: 'wow', name: 'much')
-
-      expect(group.route.path).to eq('wow')
-      expect(group.route.name).to eq('much')
+    it 'returns nil for unknown paths' do
+      expect(described_class.find_by_full_path('unknown')).to be_nil
     end
 
-    it 'ensure route path uniqueness across different objects' do
-      create(:group, parent: group, path: 'xyz')
-      duplicate = build(:project, namespace: group, path: 'xyz')
-
-      expect { duplicate.save! }.to raise_error(ActiveRecord::RecordInvalid, 'Validation failed: Route path has already been taken, Route is invalid')
-    end
-  end
-
-  describe '.find_by_full_path' do
-    let!(:nested_group) { create(:group, parent: group) }
-
-    context 'without any redirect routes' do
-      it { expect(described_class.find_by_full_path(group.to_param)).to eq(group) }
-      it { expect(described_class.find_by_full_path(group.to_param.upcase)).to eq(group) }
-      it { expect(described_class.find_by_full_path(nested_group.to_param)).to eq(nested_group) }
-      it { expect(described_class.find_by_full_path('unknown')).to eq(nil) }
+    context 'when path is a negative number' do
+      it 'returns nil' do
+        expect(described_class.find_by_full_path(-1)).to be_nil
+      end
     end
 
     context 'with redirect routes' do
-      let!(:group_redirect_route) { group.redirect_routes.create!(path: 'bar') }
-      let!(:nested_group_redirect_route) { nested_group.redirect_routes.create!(path: nested_group.path.sub('foo', 'bar')) }
+      let_it_be(:redirect_route, freeze: false) { create(:redirect_route, source: record) }
 
       context 'without follow_redirects option' do
-        context 'with the given path not matching any route' do
-          it { expect(described_class.find_by_full_path('unknown')).to eq(nil) }
-        end
-
-        context 'with the given path matching the canonical route' do
-          it { expect(described_class.find_by_full_path(group.to_param)).to eq(group) }
-          it { expect(described_class.find_by_full_path(group.to_param.upcase)).to eq(group) }
-          it { expect(described_class.find_by_full_path(nested_group.to_param)).to eq(nested_group) }
-        end
-
-        context 'with the given path matching a redirect route' do
-          it { expect(described_class.find_by_full_path(group_redirect_route.path)).to eq(nil) }
-          it { expect(described_class.find_by_full_path(group_redirect_route.path.upcase)).to eq(nil) }
-          it { expect(described_class.find_by_full_path(nested_group_redirect_route.path)).to eq(nil) }
+        it 'does not find records by their redirected path' do
+          expect(described_class.find_by_full_path(redirect_route.path)).to be_nil
+          expect(described_class.find_by_full_path(redirect_route.path.upcase)).to be_nil
         end
       end
 
       context 'with follow_redirects option set to true' do
-        context 'with the given path not matching any route' do
-          it { expect(described_class.find_by_full_path('unknown', follow_redirects: true)).to eq(nil) }
+        it 'finds records by their canonical path' do
+          expect(described_class.find_by_full_path(record.full_path, follow_redirects: true)).to eq(record)
+          expect(described_class.find_by_full_path(record.full_path.upcase, follow_redirects: true)).to eq(record)
         end
 
-        context 'with the given path matching the canonical route' do
-          it { expect(described_class.find_by_full_path(group.to_param, follow_redirects: true)).to eq(group) }
-          it { expect(described_class.find_by_full_path(group.to_param.upcase, follow_redirects: true)).to eq(group) }
-          it { expect(described_class.find_by_full_path(nested_group.to_param, follow_redirects: true)).to eq(nested_group) }
+        it 'finds records by their redirected path' do
+          expect(described_class.find_by_full_path(redirect_route.path, follow_redirects: true)).to eq(record)
+          expect(described_class.find_by_full_path(redirect_route.path.upcase, follow_redirects: true)).to eq(record)
         end
 
-        context 'with the given path matching a redirect route' do
-          it { expect(described_class.find_by_full_path(group_redirect_route.path, follow_redirects: true)).to eq(group) }
-          it { expect(described_class.find_by_full_path(group_redirect_route.path.upcase, follow_redirects: true)).to eq(group) }
-          it { expect(described_class.find_by_full_path(nested_group_redirect_route.path, follow_redirects: true)).to eq(nested_group) }
+        it 'returns nil for unknown paths' do
+          expect(described_class.find_by_full_path('unknown', follow_redirects: true)).to be_nil
         end
       end
     end
+
+    it 'does not have cross-join' do
+      expect(Gitlab::Database).not_to receive(:allow_cross_joins_across_databases)
+
+      described_class.find_by_full_path(record.full_path)
+    end
   end
 
-  describe '.where_full_path_in' do
+  it_behaves_like '.find_by_full_path', :aggregate_failures
+
+  shared_examples_for '.where_full_path_in' do
     context 'without any paths' do
       it 'returns an empty relation' do
         expect(described_class.where_full_path_in([])).to eq([])
@@ -99,71 +69,208 @@ describe Group, 'Routable' do
     end
 
     context 'with valid paths' do
-      let!(:nested_group) { create(:group, parent: group) }
+      it 'returns the entities matching the paths' do
+        result = described_class.where_full_path_in([record.full_path, record_2.full_path])
 
-      it 'returns the projects matching the paths' do
-        result = described_class.where_full_path_in([group.to_param, nested_group.to_param])
-
-        expect(result).to contain_exactly(group, nested_group)
+        expect(result).to contain_exactly(record, record_2)
       end
 
-      it 'returns projects regardless of the casing of paths' do
-        result = described_class.where_full_path_in([group.to_param.upcase, nested_group.to_param.upcase])
+      it 'returns entities regardless of the casing of paths' do
+        result = described_class.where_full_path_in([record.full_path.upcase, record_2.full_path.upcase])
 
-        expect(result).to contain_exactly(group, nested_group)
+        expect(result).to contain_exactly(record, record_2)
+      end
+    end
+
+    context 'on the usage of `preload_routes` parameter' do
+      let_it_be(:klass, freeze: false) { record.class.to_s.downcase }
+      let_it_be(:record_3, freeze: false) { create(:"#{klass}") }
+      let_it_be(:record_4, freeze: false) { create(:"#{klass}") }
+
+      context 'when preload_routes: true' do
+        it 'includes route information when loading records' do
+          control = ActiveRecord::QueryRecorder.new do
+            described_class.where_full_path_in([record.full_path, record_2.full_path], preload_routes: true)
+              .map(&:route)
+          end
+
+          expect do
+            described_class.where_full_path_in(
+              [
+                record.full_path,
+                record_2.full_path,
+                record_3.full_path,
+                record_4.full_path
+              ], preload_routes: true)
+              .map(&:route)
+          end.to issue_same_number_of_queries_as(control).allow_skip_cache_inconsistency
+        end
+      end
+
+      context 'when preload_routes: false' do
+        it 'does not include route information when loading records' do
+          control_count = ActiveRecord::QueryRecorder.new do
+            described_class.where_full_path_in([record.full_path, record_2.full_path], preload_routes: false)
+              .map(&:route)
+          end
+
+          expect do
+            described_class.where_full_path_in(
+              [
+                record.full_path,
+                record_2.full_path,
+                record_3.full_path,
+                record_4.full_path
+              ], preload_routes: false)
+              .map(&:route)
+          end.not_to issue_same_number_of_queries_as(control_count).allow_skip_cache_inconsistency
+        end
       end
     end
   end
+
+  it_behaves_like '.where_full_path_in', :aggregate_failures
+end
+
+RSpec.shared_examples 'routable resource with parent' do
+  it_behaves_like 'routable resource'
 
   describe '#full_path' do
-    let(:group) { create(:group) }
-    let(:nested_group) { create(:group, parent: group) }
-
-    it { expect(group.full_path).to eq(group.path) }
-    it { expect(nested_group.full_path).to eq("#{group.full_path}/#{nested_group.path}") }
-
-    context 'with RequestStore active', :request_store do
-      it 'does not load the route table more than once' do
-        expect(group).to receive(:uncached_full_path).once.and_call_original
-
-        3.times { group.full_path }
-        expect(group.full_path).to eq(group.path)
-      end
-    end
-  end
-
-  describe '#expires_full_path_cache' do
-    context 'with RequestStore active', :request_store do
-      it 'expires the full_path cache' do
-        expect(group.full_path).to eq('foo')
-
-        group.route.update(path: 'bar', name: 'bar')
-        group.expires_full_path_cache
-
-        expect(group.full_path).to eq('bar')
-      end
-    end
+    it { expect(record.full_path).to eq "#{record.parent.full_path}/#{record.path}" }
   end
 
   describe '#full_name' do
-    let(:group) { create(:group) }
-    let(:nested_group) { create(:group, parent: group) }
+    it { expect(record.full_name).to eq "#{record.parent.human_name} / #{record.name}" }
 
-    it { expect(group.full_name).to eq(group.name) }
-    it { expect(nested_group.full_name).to eq("#{group.name} / #{nested_group.name}") }
+    context 'without route name' do
+      before do
+        record.route.update_attribute(:name, nil)
+      end
+
+      it 'builds full name' do
+        expect(record.full_name).to eq("#{record.parent.human_name} / #{record.name}")
+      end
+    end
   end
 end
 
-describe Project, 'Routable' do
-  describe '#full_path' do
-    let(:project) { build_stubbed(:project) }
+RSpec.describe Group, 'Routable', :with_clean_rails_cache, feature_category: :groups_and_projects do
+  let_it_be_with_reload(:group) { create(:group, name: 'foo') }
+  let_it_be(:nested_group, freeze: false) { create(:group, parent: group) }
 
-    it { expect(project.full_path).to eq "#{project.namespace.full_path}/#{project.path}" }
+  it_behaves_like 'routable resource' do
+    let_it_be(:record, freeze: false) { group }
+    let_it_be(:record_2, freeze: false) { nested_group }
   end
 
-  describe '#full_name' do
-    let(:project) { build_stubbed(:project) }
+  it_behaves_like 'routable resource with parent' do
+    let_it_be(:record, freeze: false) { nested_group }
+    let_it_be(:record_2, freeze: false) { group }
+  end
 
-    it { expect(project.full_name).to eq "#{project.namespace.human_name} / #{project.name}" }
+  describe 'Validations' do
+    it { is_expected.to validate_presence_of(:route) }
+  end
+
+  describe 'Associations' do
+    it { is_expected.to have_one(:route).dependent(:destroy) }
+    it { is_expected.to have_many(:redirect_routes).dependent(:destroy) }
+  end
+
+  describe 'Callbacks' do
+    context 'for a group' do
+      it 'creates route record on create' do
+        expect(group.route.path).to eq(group.path)
+        expect(group.route.name).to eq(group.name)
+      end
+
+      it 'updates route record on path change' do
+        group.update!(path: 'wow', name: 'much')
+
+        expect(group.route.path).to eq('wow')
+        expect(group.route.name).to eq('much')
+      end
+
+      it 'ensure route path uniqueness across different objects' do
+        create(:group, parent: group, path: 'xyz')
+        duplicate = build(:project, namespace: group, path: 'xyz')
+
+        expect { duplicate.save! }.to raise_error(ActiveRecord::RecordInvalid, 'Validation failed: Path has already been taken')
+      end
+    end
+
+    context 'for a user' do
+      let(:user) { create(:user, username: 'jane', name: "Jane Doe") }
+
+      it 'creates the route for a record on create' do
+        expect(user.namespace.name).to eq('Jane Doe')
+        expect(user.namespace.path).to eq('jane')
+      end
+
+      it 'updates routes and nested routes on name change' do
+        project = create(:project, path: 'work-stuff', name: 'Work stuff', namespace: user.namespace)
+
+        user.update!(username: 'jaen', name: 'Jaen Did')
+        project.reload
+
+        expect(user.namespace.name).to eq('Jaen Did')
+        expect(user.namespace.path).to eq('jaen')
+        expect(project.full_name).to eq('Jaen Did / Work stuff')
+        expect(project.full_path).to eq('jaen/work-stuff')
+      end
+    end
+  end
+
+  it 'creates route with namespace referencing group' do
+    expect(group.route).not_to be_nil
+    expect(group.route.namespace).to eq(group)
+  end
+end
+
+RSpec.describe Project, 'Routable', :with_clean_rails_cache, feature_category: :groups_and_projects do
+  let_it_be(:namespace, freeze: false) { create(:namespace) }
+  let_it_be(:project, freeze: false) { create(:project, namespace: namespace) }
+  let_it_be(:project_2, freeze: false) { create(:project) }
+
+  it_behaves_like 'routable resource with parent' do
+    let_it_be(:record, freeze: false) { project }
+    let_it_be(:record_2, freeze: false) { project_2 }
+  end
+
+  it 'creates route with namespace referencing project namespace' do
+    expect(project.route).not_to be_nil
+    expect(project.route.namespace).to eq(project.project_namespace)
+  end
+
+  describe '.find_by_full_path' do
+    it 'does not return a record if the sources are different, but the IDs match' do
+      group = create(:group)
+      project = create(:project, id: group.id)
+
+      record = described_class.where(id: project.id).find_by_full_path(group.full_path)
+
+      expect(record).to be_nil
+    end
+  end
+
+  describe '.where_full_path_in' do
+    it 'does not return records if the sources are different, but the IDs match' do
+      group = create(:group)
+      project = create(:project, id: group.id)
+
+      records = described_class.where(id: project.id).where_full_path_in([group.full_path])
+
+      expect(records).to be_empty
+    end
+  end
+end
+
+RSpec.describe Namespaces::ProjectNamespace, 'Routable', :with_clean_rails_cache, feature_category: :groups_and_projects do
+  let_it_be(:group, freeze: false) { create(:group) }
+
+  it 'skips route creation for the resource' do
+    expect do
+      described_class.create!(project: nil, organization: group.organization, parent: group, visibility_level: Gitlab::VisibilityLevel::PUBLIC, path: 'foo', name: 'foo')
+    end.not_to change { Route.count }
   end
 end

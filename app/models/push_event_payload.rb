@@ -1,4 +1,6 @@
-class PushEventPayload < ActiveRecord::Base
+# frozen_string_literal: true
+
+class PushEventPayload < ApplicationRecord
   include ShaAttribute
 
   belongs_to :event, inverse_of: :push_event_payload
@@ -9,14 +11,16 @@ class PushEventPayload < ActiveRecord::Base
   sha_attribute :commit_from
   sha_attribute :commit_to
 
-  enum action: {
+  enum :action, {
     created: 0,
     removed: 1,
     pushed: 2
   }
 
-  enum ref_type: {
+  enum :ref_type, {
     branch: 0,
     tag: 1
   }
 end
+
+PushEventPayload.prepend_mod_with('PushEventPayload')

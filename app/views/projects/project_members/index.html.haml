@@ -1,44 +1,45 @@
-- page_title "Members"
+- add_page_specific_style 'page_bundles/members'
+- page_title _("Members")
+- show_the_header = can_invite_members_for_project?(@project) || project_can_be_shared?
+- content_for :reload_on_member_invite_success, true
+- content_for :hide_invite_members_button, true
 
-- if show_new_nav?
-  - add_to_breadcrumbs("Settings", edit_project_path(@project))
+= render ::Layouts::IndexLayout.new(heading: _("Project members"), page_heading_sr_only: !show_the_header) do |c|
+  - if show_the_header
+    - c.with_description do
+      - if can_invite_members_for_project?(@project)
+        = project_member_header_subtext(@project)
+        - if current_appearance&.member_guidelines?
+          .md
+            = brand_member_guidelines
+      - elsif project_can_be_shared?
+        - if can?(current_user, :admin_project_member, @project)
+          = project_member_header_subtext(@project)
+        - else
+          = html_escape(_("Members can be added by project %{i_open}Maintainers%{i_close} or %{i_open}Owners%{i_close}")) % { i_open: '<i>'.html_safe, i_close: '</i>'.html_safe }
 
-.row.prepend-top-default
-  .col-lg-12
-    %h4
-      Project members
-    - if can?(current_user, :admin_project_member, @project)
-      %p
-        You can add a new member to
-        %strong= @project.name
-        or share it with another group.
-    - else
-      %p
-        Members can be added by project
-        %i Masters
-        or
-        %i Owners
-    .light
-      - if can?(current_user, :admin_project_member, @project)
-        %ul.nav-links.project-member-tabs{ role: 'tablist' }
-          %li.active{ role: 'presentation' }
-            %a{ href: '#add-member-pane', id: 'add-member-tab', data: { toggle: 'tab' }, role: 'tab' } Add member
-          - if @project.allowed_to_share_with_group?
-            %li{ role: 'presentation' }
-              %a{ href: '#share-with-group-pane', id: 'share-with-group-tab', data: { toggle: 'tab' }, role: 'tab' } Share with group
+    - if can_invite_members_for_project?(@project)
+      - c.with_actions do
+        - if can?(current_user, :invite_member, @project)
+          .js-import-project-members-trigger{ data: { classes: '@md/panel:gl-w-auto gl-w-full' } }
+          .js-import-project-members-modal{ data: { project_id: @project.id,
+            project_name: @project.name,
+            reload_page_on_submit: true.to_s }.merge(common_invite_modal_dataset(@project).slice(:users_limit_dataset, :add_seats_href)) }
+        - if @project.allowed_to_share_with_group? && can?(current_user, :create_group_link, @project)
+          .js-invite-group-trigger{ data: { classes: "@md/panel:gl-w-auto gl-w-full",
+            display_text: _('Invite a group'),
+            trigger_source: 'project_members_page' } }
+          = render 'projects/invite_groups_modal', project: @project, reload_page_on_submit: true
+        - if can?(current_user, :invite_member, @project)
+          .js-invite-members-trigger{ data: { variant: 'confirm',
+            classes: '@md/panel:gl-w-auto gl-w-full',
+            trigger_source: 'project_members_page',
+            display_text: _('Invite members') } }
 
-        .tab-content.project-member-tab-content
-          .tab-pane.active{ id: 'add-member-pane', role: 'tabpanel' }
-            = render 'projects/project_members/new_project_member', tab_title: 'Add member'
-          .tab-pane{ id: 'share-with-group-pane', role: 'tabpanel' }
-            = render 'projects/project_members/new_shared_group', tab_title: 'Share with group'
-
-        = render 'shared/members/requests', membership_source: @project, requesters: @requesters
-        .clearfix
-          %h5.member.existing-title
-            Existing members and groups
-        - if @group_links.any?
-          = render 'projects/project_members/groups', group_links: @group_links
-
-    = render 'projects/project_members/team', members: @project_members
-    = paginate @project_members, theme: "gitlab"
+  .js-project-members-list-app{ data: { members_data: project_members_app_data_json(@project,
+                                                                                    members: @project_members,
+                                                                                    invited: @invited_members,
+                                                                                    links: @group_member_links,
+                                                                                    access_requests: @requesters,
+                                                                                    pending_members_count: @pending_promotion_members_count) } }
+    = gl_loading_icon(css_class: 'gl-my-5', size: 'md')

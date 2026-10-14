@@ -1,13 +1,13 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ContainerRegistry::Blob do
+RSpec.describe ContainerRegistry::Blob do
   let(:group) { create(:group, name: 'group') }
   let(:project) { create(:project, path: 'test', group: group) }
 
   let(:repository) do
-    create(:container_repository, name: 'image',
-                                  tags: %w[latest rc1],
-                                  project: project)
+    create(:container_repository, name: 'image', tags: %w[latest rc1], project: project)
   end
 
   let(:config) do
@@ -19,9 +19,7 @@ describe ContainerRegistry::Blob do
   let(:blob) { described_class.new(repository, config) }
 
   before do
-    stub_container_registry_config(enabled: true,
-                                   api_url: 'http://registry.gitlab',
-                                   host_port: 'registry.gitlab')
+    stub_container_registry_config(enabled: true, api_url: 'http://registry.gitlab', host_port: 'registry.gitlab')
   end
 
   it { expect(blob).to respond_to(:repository) }
@@ -64,7 +62,7 @@ describe ContainerRegistry::Blob do
         .to_return(status: 200)
     end
 
-    it 'returns true when blob has been successfuly deleted' do
+    it 'returns true when blob has been successfully deleted' do
       expect(blob.delete).to be_truthy
     end
   end
@@ -98,7 +96,7 @@ describe ContainerRegistry::Blob do
       context 'for a valid address' do
         before do
           stub_request(:get, location)
-            .with { |request| !request.headers.include?('Authorization') }
+            .with { |request| request.headers.exclude?('Authorization') }
             .to_return(
               status: 200,
               headers: { 'Content-Type' => 'application/json' },
@@ -110,11 +108,28 @@ describe ContainerRegistry::Blob do
         end
       end
 
+      context 'for a relative address' do
+        before do
+          stub_request(:get, 'http://registry.gitlab/relative')
+            .with { |request| request.headers.exclude?('Authorization') }
+            .to_return(
+              status: 200,
+              headers: { 'Content-Type' => 'application/json' },
+              body: '{"key":"value"}')
+        end
+
+        let(:location) { '/relative' }
+
+        it 'returns correct data' do
+          expect(blob.data).to eq '{"key":"value"}'
+        end
+      end
+
       context 'for invalid file' do
         let(:location) { 'file:///etc/passwd' }
 
         it 'raises an error' do
-          expect { blob.data }.to raise_error(ArgumentError, 'invalid address')
+          expect { blob.data }.to raise_error(ArgumentError, 'Invalid scheme for file:///etc/passwd')
         end
       end
     end

@@ -1,120 +1,188 @@
-class Event < ActiveRecord::Base
-  include Sortable
-  default_scope { reorder(nil).where.not(author_id: nil) }
+# frozen_string_literal: true
 
-  CREATED   = 1
-  UPDATED   = 2
-  CLOSED    = 3
-  REOPENED  = 4
-  PUSHED    = 5
-  COMMENTED = 6
-  MERGED    = 7
-  JOINED    = 8 # User joined project
-  LEFT      = 9 # User left project
-  DESTROYED = 10
-  EXPIRED   = 11 # User left project due to expiry
+class Event < ApplicationRecord
+  include Sortable
+  include FromUnion
+  include Presentable
+  include DeleteWithLimit
+  include CreatedAtFilterable
+  include Gitlab::Utils::StrongMemoize
+  include UsageStatistics
+  include ShaAttribute
+  include EachBatch
+  include Import::HasImportSource
 
   ACTIONS = HashWithIndifferentAccess.new(
-    created:    CREATED,
-    updated:    UPDATED,
-    closed:     CLOSED,
-    reopened:   REOPENED,
-    pushed:     PUSHED,
-    commented:  COMMENTED,
-    merged:     MERGED,
-    joined:     JOINED,
-    left:       LEFT,
-    destroyed:  DESTROYED,
-    expired:    EXPIRED
+    created: 1,
+    updated: 2,
+    closed: 3,
+    reopened: 4,
+    pushed: 5,
+    commented: 6,
+    merged: 7,
+    joined: 8, # User joined project
+    left: 9, # User left project
+    destroyed: 10,
+    expired: 11, # User left project due to expiry
+    approved: 12,
+    transferred: 13
   ).freeze
 
+  private_constant :ACTIONS
+
+  PROJECT_ACTIONS = [:created, :pushed, :joined, :left, :expired, :transferred].freeze
+  WIKI_ACTIONS = [:created, :updated, :destroyed].freeze
+  DESIGN_ACTIONS = [:created, :updated, :destroyed].freeze
+  TEAM_ACTIONS = [:joined, :left, :expired].freeze
+  ISSUE_ACTIONS = [:created, :updated, :closed, :reopened].freeze
+  ISSUE_TYPES = [Issue.name, WorkItem.name].freeze
+
   TARGET_TYPES = HashWithIndifferentAccess.new(
-    issue:          Issue,
-    milestone:      Milestone,
-    merge_request:  MergeRequest,
-    note:           Note,
-    project:        Project,
-    snippet:        Snippet,
-    user:           User
+    issue: Issue,
+    milestone: Milestone,
+    merge_request: MergeRequest,
+    note: Note,
+    project: Project,
+    snippet: Snippet,
+    user: User,
+    wiki: WikiPage::Meta,
+    design: DesignManagement::Design
   ).freeze
 
   RESET_PROJECT_ACTIVITY_INTERVAL = 1.hour
+  REPOSITORY_UPDATED_AT_INTERVAL = 5.minutes
+  CONTRIBUTABLE_TARGET_TYPES = %w[MergeRequest Issue WorkItem DesignManagement::Design].freeze
+
+  sha_attribute :fingerprint
+
+  enum :action, ACTIONS, suffix: true
 
   delegate :name, :email, :public_email, :username, to: :author, prefix: true, allow_nil: true
   delegate :title, to: :issue, prefix: true, allow_nil: true
   delegate :title, to: :merge_request, prefix: true, allow_nil: true
-  delegate :title, to: :note, prefix: true, allow_nil: true
 
   belongs_to :author, class_name: "User"
   belongs_to :project
-  belongs_to :target, polymorphic: true # rubocop:disable Cop/PolymorphicAssociations
-  has_one :push_event_payload, foreign_key: :event_id
+  belongs_to :group
+  belongs_to :personal_namespace, class_name: "Namespaces::UserNamespace"
 
-  # For Hash only
-  serialize :data # rubocop:disable Cop/ActiveRecordSerialize
+  belongs_to :target, -> {
+    # If the association for "target" defines an "author" association we want to
+    # eager-load this so Banzai & friends don't end up performing N+1 queries to
+    # get the authors of notes, issues, etc. (likewise for "noteable").
+    target_class = reflections['events']&.active_record
+    incs = %i[author noteable work_item_type].select do |a|
+      target_class&.reflect_on_association(a)
+    end
+
+    incs.reduce(self) { |obj, a| obj.includes(a) }
+  }, polymorphic: true # rubocop:disable Cop/PolymorphicAssociations
+
+  has_one :push_event_payload
 
   # Callbacks
-  after_create :reset_project_activity
-  after_create :set_last_repository_updated_at, if: :push?
-  after_create :replicate_event_for_push_events_migration
+  before_validation :ensure_sharding_key
+  after_create :update_project, unless: :imported?
 
   # Scopes
   scope :recent, -> { reorder(id: :desc) }
-  scope :code_push, -> { where(action: PUSHED) }
+  scope :for_wiki_page, -> { where(target_type: 'WikiPage::Meta') }
+  scope :for_design, -> { where(target_type: 'DesignManagement::Design') }
+  scope :for_issue, -> { where(target_type: ISSUE_TYPES) }
+  scope :for_merge_request, -> { where(target_type: 'MergeRequest') }
+  scope :for_project, -> do
+    table = arel_table
 
-  scope :in_projects, -> (projects) do
-    sub_query = projects
-      .except(:order)
-      .select(1)
-      .where('projects.id = events.project_id')
+    legacy_condition = table.grouping(
+      table[:target_type].eq(nil)
+        .and(table[:action].in(PROJECT_ACTIONS))
+        .and(table[:project_id].not_eq(nil))
+    )
 
-    where('EXISTS (?)', sub_query).recent
+    project_condition = table[:target_type].eq('Project')
+
+    where(legacy_condition.or(project_condition))
+  end
+  scope :for_fingerprint, ->(fingerprint) do
+    fingerprint.present? ? where(fingerprint: fingerprint) : none
+  end
+  scope :for_action, ->(action) { where(action: action) }
+  scope :excluding_transferred, -> { where.not(action: actions[:transferred]) }
+  scope :created_between, ->(start_time, end_time) { where(created_at: start_time..end_time) }
+  scope :count_by_dates_in_timezone, ->(timezone) {
+    group(Arel.sql("DATE(created_at AT TIME ZONE #{connection.quote(timezone)})")).count
+  }
+
+  scope :contributions, -> do
+    contribution_actions = [actions[:pushed], actions[:commented]]
+    target_contribution_actions = [
+      actions[:created], actions[:closed], actions[:merged], actions[:approved], actions[:updated], actions[:destroyed]
+    ]
+
+    where(
+      'action IN (?) OR (target_type IN (?) AND action IN (?))',
+      contribution_actions,
+      CONTRIBUTABLE_TARGET_TYPES, target_contribution_actions
+    )
   end
 
   scope :with_associations, -> do
     # We're using preload for "push_event_payload" as otherwise the association
     # is not always available (depending on the query being built).
-    includes(:author, :project, project: :namespace)
-      .preload(:target, :push_event_payload)
+    includes(:project, project: [:project_feature, :import_data, :namespace])
+      .preload(:author, :target, :push_event_payload, :group)
   end
 
   scope :for_milestone_id, ->(milestone_id) { where(target_type: "Milestone", target_id: milestone_id) }
+  scope :for_wiki_meta, ->(meta) { where(target_type: 'WikiPage::Meta', target_id: meta.id) }
+  scope :created_at, ->(time) { where(created_at: time) }
+  scope :with_target, -> { preload(:target) }
+
+  # Authors are required as they're used to display who pushed data.
+  #
+  # We're just validating the presence of the ID here as foreign key constraints
+  # should ensure the ID points to a valid user.
+  validates :author_id, presence: true
+
+  # Scoped to :create: existing rows can still carry two sharding keys until the
+  # NullifyPersonalNamespaceIdOnGroupWikiEvents backfill is finalized. Widen it then -
+  # https://gitlab.com/gitlab-org/gitlab/-/work_items/598786
+  validates_with ExactlyOnePresentValidator,
+    fields: [:group_sharding_key_present?, :project_sharding_key_present?,
+      :personal_namespace_sharding_key_present?],
+    message: ->(_fields) { _('must have exactly one of group_id, project_id, or personal_namespace_id') },
+    on: :create
+
+  validates :action_enum_value,
+    if: :design?,
+    inclusion: {
+      in: actions.values_at(*DESIGN_ACTIONS),
+      message: ->(event, _data) { "#{event.action} is not a valid design action" }
+    }
 
   self.inheritance_column = 'action'
 
   class << self
+    def model_name
+      ActiveModel::Name.new(self, nil, 'event')
+    end
+
     def find_sti_class(action)
-      if action.to_i == PUSHED
+      if actions.fetch(action, action) == actions[:pushed] # action can be integer or symbol
         PushEvent
       else
         Event
       end
     end
 
-    def subclass_from_attributes(attrs)
-      # Without this Rails will keep calling this method on the returned class,
-      # resulting in an infinite loop.
-      return unless self == Event
-
-      action = attrs.with_indifferent_access[inheritance_column].to_i
-
-      PushEvent if action == PUSHED
-    end
-
-    # Update Gitlab::ContributionsCalendar#activity_dates if this changes
-    def contributions
-      where("action = ? OR (target_type IN (?) AND action IN (?)) OR (target_type = ? AND action = ?)",
-            Event::PUSHED,
-            %w(MergeRequest Issue), [Event::CREATED, Event::CLOSED, Event::MERGED],
-            "Note", Event::COMMENTED)
-    end
-
     def limit_recent(limit = 20, offset = nil)
       recent.limit(limit).offset(offset)
     end
 
-    def actions
-      ACTIONS.keys
+    # Paginate newest-first with an id tiebreaker so pages stay deterministic
+    # when events share a created_at.
+    def paginate_by_created_at(limit, offset)
+      reorder(created_at: :desc, id: :desc).limit(limit).offset(offset)
     end
 
     def target_types
@@ -122,84 +190,54 @@ class Event < ActiveRecord::Base
     end
   end
 
+  def present
+    super(presenter_class: ::EventPresenter)
+  end
+
   def visible_to_user?(user = nil)
-    if push? || commit_note?
-      Ability.allowed?(user, :download_code, project)
-    elsif membership_changed?
-      true
-    elsif created_project?
-      true
-    elsif issue? || issue_note?
-      Ability.allowed?(user, :read_issue, note? ? note_target : target)
-    elsif merge_request? || merge_request_note?
-      Ability.allowed?(user, :read_merge_request, note? ? note_target : target)
-    else
-      milestone?
+    return false unless capability.present?
+
+    capability.all? do |rule|
+      Ability.allowed?(user, rule, permission_object)
     end
   end
 
-  def project_name
-    if project
-      project.name_with_namespace
-    else
-      "(deleted project)"
-    end
+  def resource_parent
+    project || group
   end
 
   def target_title
     target.try(:title)
   end
 
-  def created?
-    action == CREATED
-  end
-
-  def push?
-    action == PUSHED && valid_push?
-  end
-
-  def merged?
-    action == MERGED
-  end
-
-  def closed?
-    action == CLOSED
-  end
-
-  def reopened?
-    action == REOPENED
-  end
-
-  def joined?
-    action == JOINED
-  end
-
-  def left?
-    action == LEFT
-  end
-
-  def expired?
-    action == EXPIRED
-  end
-
-  def destroyed?
-    action == DESTROYED
-  end
-
-  def commented?
-    action == COMMENTED
+  def push_action?
+    false
   end
 
   def membership_changed?
-    joined? || left? || expired?
+    joined_action? || left_action? || expired_action?
   end
 
-  def created_project?
-    created? && !target && target_type.nil?
+  def created_project_action?
+    project? && created_action?
   end
 
-  def created_target?
-    created? && target
+  def transferred_project_action?
+    project? && transferred_action?
+  end
+
+  def transferred_group_action?
+    return false unless transferred_action?
+
+    target_type == Group.name
+  end
+
+  def created_wiki_page?
+    wiki_page? && created_action?
+  end
+
+  def updated_wiki_page?
+    wiki_page? && updated_action?
   end
 
   def milestone?
@@ -218,6 +256,40 @@ class Event < ActiveRecord::Base
     target_type == "MergeRequest"
   end
 
+  def wiki_page?
+    target_type == 'WikiPage::Meta'
+  end
+
+  def design?
+    target_type == 'DesignManagement::Design'
+  end
+
+  def work_item?
+    target_type == 'WorkItem'
+  end
+
+  def project?
+    target_type == 'Project'
+  end
+
+  def target_type
+    return 'Project' if project_as_target?(super)
+
+    super
+  end
+
+  def target_id
+    return project_id if super.nil? && project?
+
+    super
+  end
+
+  def target
+    return project if super.nil? && project?
+
+    super
+  end
+
   def milestone
     target if milestone?
   end
@@ -226,128 +298,64 @@ class Event < ActiveRecord::Base
     target if issue?
   end
 
+  def design
+    target if design?
+  end
+
   def merge_request
     target if merge_request?
+  end
+
+  def wiki_page
+    strong_memoize(:wiki_page) do
+      next unless wiki_page?
+
+      Wiki.for_container(project || group, author).find_page(target.canonical_slug)
+    end
   end
 
   def note
     target if note?
   end
 
+  # rubocop: disable Metrics/CyclomaticComplexity
+  # rubocop: disable Metrics/PerceivedComplexity
   def action_name
-    if push?
-      if new_ref?
-        "pushed new"
-      elsif rm_ref?
-        "deleted"
-      else
-        "pushed to"
-      end
-    elsif closed?
+    if push_action?
+      push_action_name
+    elsif design?
+      design_action_names[action.to_sym]
+    elsif closed_action?
       "closed"
-    elsif merged?
+    elsif merged_action?
       "accepted"
-    elsif joined?
+    elsif joined_action?
       'joined'
-    elsif left?
+    elsif left_action?
       'left'
-    elsif expired?
+    elsif expired_action?
       'removed due to membership expiration from'
-    elsif destroyed?
+    elsif destroyed_action?
       'destroyed'
-    elsif commented?
+    elsif commented_action?
       "commented on"
-    elsif created_project?
-      if project.external_import?
-        "imported"
-      else
-        "created"
-      end
+    elsif created_wiki_page?
+      'created'
+    elsif updated_wiki_page?
+      'updated'
+    elsif created_project_action?
+      created_project_action_name
+    elsif approved_action?
+      'approved'
+    elsif transferred_action?
+      'transferred'
     else
       "opened"
     end
   end
 
-  def valid_push?
-    data[:ref] && ref_name.present?
-  rescue
-    false
-  end
-
-  def tag?
-    Gitlab::Git.tag_ref?(data[:ref])
-  end
-
-  def branch?
-    Gitlab::Git.branch_ref?(data[:ref])
-  end
-
-  def new_ref?
-    Gitlab::Git.blank_ref?(commit_from)
-  end
-
-  def rm_ref?
-    Gitlab::Git.blank_ref?(commit_to)
-  end
-
-  def md_ref?
-    !(rm_ref? || new_ref?)
-  end
-
-  def commit_from
-    data[:before]
-  end
-
-  def commit_to
-    data[:after]
-  end
-
-  def ref_name
-    if tag?
-      tag_name
-    else
-      branch_name
-    end
-  end
-
-  def branch_name
-    @branch_name ||= Gitlab::Git.ref_name(data[:ref])
-  end
-
-  def tag_name
-    @tag_name ||= Gitlab::Git.ref_name(data[:ref])
-  end
-
-  # Max 20 commits from push DESC
-  def commits
-    @commits ||= (data[:commits] || []).reverse
-  end
-
-  def commit_title
-    commit = commits.last
-
-    commit[:message] if commit
-  end
-
-  def commit_id
-    commit_to || commit_from
-  end
-
-  def commits_count
-    data[:total_commits_count] || commits.count || 0
-  end
-
-  def ref_type
-    tag? ? "tag" : "branch"
-  end
-
-  def push_with_commits?
-    !commits.empty? && commit_from && commit_to
-  end
-
-  def last_push_to_non_root?
-    branch? && project.default_branch != branch_name
-  end
+  # rubocop: enable Metrics/CyclomaticComplexity
+  # rubocop: enable Metrics/PerceivedComplexity
 
   def target_iid
     target.respond_to?(:iid) ? target.iid : target_id
@@ -365,20 +373,28 @@ class Event < ActiveRecord::Base
     note? && target && target.for_merge_request?
   end
 
-  def project_snippet_note?
+  def snippet_note?
     note? && target && target.for_snippet?
+  end
+
+  def project_snippet_note?
+    note? && target && target.for_project_snippet?
+  end
+
+  def personal_snippet_note?
+    note? && target && target.for_personal_snippet?
+  end
+
+  def design_note?
+    note? && note.for_design?
+  end
+
+  def wiki_page_note?
+    note? && note.for_wiki_page?
   end
 
   def note_target
     target.noteable
-  end
-
-  def note_target_id
-    if commit_note?
-      target.commit_id
-    else
-      target.noteable_id.to_s
-    end
   end
 
   def note_target_reference
@@ -387,22 +403,31 @@ class Event < ActiveRecord::Base
     # Commit#to_reference returns the full SHA, but we want the short one here
     if commit_note?
       note_target.short_id
+    elsif wiki_page_note?
+      note_target.reference_link_text
     else
       note_target.to_reference
     end
   end
 
-  def note_target_type
-    if target.noteable_type.present?
-      target.noteable_type.titleize
-    else
-      "Wall"
-    end.downcase
+  # True when the key is set, either as an FK or as a record that is assigned but
+  # not saved yet and so has no ID. Reading the FK first keeps a create from
+  # loading the association.
+  def group_sharding_key_present?
+    group_id.present? || association(:group).target.present?
+  end
+
+  def project_sharding_key_present?
+    project_id.present? || association(:project).target.present?
+  end
+
+  def personal_namespace_sharding_key_present?
+    personal_namespace_id.present? || association(:personal_namespace).target.present?
   end
 
   def body?
-    if push?
-      push_with_commits? || rm_ref?
+    if push_action?
+      push_with_commits?
     elsif note?
       true
     else
@@ -410,8 +435,22 @@ class Event < ActiveRecord::Base
     end
   end
 
+  def ensure_sharding_key
+    return if group_sharding_key_present? || project_sharding_key_present? ||
+      personal_namespace_sharding_key_present?
+
+    self.personal_namespace_id = author&.namespace_id
+  end
+
+  def update_project
+    return unless project_id.present?
+
+    reset_project_activity
+    set_last_repository_updated_at if push_action?
+  end
+
   def reset_project_activity
-    return unless project
+    return unless project_id.present?
 
     # Don't bother updating if we know the project was updated recently.
     return if recent_update?
@@ -421,24 +460,86 @@ class Event < ActiveRecord::Base
     # hence we add the extra WHERE clause for last_activity_at.
     Project.unscoped.where(id: project_id)
       .where('last_activity_at <= ?', RESET_PROJECT_ACTIVITY_INTERVAL.ago)
-      .update_all(last_activity_at: created_at)
+      .touch_all(:last_activity_at, time: created_at)
+
+    Gitlab::DormantProjectsDeletionWarningTracker.new(project_id).reset
   end
 
   def authored_by?(user)
     user ? author_id == user.id : false
   end
 
-  # We're manually replicating data into the new table since database triggers
-  # are not dumped to db/schema.rb. This could mean that a new installation
-  # would not have the triggers in place, thus losing events data in GitLab
-  # 10.0.
-  def replicate_event_for_push_events_migration
-    new_attributes = attributes.with_indifferent_access.except(:title, :data)
+  def to_partial_path
+    # We are intentionally using `Event` rather than `self.class` so that
+    # subclasses also use the `Event` implementation.
+    Event._to_partial_path
+  end
 
-    EventForMigration.create!(new_attributes)
+  def has_no_project_and_group?
+    project_id.nil? && group_id.nil?
+  end
+
+  def target_deleted?
+    target_id.present? && target.nil?
+  end
+
+  protected
+
+  def capability
+    @capability ||= capabilities.flat_map do |ability, syms|
+      if syms.any? { |sym| send(sym) } # rubocop: disable GitlabSecurity/PublicSend
+        [ability]
+      else
+        []
+      end
+    end
+  end
+
+  def capabilities
+    {
+      download_code: %i[push_action? commit_note?],
+      read_project: %i[membership_changed? created_project_action? transferred_project_action?],
+      read_group: %i[transferred_group_action?],
+      read_issue: %i[issue? issue_note?],
+      read_merge_request: %i[merge_request? merge_request_note?],
+      read_snippet: %i[personal_snippet_note? project_snippet_note?],
+      read_milestone: %i[milestone?],
+      read_wiki: %i[wiki_page?],
+      read_design: %i[design_note? design?],
+      read_note: %i[note?],
+      read_work_item: %i[work_item?]
+    }
   end
 
   private
+
+  def permission_object
+    if transferred_group_action?
+      group
+    elsif self[:target_id].present?
+      target
+    else
+      project
+    end
+  end
+
+  def push_action_name
+    if new_ref?
+      "pushed new"
+    elsif rm_ref?
+      "deleted"
+    else
+      "pushed to"
+    end
+  end
+
+  def created_project_action_name
+    if project.external_import?
+      "imported"
+    else
+      "created"
+    end
+  end
 
   def recent_update?
     project.last_activity_at > RESET_PROJECT_ACTIVITY_INTERVAL.ago
@@ -446,6 +547,28 @@ class Event < ActiveRecord::Base
 
   def set_last_repository_updated_at
     Project.unscoped.where(id: project_id)
-      .update_all(last_repository_updated_at: created_at)
+      .where("last_repository_updated_at < ? OR last_repository_updated_at IS NULL", REPOSITORY_UPDATED_AT_INTERVAL.ago)
+      .touch_all(:last_repository_updated_at, time: created_at)
+  end
+
+  def design_action_names
+    {
+      created: 'added',
+      updated: 'updated',
+      destroyed: 'removed'
+    }
+  end
+
+  def action_enum_value
+    self.class.actions[action]
+  end
+
+  def project_as_target?(target_type)
+    return false if target_type.present?
+    return false unless project_id
+
+    PROJECT_ACTIONS.include?(action.to_sym)
   end
 end
+
+Event.prepend_mod_with('Event')

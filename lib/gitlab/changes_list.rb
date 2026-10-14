@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   class ChangesList
     include Enumerable
@@ -13,12 +15,11 @@ module Gitlab
     end
 
     def changes
-      @changes ||= begin
-        @raw_changes.map do |change|
-          next if change.blank?
-          oldrev, newrev, ref = change.strip.split(' ')
-          { oldrev: oldrev, newrev: newrev, ref: ref }
-        end.compact
+      @changes ||= @raw_changes.filter_map do |change|
+        next if change.blank?
+
+        oldrev, newrev, ref = change.strip.split(' ')
+        { oldrev: oldrev, newrev: newrev, ref: ref }
       end
     end
   end

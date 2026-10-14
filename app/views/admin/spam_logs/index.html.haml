@@ -1,22 +1,19 @@
-- page_title "Spam Logs"
-%h3.page-title Spam Logs
-%hr
+- page_title _("Spam logs")
+= render ::Layouts::PageHeadingComponent.new(_('Spam logs'))
+
 - if @spam_logs.present?
   .table-holder
-    %table.table
+    %table.table.b-table.gl-table.b-table-stacked-md
       %thead
         %tr
-          %th Date
-          %th User
-          %th Source IP
-          %th API?
-          %th Recaptcha verified?
-          %th Type
-          %th Title
-          %th Description
-          %th Primary Action
-          %th
-      = render @spam_logs
-  = paginate @spam_logs
+          %th{ data: { label: _('Date') } }= _('Date')
+          %th{ data: { label: _('User') } }= _('User')
+          %th{ data: { label: _('Type') } }= _('Type')
+          %th{ data: { label: _('Details') } }= _('Details')
+          %th{ data: { label: _('Actions') } }
+            %span.gl-sr-only= _('Actions')
+      %tbody
+        = render @spam_logs
+  = paginate_collection @spam_logs
 - else
-  %h4 There are no Spam Logs
+  %h4= _('There are no spam logs')

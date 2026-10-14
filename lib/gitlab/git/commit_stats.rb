@@ -1,29 +1,53 @@
-# Gitaly note: JV: 1 RPC, migration in progress.
+# frozen_string_literal: true
 
 # Gitlab::Git::CommitStats counts the additions, deletions, and total changes
 # in a commit.
 module Gitlab
   module Git
     class CommitStats
-      attr_reader :id, :additions, :deletions, :total
+      include Gitlab::Git::WrapsGitalyErrors
+
+      attr_reader :id, :additions, :deletions, :total, :files
 
       # Instantiate a CommitStats object
       #
       # Gitaly migration: https://gitlab.com/gitlab-org/gitaly/issues/323
-      def initialize(commit)
+      def initialize(repo, commit)
         @id = commit.id
-        @additions = 0
-        @deletions = 0
-        @total = 0
 
-        diff = commit.rugged_diff_from_parent
+        additions, deletions, files = ensure_stats_format(repo)
 
-        diff.each_patch do |p|
-          # TODO: Use the new Rugged convenience methods when they're released
-          @additions += p.stat[0]
-          @deletions += p.stat[1]
-          @total += p.changes
+        @additions = additions.to_i
+        @deletions = deletions.to_i
+        @files = files.to_i
+        @total = @additions + @deletions
+      end
+
+      def ensure_stats_format(repo)
+        cached_stats = fetch_stats(repo)
+
+        if cached_stats.length == 2
+          Rails.cache.delete(cache_key(repo))
+          cached_stats = fetch_stats(repo)
         end
+
+        cached_stats
+      end
+
+      def fetch_stats(repo)
+        Rails.cache.fetch(cache_key(repo)) do
+          stats = wrapped_gitaly_errors do
+            repo.gitaly_commit_client.commit_stats(@id)
+          end
+
+          [stats.additions, stats.deletions, stats.files]
+        end
+      end
+
+      private
+
+      def cache_key(repo)
+        "commit_stats:#{repo.gl_project_path}:#{@id}"
       end
     end
   end

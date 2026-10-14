@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
       class Success < Status::Core
         def text
-          s_('CiStatusText|passed')
+          s_('CiStatusText|Passed')
         end
 
         def label
@@ -11,11 +13,15 @@ module Gitlab
         end
 
         def icon
-          'icon_status_success'
+          'status_success'
         end
 
         def favicon
           'favicon_status_success'
+        end
+
+        def details_path
+          nil
         end
       end
     end

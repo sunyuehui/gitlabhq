@@ -1,72 +1,45 @@
-Rake::Task["spec"].clear if Rake::Task.task_defined?('spec')
+# frozen_string_literal: true
+
+return if Rails.env.production?
+
+require_relative '../../tooling/merge_request_rspec_failure_rake_task'
 
 namespace :spec do
-  desc 'GitLab | Rspec | Run request specs'
-  task :api do
-    cmds = [
-      %w(rake gitlab:setup),
-      %w(rspec spec --tag @api)
-    ]
-    run_commands(cmds)
+  desc 'GitLab | RSpec | Run unit tests'
+  RSpec::Core::RakeTask.new(:unit, :rspec_opts) do |t, args|
+    require_test_level
+    t.pattern = Quality::TestLevel.new.pattern(:unit)
+    t.rspec_opts = args[:rspec_opts]
   end
 
-  desc 'GitLab | Rspec | Run feature specs'
-  task :feature do
-    cmds = [
-      %w(rake gitlab:setup),
-      %w(rspec spec --tag @feature)
-    ]
-    run_commands(cmds)
+  desc 'GitLab | RSpec | Run integration tests'
+  RSpec::Core::RakeTask.new(:integration, :rspec_opts) do |t, args|
+    require_test_level
+    t.pattern = Quality::TestLevel.new.pattern(:integration)
+    t.rspec_opts = args[:rspec_opts]
   end
 
-  desc 'GitLab | Rspec | Run model specs'
-  task :models do
-    cmds = [
-      %w(rake gitlab:setup),
-      %w(rspec spec --tag @models)
-    ]
-    run_commands(cmds)
+  desc 'GitLab | RSpec | Run system tests'
+  RSpec::Core::RakeTask.new(:system, :rspec_opts) do |t, args|
+    require_test_level
+    t.pattern = Quality::TestLevel.new.pattern(:system)
+    t.rspec_opts = args[:rspec_opts]
   end
 
-  desc 'GitLab | Rspec | Run service specs'
-  task :services do
-    cmds = [
-      %w(rake gitlab:setup),
-      %w(rspec spec --tag @services)
-    ]
-    run_commands(cmds)
+  desc 'GitLab | RSpec | Run merge request RSpec failures'
+  Tooling::MergeRequestRspecFailureRakeTask.new(:merge_request_rspec_failure, :rspec_opts) do |t, args|
+    t.pattern = t.rspec_failures_on_merge_request
+    t.rspec_opts = args[:rspec_opts]
   end
 
-  desc 'GitLab | Rspec | Run lib specs'
-  task :lib do
-    cmds = [
-      %w(rake gitlab:setup),
-      %w(rspec spec --tag @lib)
-    ]
-    run_commands(cmds)
+  desc 'Run the code examples in spec/requests/api'
+  RSpec::Core::RakeTask.new(:api) do |t|
+    t.pattern = 'spec/requests/api/**/*_spec.rb'
   end
 
-  desc 'GitLab | Rspec | Run other specs'
-  task :other do
-    cmds = [
-      %w(rake gitlab:setup),
-      %w(rspec spec --tag ~@api --tag ~@feature --tag ~@models --tag ~@lib --tag ~@services)
-    ]
-    run_commands(cmds)
-  end
-end
+  private
 
-desc "GitLab | Run specs"
-task :spec do
-  cmds = [
-    %w(rake gitlab:setup),
-    %w(rspec spec)
-  ]
-  run_commands(cmds)
-end
-
-def run_commands(cmds)
-  cmds.each do |cmd|
-    system({ 'RAILS_ENV' => 'test', 'force' => 'yes' }, *cmd) || raise("#{cmd} failed!")
+  def require_test_level
+    require_relative '../../tooling/quality/test_level'
   end
 end

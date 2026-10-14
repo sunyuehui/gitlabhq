@@ -2,54 +2,33 @@
 
 export SETUP_DB=${SETUP_DB:-true}
 export USE_BUNDLE_INSTALL=${USE_BUNDLE_INSTALL:-true}
-export BUNDLE_INSTALL_FLAGS="--without production --jobs $(nproc) --path vendor --retry 3 --quiet"
 
 if [ "$USE_BUNDLE_INSTALL" != "false" ]; then
-    bundle install --clean $BUNDLE_INSTALL_FLAGS && bundle check
+  bundle_install_script
 fi
-
-# Only install knapsack after bundle install! Otherwise oddly some native
-# gems could not be found under some circumstance. No idea why, hours wasted.
-retry gem install knapsack
 
 cp config/gitlab.yml.example config/gitlab.yml
+sed -i 's/bin_path: \/usr\/bin\/git/bin_path: \/usr\/local\/bin\/git/' config/gitlab.yml
+sed -i 's/# bundler: rspack/bundler: rspack\n    dev_server:\n      enabled: false/' config/gitlab.yml
 
-# Determine the database by looking at the job name.
-# For example, we'll get pg if the job is `rspec-pg 19 20`
-export GITLAB_DATABASE=$(echo $CI_JOB_NAME | cut -f1 -d' ' | cut -f2 -d-)
-
-# This would make the default database postgresql, and we could also use
-# pg to mean postgresql.
-if [ "$GITLAB_DATABASE" != 'mysql' ]; then
-    export GITLAB_DATABASE='postgresql'
-fi
-
-cp config/database.yml.$GITLAB_DATABASE config/database.yml
-
-if [ "$GITLAB_DATABASE" = 'postgresql' ]; then
-    sed -i 's/# host:.*/host: postgres/g' config/database.yml
-else # Assume it's mysql
-    sed -i 's/username:.*/username: root/g' config/database.yml
-    sed -i 's/password:.*/password:/g' config/database.yml
-    sed -i 's/# host:.*/host: mysql/g' config/database.yml
-fi
+cp config/cable.yml.example config/cable.yml
+sed -i 's|url:.*$|url: redis://redis:6379|g' config/cable.yml
 
 cp config/resque.yml.example config/resque.yml
-sed -i 's/localhost/redis/g' config/resque.yml
+sed -i 's|url:.*$|url: redis://redis:6379|g' config/resque.yml
 
-cp config/redis.cache.yml.example config/redis.cache.yml
-sed -i 's/localhost/redis/g' config/redis.cache.yml
+# By default, run CI against Redis Cluster to ensure Redis Cluster compatibility.
+# if SETUP_DB is false, the jobs are not backend-related
+if [[ "$USE_REDIS_CLUSTER" != "false" ]] && [[ "$SETUP_DB" != "false" ]]; then
+  cp config/redis.yml.example config/redis.yml
+  sed -i 's|- .*$|- redis://rediscluster:7001|g' config/redis.yml
+  sed -i 's|url:.*$|url: redis://redis:6379|g' config/redis.yml
+fi
 
-cp config/redis.queues.yml.example config/redis.queues.yml
-sed -i 's/localhost/redis/g' config/redis.queues.yml
-
-cp config/redis.shared_state.yml.example config/redis.shared_state.yml
-sed -i 's/localhost/redis/g' config/redis.shared_state.yml
+setup_database_yml
 
 if [ "$SETUP_DB" != "false" ]; then
-    bundle exec rake db:drop db:create db:schema:load db:migrate
-
-    if [ "$GITLAB_DATABASE" = "mysql" ]; then
-        bundle exec rake add_limits_mysql
-    fi
+  setup_db
+elif getent hosts postgres; then
+  setup_db_user_only
 fi

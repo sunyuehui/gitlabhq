@@ -1,49 +1,206 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Projects::TemplatesController do
-  let(:project) { create(:project, :repository) }
-  let(:user) { create(:user) }
-  let(:user2) { create(:user) }
-  let(:file_path_1) { '.gitlab/issue_templates/bug.md' }
-  let(:body) { JSON.parse(response.body) }
+RSpec.describe Projects::TemplatesController do
+  let_it_be(:project) { create(:project, :small_repo, :private) }
+  let_it_be(:user) { create(:user) }
+  let_it_be(:issue_template_path_1) { '.gitlab/issue_templates/issue_template_1.md' }
+  let_it_be(:issue_template_path_2) { '.gitlab/issue_templates/issue_template_2.md' }
+  let_it_be(:merge_request_template_path_1) { '.gitlab/merge_request_templates/merge_request_template_1.md' }
+  let_it_be(:merge_request_template_path_2) { '.gitlab/merge_request_templates/merge_request_template_2.md' }
+  let_it_be(:issue_template_file_1) { project.repository.create_file(user, issue_template_path_1, 'issue content 1', message: 'message 1', branch_name: 'master') }
+  let_it_be(:issue_template_file_2) { project.repository.create_file(user, issue_template_path_2, 'issue content 2', message: 'message 2', branch_name: 'master') }
+  let_it_be(:merge_request_template_file_1) { project.repository.create_file(user, merge_request_template_path_1, 'merge request content 1', message: 'message 1', branch_name: 'master') }
+  let_it_be(:merge_request_template_file_2) { project.repository.create_file(user, merge_request_template_path_2, 'merge request content 2', message: 'message 2', branch_name: 'master') }
+  let_it_be(:other_user) { create(:user) }
+  let(:expected_issue_template_1) { { 'key' => 'issue_template_1', 'name' => 'issue_template_1', 'content' => 'issue content 1' } }
+  let(:expected_issue_template_2) { { 'key' => 'issue_template_2', 'name' => 'issue_template_2', 'content' => 'issue content 2' } }
+  let(:expected_merge_request_template_1) { { 'key' => 'merge_request_template_1', 'name' => 'merge_request_template_1', 'content' => 'merge request content 1' } }
+  let(:expected_merge_request_template_2) { { 'key' => 'merge_request_template_2', 'name' => 'merge_request_template_2', 'content' => 'merge request content 2' } }
 
-  before do
-    project.team << [user, :developer]
-    sign_in(user)
-  end
+  describe '#index' do
+    before_all do
+      project.add_developer(user)
+    end
 
-  before do
-    project.add_user(user, Gitlab::Access::MASTER)
-    project.repository.create_file(user, file_path_1, 'something valid',
-      message: 'test 3', branch_name: 'master')
+    before do
+      sign_in(user)
+    end
+
+    shared_examples 'templates request' do
+      it 'returns the templates' do
+        get(:index, params: { namespace_id: project.namespace, template_type: template_type, project_id: project }, format: :json)
+
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(json_response).to match(expected_templates)
+      end
+
+      it 'fails for user with no access' do
+        sign_in(other_user)
+
+        get(:index, params: { namespace_id: project.namespace, template_type: template_type, project_id: project }, format: :json)
+
+        expect(response).to have_gitlab_http_status(:not_found)
+      end
+    end
+
+    context 'when querying for issue templates' do
+      it_behaves_like 'templates request' do
+        let(:template_type) { 'issue' }
+        let(:expected_templates) { [expected_issue_template_1, expected_issue_template_2] }
+      end
+    end
+
+    context 'when querying for merge_request templates' do
+      it_behaves_like 'templates request' do
+        let(:template_type) { 'merge_request' }
+        let(:expected_templates) { [expected_merge_request_template_1, expected_merge_request_template_2] }
+      end
+    end
   end
 
   describe '#show' do
-    it 'renders template name and content as json' do
-      get(:show, namespace_id: project.namespace.to_param, template_type: "issue", key: "bug", project_id: project, format: :json)
+    shared_examples 'renders issue templates as json' do
+      let(:expected_issue_template) { expected_issue_template_2 }
 
-      expect(response.status).to eq(200)
-      expect(body["name"]).to eq("bug")
-      expect(body["content"]).to eq("something valid")
+      it do
+        get(:show, params: { namespace_id: project.namespace, template_type: 'issue', key: 'issue_template_2', project_id: project }, format: :json)
+
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(json_response).to match(expected_issue_template)
+      end
     end
 
-    it 'renders 404 when unauthorized' do
-      sign_in(user2)
-      get(:show, namespace_id: project.namespace.to_param, template_type: "issue", key: "bug", project_id: project, format: :json)
+    shared_examples 'renders merge request templates as json' do
+      let(:expected_merge_request_template) { expected_merge_request_template_2 }
 
-      expect(response.status).to eq(404)
+      it do
+        get(:show, params: { namespace_id: project.namespace, template_type: 'merge_request', key: 'merge_request_template_2', project_id: project }, format: :json)
+
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(json_response).to match(expected_merge_request_template)
+      end
     end
 
-    it 'renders 404 when template type is not found' do
+    shared_examples 'renders 404 when requesting an issue template' do
+      it do
+        get(:show, params: { namespace_id: project.namespace, template_type: 'issue', key: 'issue_template_1', project_id: project }, format: :json)
+
+        expect(response).to have_gitlab_http_status(:not_found)
+      end
+    end
+
+    shared_examples 'renders 404 when requesting a merge request template' do
+      it do
+        get(:show, params: { namespace_id: project.namespace, template_type: 'merge_request', key: 'merge_request_template_1', project_id: project }, format: :json)
+
+        expect(response).to have_gitlab_http_status(:not_found)
+      end
+    end
+
+    shared_examples 'raises error when template type is invalid' do
+      it 'does not route when the template type is invalid' do
+        expect do
+          get(:show, params: { namespace_id: project.namespace, template_type: 'invalid_type', key: 'issue_template_1', project_id: project }, format: :json)
+        end.to raise_error(ActionController::UrlGenerationError)
+      end
+    end
+
+    shared_examples 'renders 404 when params are invalid' do
+      it 'renders 404 when the format type is invalid' do
+        get(:show, params: { namespace_id: project.namespace, template_type: 'issue', key: 'issue_template_1', project_id: project }, format: :html)
+
+        expect(response).to have_gitlab_http_status(:not_found)
+      end
+
+      it 'renders 404 when the key is unknown' do
+        get(:show, params: { namespace_id: project.namespace, template_type: 'issue', key: 'unknown_template', project_id: project }, format: :json)
+
+        expect(response).to have_gitlab_http_status(:not_found)
+      end
+    end
+
+    context 'when the user is not a member of the project' do
+      before do
+        sign_in(user)
+      end
+
+      include_examples 'renders 404 when requesting an issue template'
+      include_examples 'renders 404 when requesting a merge request template'
+    end
+
+    context 'when user is a member of the project' do
+      before_all do
+        project.add_developer(user)
+      end
+
+      before do
+        sign_in(user)
+      end
+
+      include_examples 'renders issue templates as json'
+      include_examples 'renders merge request templates as json'
+
+      context 'when params are invalid' do
+        include_examples 'raises error when template type is invalid'
+        include_examples 'renders 404 when params are invalid'
+      end
+    end
+
+    context 'when user is a guest of the project' do
+      before_all do
+        project.add_guest(user)
+      end
+
+      before do
+        sign_in(user)
+      end
+
+      include_examples 'renders issue templates as json'
+      include_examples 'renders 404 when requesting a merge request template'
+    end
+  end
+
+  describe '#names' do
+    before_all do
+      project.add_developer(user)
+    end
+
+    before do
       sign_in(user)
-      get(:show, namespace_id: project.namespace.to_param, template_type: "dont_exist", key: "bug", project_id: project, format: :json)
-
-      expect(response.status).to eq(404)
     end
 
-    it 'renders 404 without errors' do
-      sign_in(user)
-      expect { get(:show, namespace_id: project.namespace.to_param, template_type: "dont_exist", key: "bug", project_id: project, format: :json) }.not_to raise_error
+    shared_examples 'template names request' do
+      it 'returns the template names', :aggregate_failures do
+        get(:names, params: { namespace_id: project.namespace, template_type: template_type, project_id: project }, format: :json)
+
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(json_response['Project Templates'].size).to eq(2)
+        expect(json_response['Project Templates'].map { |x| x.slice('name') }).to match(expected_template_names)
+      end
+
+      it 'fails for user with no access' do
+        sign_in(other_user)
+
+        get(:names, params: { namespace_id: project.namespace, template_type: template_type, project_id: project }, format: :json)
+
+        expect(response).to have_gitlab_http_status(:not_found)
+      end
+    end
+
+    context 'when querying for issue templates' do
+      it_behaves_like 'template names request' do
+        let(:template_type) { 'issue' }
+        let(:expected_template_names) { [{ 'name' => 'issue_template_1' }, { 'name' => 'issue_template_2' }] }
+      end
+    end
+
+    context 'when querying for merge_request templates' do
+      it_behaves_like 'template names request' do
+        let(:template_type) { 'merge_request' }
+        let(:expected_template_names) { [{ 'name' => 'merge_request_template_1' }, { 'name' => 'merge_request_template_2' }] }
+      end
     end
   end
 end

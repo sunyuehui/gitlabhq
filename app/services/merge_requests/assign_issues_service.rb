@@ -1,20 +1,20 @@
+# frozen_string_literal: true
+
 module MergeRequests
-  class AssignIssuesService < BaseService
+  class AssignIssuesService < BaseProjectService
     def assignable_issues
-      @assignable_issues ||= begin
-        if current_user == merge_request.author
-          closes_issues.select do |issue|
-            !issue.is_a?(ExternalIssue) && !issue.assignees.present? && can?(current_user, :admin_issue, issue)
-          end
-        else
-          []
-        end
-      end
+      @assignable_issues ||= if current_user == merge_request.author
+                               closes_issues.select do |issue|
+                                 !issue.is_a?(ExternalIssue) && !issue.assignees.present? && can?(current_user, :admin_issue, issue)
+                               end
+                             else
+                               []
+                             end
     end
 
     def execute
       assignable_issues.each do |issue|
-        Issues::UpdateService.new(issue.project, current_user, assignee_ids: [current_user.id]).execute(issue)
+        Issues::UpdateService.new(container: issue.project, current_user: current_user, params: { assignee_ids: [current_user.id] }).execute(issue)
       end
 
       {

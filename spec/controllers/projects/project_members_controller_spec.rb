@@ -1,345 +1,717 @@
+# frozen_string_literal: true
+
 require('spec_helper')
 
-describe Projects::ProjectMembersController do
-  let(:user) { create(:user) }
-  let(:project) { create(:project, :public, :access_requestable) }
+RSpec.describe Projects::ProjectMembersController, feature_category: :groups_and_projects do
+  let_it_be(:user) { create(:user) }
+  let_it_be(:group) { create(:group, :public) }
+  let_it_be(:sub_group) { create(:group, parent: group) }
+  let_it_be_with_reload(:project) { create(:project, :public) }
+  let_it_be(:shared_group) { create(:group, parent: group) }
+  let_it_be(:shared_group_user) { create(:user) }
 
-  describe 'GET index' do
-    it 'should have the project_members address with a 200 status code' do
-      get :index, namespace_id: project.namespace, project_id: project
-
-      expect(response).to have_http_status(200)
-    end
-  end
-
-  describe 'POST create' do
-    let(:project_user) { create(:user) }
-
+  shared_examples_for 'controller actions' do
     before do
-      sign_in(user)
+      travel_to DateTime.new(2019, 4, 1)
     end
 
-    context 'when user does not have enough rights' do
-      before do
-        project.team << [user, :developer]
-      end
-
-      it 'returns 404' do
-        post :create, namespace_id: project.namespace,
-                      project_id: project,
-                      user_ids: project_user.id,
-                      access_level: Gitlab::Access::GUEST
-
-        expect(response).to have_http_status(404)
-        expect(project.users).not_to include project_user
-      end
+    after do
+      travel_back
     end
 
-    context 'when user has enough rights' do
-      before do
-        project.team << [user, :master]
+    describe 'GET index' do
+      it 'has the project_members address with a 200 status code' do
+        get :index, params: { namespace_id: project.namespace, project_id: project }
+
+        expect(response).to have_gitlab_http_status(:ok)
       end
 
-      it 'adds user to members' do
-        expect_any_instance_of(Members::CreateService).to receive(:execute).and_return(status: :success)
+      context 'project members' do
+        context 'when project belongs to group' do
+          let_it_be(:user_in_group) { create(:user) }
+          let_it_be(:project_in_group) { create(:project, :public, group: group) }
 
-        post :create, namespace_id: project.namespace,
-                      project_id: project,
-                      user_ids: project_user.id,
-                      access_level: Gitlab::Access::GUEST
+          before_all do
+            group.add_owner(user_in_group)
+            project_in_group.add_maintainer(user)
+            shared_group.add_owner(shared_group_user)
+            create(:group_group_link, shared_group: group, shared_with_group: shared_group)
+          end
 
-        expect(response).to set_flash.to 'Users were successfully added.'
-        expect(response).to redirect_to(project_project_members_path(project))
+          before do
+            sign_in(user)
+          end
+
+          it 'lists all project members including members from shared group by default' do
+            get :index, params: { namespace_id: project_in_group.namespace, project_id: project_in_group }
+
+            expect(assigns(:project_members).map(&:user_id)).to contain_exactly(user.id, user_in_group.id, shared_group_user.id)
+          end
+
+          it 'lists direct project members only' do
+            get :index, params: { namespace_id: project_in_group.namespace, project_id: project_in_group, with_inherited_permissions: 'exclude' }
+
+            expect(assigns(:project_members).map(&:user_id)).to contain_exactly(user.id)
+          end
+
+          it 'lists inherited project members and shared group members only' do
+            get :index, params: { namespace_id: project_in_group.namespace, project_id: project_in_group, with_inherited_permissions: 'only' }
+
+            expect(assigns(:project_members).map(&:user_id)).to contain_exactly(user_in_group.id, shared_group_user.id)
+          end
+        end
+
+        context 'when project belongs to a sub-group' do
+          let_it_be(:user_in_group) { create(:user) }
+          let_it_be(:project_in_group) { create(:project, :public, group: sub_group) }
+
+          before_all do
+            group.add_owner(user_in_group)
+            project_in_group.add_maintainer(user)
+            shared_group.add_owner(shared_group_user)
+            create(:group_group_link, shared_group: sub_group, shared_with_group: shared_group)
+          end
+
+          before do
+            sign_in(user)
+          end
+
+          it 'lists all project members including members from shared group by default' do
+            get :index, params: { namespace_id: project_in_group.namespace, project_id: project_in_group }
+
+            expect(assigns(:project_members).map(&:user_id)).to contain_exactly(user.id, user_in_group.id, shared_group_user.id)
+          end
+
+          it 'lists direct project members only' do
+            get :index, params: { namespace_id: project_in_group.namespace, project_id: project_in_group, with_inherited_permissions: 'exclude' }
+
+            expect(assigns(:project_members).map(&:user_id)).to contain_exactly(user.id)
+          end
+
+          it 'lists inherited project members and shared group members only' do
+            get :index, params: { namespace_id: project_in_group.namespace, project_id: project_in_group, with_inherited_permissions: 'only' }
+
+            expect(assigns(:project_members).map(&:user_id)).to contain_exactly(user_in_group.id, shared_group_user.id)
+          end
+        end
+
+        context 'when invited project members are present' do
+          let!(:invited_member) { create(:project_member, :invited, project: project) }
+
+          before do
+            project.add_maintainer(user)
+            sign_in(user)
+          end
+
+          it 'excludes the invited members from project members list' do
+            get :index, params: { namespace_id: project.namespace, project_id: project }
+
+            expect(assigns(:project_members).map(&:invite_email)).not_to contain_exactly(invited_member.invite_email)
+          end
+        end
+
+        shared_examples 'users are invited through groups' do
+          let_it_be(:invited_group_member) { create(:user) }
+
+          it 'lists invited group members by default' do
+            get :index, params: { namespace_id: project.namespace, project_id: project }
+
+            expect(assigns(:project_members).map(&:user_id)).to include(invited_group_member.id)
+          end
+        end
+
+        context 'when invited group members are present' do
+          before do
+            group.add_owner(invited_group_member)
+
+            project.invited_groups << group
+            project.add_maintainer(user)
+
+            sign_in(user)
+          end
+
+          include_examples 'users are invited through groups'
+        end
+
+        context 'when group is invited to project parent' do
+          let_it_be(:parent_group) { create(:group, :public) }
+          let_it_be_with_reload(:project) { create(:project, :public, namespace: parent_group) }
+
+          before do
+            group.add_owner(invited_group_member)
+
+            parent_group.shared_with_groups << group
+            project.add_maintainer(user)
+
+            sign_in(user)
+          end
+
+          include_examples 'users are invited through groups'
+        end
       end
 
-      it 'adds no user to members' do
-        expect_any_instance_of(Members::CreateService).to receive(:execute).and_return(status: :failure, message: 'Message')
+      context 'invited members' do
+        let_it_be(:invited_member) { create(:project_member, :invited, project: project) }
 
-        post :create, namespace_id: project.namespace,
-                      project_id: project,
-                      user_ids: '',
-                      access_level: Gitlab::Access::GUEST
-
-        expect(response).to set_flash.to 'Message'
-        expect(response).to redirect_to(project_project_members_path(project))
-      end
-    end
-  end
-
-  describe 'DELETE destroy' do
-    let(:member) { create(:project_member, :developer, project: project) }
-
-    before do
-      sign_in(user)
-    end
-
-    context 'when member is not found' do
-      it 'returns 404' do
-        delete :destroy, namespace_id: project.namespace,
-                         project_id: project,
-                         id: 42
-
-        expect(response).to have_http_status(404)
-      end
-    end
-
-    context 'when member is found' do
-      context 'when user does not have enough rights' do
         before do
-          project.team << [user, :developer]
+          sign_in(user)
         end
 
-        it 'returns 404' do
-          delete :destroy, namespace_id: project.namespace,
-                           project_id: project,
-                           id: member
+        context 'when user has `admin_project_member` permissions' do
+          before do
+            project.add_maintainer(user)
+          end
 
-          expect(response).to have_http_status(404)
-          expect(project.members).to include member
+          it 'lists invited members' do
+            get :index, params: { namespace_id: project.namespace, project_id: project }
+
+            expect(assigns(:invited_members).map(&:invite_email)).to contain_exactly(invited_member.invite_email)
+          end
+        end
+
+        context 'when user does not have `admin_project_member` permissions' do
+          it 'does not list invited members' do
+            get :index, params: { namespace_id: project.namespace, project_id: project }
+
+            expect(assigns(:invited_members)).to be_nil
+          end
         end
       end
 
-      context 'when user has enough rights' do
+      context 'access requests' do
+        let_it_be(:access_requester_user) { create(:user) }
+
         before do
-          project.team << [user, :master]
+          project.request_access(access_requester_user)
+          sign_in(user)
         end
 
-        it '[HTML] removes user from members' do
-          delete :destroy, namespace_id: project.namespace,
-                           project_id: project,
-                           id: member
+        context 'when user has `admin_project_member` permissions' do
+          before do
+            project.add_maintainer(user)
+          end
 
-          expect(response).to redirect_to(
-            project_project_members_path(project)
+          it 'lists access requests' do
+            get :index, params: { namespace_id: project.namespace, project_id: project }
+
+            expect(assigns(:requesters).map(&:user_id)).to contain_exactly(access_requester_user.id)
+          end
+        end
+
+        context 'when user does not have `admin_project_member` permissions' do
+          it 'does not list access requests' do
+            get :index, params: { namespace_id: project.namespace, project_id: project }
+
+            expect(assigns(:requesters)).to be_nil
+          end
+        end
+      end
+
+      context 'group members' do
+        let_it_be(:group) { create(:group) }
+        let_it_be(:project) { create(:project, :public, group: group) }
+
+        let_it_be(:inherited_group_member) do
+          create(:group_group_link, shared_group: group, shared_with_group: create(:group, name: 'foo'))
+        end
+
+        let_it_be(:direct_group_member) do
+          create(:project_group_link, :reporter, project: project, group: shared_group)
+        end
+
+        let(:params) { {} }
+
+        subject(:make_request) do
+          get :index, params: { namespace_id: project.namespace, project_id: project }.merge(params)
+        end
+
+        it 'lists all group members' do
+          make_request
+
+          expected = ::Members::GroupLinksCollection.new([direct_group_member, inherited_group_member])
+          expect(assigns(:group_member_links)).to eq(expected)
+        end
+
+        context 'when group is both a direct and inherited members' do
+          context 'when inherited access is higher' do
+            let_it_be(:inherited_maintainer_member) do
+              create(:group_group_link, :maintainer, shared_group: group, shared_with_group: shared_group)
+            end
+
+            it 'lists membership with highest access level' do
+              make_request
+
+              expected = ::Members::GroupLinksCollection.new([inherited_maintainer_member, inherited_group_member])
+              expect(assigns(:group_member_links)).to eq(expected)
+            end
+          end
+
+          context 'when direct project access is higher' do
+            let_it_be(:inherited_guest_member) do
+              create(:group_group_link, :guest, shared_group: group, shared_with_group: shared_group)
+            end
+
+            it 'lists membership with highest access level' do
+              make_request
+
+              expected = ::Members::GroupLinksCollection.new([direct_group_member, inherited_group_member])
+              expect(assigns(:group_member_links)).to eq(expected)
+            end
+          end
+        end
+
+        context 'when `search_groups` is provided' do
+          let(:params) { { search_groups: 'foo' } }
+
+          it 'filters results' do
+            make_request
+
+            expected = ::Members::GroupLinksCollection.new([inherited_group_member])
+            expect(assigns(:group_member_links)).to eq(expected)
+          end
+        end
+
+        context 'when groups_with_inherited_permissions is `exclude`' do
+          let(:params) { { groups_with_inherited_permissions: 'exclude' } }
+
+          it 'lists direct group members' do
+            make_request
+
+            expected = ::Members::GroupLinksCollection.new([direct_group_member])
+            expect(assigns(:group_member_links)).to eq(expected)
+          end
+        end
+
+        context 'when groups_with_inherited_permissions is `only`' do
+          let(:params) { { groups_with_inherited_permissions: 'only' } }
+
+          it 'lists inherited group members' do
+            make_request
+
+            expected = ::Members::GroupLinksCollection.new([inherited_group_member])
+            expect(assigns(:group_member_links)).to eq(expected)
+          end
+        end
+
+        it 'sets pagination parameters', :aggregate_failures do
+          make_request
+
+          expect(assigns(:group_member_links).current_page).to be(1)
+          expect(assigns(:group_member_links).limit_value).to be(20)
+          expect(assigns(:group_member_links).total_count).to be(2)
+        end
+      end
+    end
+
+    describe 'PUT update' do
+      let_it_be(:requester) { create(:project_member, :access_request, project: project) }
+
+      before do
+        project.add_owner(user)
+        sign_in(user)
+      end
+
+      context 'access level' do
+        Gitlab::Access.options.each do |label, value|
+          it "can change the access level to #{label}" do
+            params = {
+              project_member: { access_level: value },
+              namespace_id: project.namespace,
+              project_id: project,
+              id: requester
+            }
+
+            put :update, params: params, xhr: true
+
+            expect(requester.reload.human_access).to eq(label)
+          end
+        end
+
+        describe 'managing project direct owners' do
+          context 'when a Maintainer tries to elevate another user to OWNER' do
+            let(:maintainer_user) { create(:user) }
+
+            before do
+              project.add_maintainer(maintainer_user)
+              sign_in(maintainer_user)
+            end
+
+            it 'does not allow the operation' do
+              params = {
+                project_member: { access_level: Gitlab::Access::OWNER },
+                namespace_id: project.namespace,
+                project_id: project,
+                id: requester
+              }
+
+              put :update, params: params, xhr: true
+
+              expect(response).to have_gitlab_http_status(:forbidden)
+            end
+          end
+
+          context 'when a user with OWNER access tries to elevate another user to OWNER' do
+            # inherited owner role via personal project association
+            let(:user) { project.first_owner }
+
+            before do
+              sign_in(user)
+            end
+
+            it 'returns success' do
+              params = {
+                project_member: { access_level: Gitlab::Access::OWNER },
+                namespace_id: project.namespace,
+                project_id: project,
+                id: requester
+              }
+
+              put :update, params: params, xhr: true
+
+              expect(response).to have_gitlab_http_status(:ok)
+              expect(requester.reload.access_level).to eq(Gitlab::Access::OWNER)
+            end
+          end
+        end
+      end
+
+      context 'access expiry date' do
+        subject do
+          put :update, xhr: true, params: {
+            project_member: {
+              expires_at: expires_at
+            },
+            namespace_id: project.namespace,
+            project_id: project,
+            id: requester
+          }
+        end
+
+        context 'when set to a date in the past' do
+          let(:expires_at) { 2.days.ago }
+
+          it 'does not update the member' do
+            subject
+
+            expect(requester.reload.expires_at).not_to eq(expires_at.to_date)
+          end
+
+          it 'returns error status' do
+            subject
+
+            expect(response).to have_gitlab_http_status(:unprocessable_entity)
+          end
+
+          it 'returns error message' do
+            subject
+
+            expect(json_response).to eq({ 'message' => 'Expires at cannot be a date in the past' })
+          end
+        end
+
+        context 'when set to a date in the future' do
+          let(:expires_at) { 5.days.from_now }
+
+          it 'updates the member' do
+            subject
+
+            expect(requester.reload.expires_at).to eq(expires_at.to_date)
+          end
+        end
+      end
+
+      context 'expiration date' do
+        let(:expiry_date) { 1.month.from_now.to_date }
+
+        before do
+          travel_to Time.now.utc.beginning_of_day
+
+          put(
+            :update,
+            params: {
+              project_member: { expires_at: expiry_date },
+              namespace_id: project.namespace,
+              project_id: project,
+              id: requester
+            },
+            format: :json
           )
-          expect(project.members).not_to include member
         end
 
-        it '[JS] removes user from members' do
-          xhr :delete, :destroy, namespace_id: project.namespace,
-                                 project_id: project,
-                                 id: member
-
-          expect(response).to be_success
-          expect(project.members).not_to include member
-        end
-      end
-    end
-  end
-
-  describe 'DELETE leave' do
-    before do
-      sign_in(user)
-    end
-
-    context 'when member is not found' do
-      it 'returns 404' do
-        delete :leave, namespace_id: project.namespace,
-                       project_id: project
-
-        expect(response).to have_http_status(404)
-      end
-    end
-
-    context 'when member is found' do
-      context 'and is not an owner' do
-        before do
-          project.team << [user, :developer]
+        context 'when `expires_at` is set' do
+          it 'returns correct json response' do
+            expect(json_response).to include({
+              "expires_soon" => false,
+              "expires_at_formatted" => expiry_date.to_time.in_time_zone.to_fs(:medium)
+            })
+          end
         end
 
-        it 'removes user from members' do
-          delete :leave, namespace_id: project.namespace,
-                         project_id: project
+        context 'when `expires_at` is not set' do
+          let(:expiry_date) { nil }
 
-          expect(response).to set_flash.to "You left the \"#{project.human_name}\" project."
-          expect(response).to redirect_to(dashboard_projects_path)
-          expect(project.users).not_to include user
-        end
-      end
-
-      context 'and is an owner' do
-        let(:project) { create(:project, namespace: user.namespace) }
-
-        before do
-          project.team << [user, :master]
-        end
-
-        it 'cannot remove himself from the project' do
-          delete :leave, namespace_id: project.namespace,
-                         project_id: project
-
-          expect(response).to have_http_status(403)
-        end
-      end
-
-      context 'and is a requester' do
-        before do
-          project.request_access(user)
-        end
-
-        it 'removes user from members' do
-          delete :leave, namespace_id: project.namespace,
-                         project_id: project
-
-          expect(response).to set_flash.to 'Your access request to the project has been withdrawn.'
-          expect(response).to redirect_to(project_path(project))
-          expect(project.requesters).to be_empty
-          expect(project.users).not_to include user
+          it 'returns json response without expiration data' do
+            expect(json_response).not_to have_key(:expires_soon)
+            expect(json_response).not_to have_key(:expires_at_formatted)
+          end
         end
       end
     end
-  end
 
-  describe 'POST request_access' do
-    before do
-      sign_in(user)
-    end
+    describe 'DELETE destroy' do
+      let_it_be(:member) { create(:project_member, :developer, project: project) }
 
-    it 'creates a new ProjectMember that is not a team member' do
-      post :request_access, namespace_id: project.namespace,
-                            project_id: project
-
-      expect(response).to set_flash.to 'Your request for access has been queued for review.'
-      expect(response).to redirect_to(
-        project_path(project)
-      )
-      expect(project.requesters.exists?(user_id: user)).to be_truthy
-      expect(project.users).not_to include user
-    end
-  end
-
-  describe 'POST approve' do
-    let(:member) { create(:project_member, :access_request, project: project) }
-
-    before do
-      sign_in(user)
-    end
-
-    context 'when member is not found' do
-      it 'returns 404' do
-        post :approve_access_request, namespace_id: project.namespace,
-                                      project_id: project,
-                                      id: 42
-
-        expect(response).to have_http_status(404)
+      before do
+        sign_in(user)
       end
-    end
 
-    context 'when member is found' do
-      context 'when user does not have enough rights' do
-        before do
-          project.team << [user, :developer]
-        end
-
+      context 'when member is not found' do
         it 'returns 404' do
-          post :approve_access_request, namespace_id: project.namespace,
-                                        project_id: project,
-                                        id: member
+          delete :destroy, params: {
+            namespace_id: project.namespace,
+            project_id: project,
+            id: 42
+          }
 
-          expect(response).to have_http_status(404)
-          expect(project.members).not_to include member
+          expect(response).to have_gitlab_http_status(:not_found)
         end
       end
 
-      context 'when user has enough rights' do
-        before do
-          project.team << [user, :master]
+      context 'when member is found' do
+        context 'when user does not have enough rights' do
+          context 'when user does not have rights to manage other members' do
+            before do
+              project.add_developer(user)
+            end
+
+            it 'returns 404', :aggregate_failures do
+              delete :destroy, params: {
+                namespace_id: project.namespace,
+                project_id: project,
+                id: member
+              }
+
+              expect(response).to have_gitlab_http_status(:not_found)
+              expect(project.members).to include member
+            end
+          end
+
+          context 'when user does not have rights to manage Owner members' do
+            let_it_be(:member) { create(:project_member, project: project, access_level: Gitlab::Access::OWNER) }
+
+            before do
+              project.add_maintainer(user)
+            end
+
+            it 'returns 403', :aggregate_failures do
+              delete :destroy, params: {
+                namespace_id: project.namespace,
+                project_id: project,
+                id: member
+              }
+
+              expect(response).to have_gitlab_http_status(:forbidden)
+              expect(project.members).to include member
+            end
+          end
         end
 
-        it 'adds user to members' do
-          post :approve_access_request, namespace_id: project.namespace,
-                                        project_id: project,
-                                        id: member
+        context 'when user has enough rights' do
+          before do
+            project.add_maintainer(user)
+          end
 
-          expect(response).to redirect_to(
-            project_project_members_path(project)
-          )
-          expect(project.members).to include member
+          it '[HTML] removes user from members', :aggregate_failures do
+            delete :destroy, params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              id: member
+            }
+
+            expect(response).to redirect_to(
+              project_project_members_path(project)
+            )
+            expect(project.members).not_to include member
+          end
+
+          it '[JS] removes user from members', :aggregate_failures do
+            delete :destroy, params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              id: member
+            }, xhr: true
+
+            expect(response).to be_successful
+            expect(project.members).not_to include member
+          end
         end
       end
     end
-  end
 
-  describe 'POST apply_import' do
-    let(:another_project) { create(:project, :private) }
-    let(:member) { create(:user) }
-
-    before do
-      project.team << [user, :master]
-      another_project.team << [member, :guest]
-      sign_in(user)
-    end
-
-    shared_context 'import applied' do
+    describe 'DELETE leave' do
       before do
-        post(:apply_import, namespace_id: project.namespace,
-                            project_id: project,
-                            source_project_id: another_project.id)
+        sign_in(user)
+      end
+
+      context 'when member is not found' do
+        it 'returns 404' do
+          delete :leave, params: {
+            namespace_id: project.namespace,
+            project_id: project
+          }
+
+          expect(response).to have_gitlab_http_status(:not_found)
+        end
+      end
+
+      context 'when member is found' do
+        context 'and is not an owner' do
+          before do
+            project.add_developer(user)
+          end
+
+          it 'removes user from members', :aggregate_failures do
+            delete :leave, params: {
+              namespace_id: project.namespace,
+              project_id: project
+            }
+
+            expect(controller).to set_flash.to "You left the \"#{project.human_name}\" project."
+            expect(response).to redirect_to(dashboard_projects_path)
+            expect(project.users).not_to include user
+          end
+        end
+
+        context 'and is an owner' do
+          let(:project) { create(:project, namespace: user.namespace) }
+
+          before do
+            project.add_maintainer(user)
+          end
+
+          it 'cannot remove themselves from the project' do
+            delete :leave, params: {
+              namespace_id: project.namespace,
+              project_id: project
+            }
+
+            expect(response).to have_gitlab_http_status(:forbidden)
+          end
+        end
+
+        context 'and is a requester' do
+          before do
+            project.request_access(user)
+          end
+
+          it 'removes user from members', :aggregate_failures do
+            delete :leave, params: {
+              namespace_id: project.namespace,
+              project_id: project
+            }
+
+            expect(controller).to set_flash.to 'Your access request to the project has been withdrawn.'
+            expect(response).to redirect_to(project_path(project))
+            expect(project.requesters).to be_empty
+            expect(project.users).not_to include user
+          end
+        end
       end
     end
 
-    context 'when user can access source project members' do
+    describe 'POST request_access' do
       before do
-        another_project.team << [user, :guest]
+        sign_in(user)
       end
 
-      include_context 'import applied'
+      it 'creates a new ProjectMember that is not a team member', :aggregate_failures do
+        post :request_access, params: {
+          namespace_id: project.namespace,
+          project_id: project
+        }
 
-      it 'imports source project members' do
-        expect(project.team_members).to include member
-        expect(response).to set_flash.to 'Successfully imported'
+        expect(controller).to set_flash.to 'Your request for access has been queued for review.'
         expect(response).to redirect_to(
-          project_project_members_path(project)
+          project_path(project)
         )
+        expect(project.requesters.exists?(user_id: user)).to be_truthy
+        expect(project.users).not_to include user
       end
     end
 
-    context 'when user is not member of a source project' do
-      include_context 'import applied'
+    describe 'POST approve' do
+      let_it_be(:member) { create(:project_member, :access_request, project: project) }
 
-      it 'does not import team members' do
-        expect(project.team_members).not_to include member
+      before do
+        sign_in(user)
       end
 
-      it 'responds with not found' do
-        expect(response.status).to eq 404
+      context 'when member is not found' do
+        it 'returns 404' do
+          post :approve_access_request, params: {
+            namespace_id: project.namespace,
+            project_id: project,
+            id: 42
+          }
+
+          expect(response).to have_gitlab_http_status(:not_found)
+        end
+      end
+
+      context 'when member is found' do
+        context 'when user does not have rights to manage other members' do
+          before do
+            project.add_developer(user)
+          end
+
+          it 'returns 404', :aggregate_failures do
+            post :approve_access_request, params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              id: member
+            }
+
+            expect(response).to have_gitlab_http_status(:not_found)
+            expect(project.members).not_to include member
+          end
+        end
+
+        context 'when user has enough rights' do
+          before do
+            project.add_maintainer(user)
+          end
+
+          it 'adds user to members', :aggregate_failures do
+            post :approve_access_request, params: {
+              namespace_id: project.namespace,
+              project_id: project,
+              id: member
+            }
+
+            expect(response).to redirect_to(
+              project_project_members_path(project)
+            )
+            expect(project.members).to include member
+          end
+        end
+      end
+    end
+
+    describe 'POST resend_invite' do
+      let_it_be(:member) { create(:project_member, project: project) }
+
+      before do
+        project.add_maintainer(user)
+        sign_in(user)
+      end
+
+      it 'is successful' do
+        post :resend_invite, params: { namespace_id: project.namespace, project_id: project, id: member }
+
+        expect(response).to have_gitlab_http_status(:found)
       end
     end
   end
 
-  describe 'POST create' do
-    let(:stranger) { create(:user) }
-
-    context 'when creating owner' do
-      before do
-        project.team << [user, :master]
-        sign_in(user)
-      end
-
-      it 'does not create a member' do
-        expect do
-          post :create, user_ids: stranger.id,
-                        namespace_id: project.namespace,
-                        access_level: Member::OWNER,
-                        project_id: project
-        end.to change { project.members.count }.by(0)
-      end
-    end
-
-    context 'when create master' do
-      before do
-        project.team << [user, :master]
-        sign_in(user)
-      end
-
-      it 'creates a member' do
-        expect do
-          post :create, user_ids: stranger.id,
-                        namespace_id: project.namespace,
-                        access_level: Member::MASTER,
-                        project_id: project
-        end.to change { project.members.count }.by(1)
-      end
-    end
-  end
+  it_behaves_like 'controller actions'
 end

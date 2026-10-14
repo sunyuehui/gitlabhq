@@ -1,85 +1,66 @@
-- @no_container = true
-- page_title "Charts"
-- if show_new_nav?
-  - add_to_breadcrumbs("Repository", project_tree_path(@project))
-- content_for :page_specific_javascripts do
-  = webpack_bundle_tag('common_d3')
-  = webpack_bundle_tag('graphs')
-  = webpack_bundle_tag('graphs_charts')
-= render "projects/commits/head"
+- title = _("Repository analytics")
+- page_title title
+- add_page_specific_style 'page_bundles/graph_charts'
 
-.repo-charts{ class: container_class }
-  %h4.sub-header
-    Programming languages used in this repository
+= render ::Layouts::PageHeadingComponent.new(title)
 
-  .row
-    .col-md-4
-      %ul.bordered-list
-        - @languages.each do |language|
-          %li
-            %span{ style: "color: #{language[:color]}" }
-              = icon('circle')
-            &nbsp;
-            = language[:label]
-            .pull-right
-              = language[:value]
-              \%
-    .col-md-8
-      %canvas#languages-chart{ height: 400 }
+- if @gitaly_unavailable
+  = render 'shared/errors/gitaly_unavailable', reason: s_('Graphs|Unable to load repository analytics')
+- else
+  = render ::Layouts::SettingsSectionComponent.new(_("Programming languages used in this repository")) do |c|
+    - c.with_description do
+      = _("Measured in bytes of code. Excludes generated and vendored code.")
+    - c.with_body do
+      #js-languages-chart{ data: { chart_data: @languages.to_json.html_safe } }
 
-.repo-charts{ class: container_class }
-  .sub-header-block.border-top
+  - if defined?(@daily_coverage_options)
+    #js-code-coverage-chart{ data: project_coverage_chart_data_attributes(@daily_coverage_options, @ref) }
 
-  .row.tree-ref-header
-    .col-md-6
-      %h4
-        Commit statistics for
-        %strong= @ref
-        #{@commits_graph.start_date.strftime('%b %d')} - #{@commits_graph.end_date.strftime('%b %d')}
+  - start_time = capture do
+    #{@commits_graph.start_date.strftime('%b %d')}
+  - end_time = capture do
+    #{@commits_graph.end_date.strftime('%b %d')}
+  = render ::Layouts::SettingsSectionComponent.new('', testid: 'commit-statistics') do |c|
+    - c.with_heading do
+      = (_("Commit statistics for %{ref} %{start_time} - %{end_time}") % { ref: "<strong>#{h @ref}</strong>", start_time: start_time, end_time: end_time }).html_safe
+    - c.with_description do
+      = _("Excluding merge commits. Limited to %{limit} commits.") % {limit: number_with_delimiter(@commits_limit, delimiter: ',')}
 
-    .col-md-6
-      .tree-ref-container
+      .tree-ref-container.gl-mt-5
         .tree-ref-holder
-          = render 'shared/ref_switcher', destination: 'graphs_commits'
-        %ul.breadcrumb.repo-breadcrumb
+          #js-project-graph-ref-switcher{ data: { project_id: @project.id, project_full_path: @project.full_path, graph_path: project_graph_path(@project, @ref), project_branch: current_ref } }
+        %ul.breadcrumb.repo-breadcrumb.gl-mt-3.gl-bg-default.gl-border
           = commits_breadcrumbs
 
-  .row
-    .col-md-6
-      %ul.commit-stats
+      %ul.gl-mt-5
         %li
-          Total:
-          %strong #{@commits_graph.commits.size} commits
+          - total = capture do
+            #{@commits_graph.commits.size}
+          = (_("Total: %{total}") % { total: "<strong>#{total} commits</strong>" }).html_safe
         %li
-          Average per day:
-          %strong #{@commits_graph.commit_per_day} commits
+          - average = capture do
+            #{@commits_graph.commit_per_day}
+          = (_("Average per day: %{average}") % { average: "<strong>#{average} commits</strong>" }).html_safe
         %li
-          Authors:
-          %strong= @commits_graph.authors
-    .col-md-6
-      %div
-        %p.slead
-          Commits per day of month
-        %canvas#month-chart
-  .row
-    .col-md-6
-    .col-md-6
-      %div
-        %p.slead
-          Commits per weekday
-        %canvas#weekday-chart
-  .row
-    .col-md-6
-    .col-md-6
-      %div
-        %p.slead
-          Commits per day hour (UTC)
-        %canvas#hour-chart
-
-%script#projectChartData{ type: "application/json" }
-  - projectChartData = {};
-  - projectChartData['hour'] = @commits_per_time
-  - projectChartData['weekDays'] = @commits_per_week_days
-  - projectChartData['month'] = @commits_per_month
-  - projectChartData['languages'] = @languages
-  = projectChartData.to_json.html_safe
+          - authors = capture do
+            #{@commits_graph.authors}
+          = (_("Authors: %{authors}") % { authors: "<strong>#{authors}</strong>" }).html_safe
+    - c.with_body do
+      .repo-charts
+        .row
+          .gl-col-12
+            %h3.gl-heading-4
+              = _("Commits per day of month")
+            %div
+              #js-month-chart{ data: { chart_data: @commits_per_month.to_json.html_safe } }
+        .row.gl-mt-7
+          .gl-col-md-6
+            %h3.gl-heading-4
+              = _("Commits per weekday")
+            %div
+              #js-weekday-chart{ data: { chart_data: @commits_per_week_days.to_json.html_safe } }
+          .gl-col-md-6
+            %h3.gl-heading-4
+              = _("Commits per day hour (UTC)")
+            %div
+              #js-hour-chart{ data: { chart_data: @commits_per_time.to_json.html_safe } }

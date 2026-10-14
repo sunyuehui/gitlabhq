@@ -1,35 +1,23 @@
+# frozen_string_literal: true
+
 module ProtectedBranchAccess
   extend ActiveSupport::Concern
-
-  ALLOWED_ACCESS_LEVELS ||= [
-    Gitlab::Access::MASTER,
-    Gitlab::Access::DEVELOPER,
-    Gitlab::Access::NO_ACCESS
-  ].freeze
+  include ProtectedRefAccess
 
   included do
-    include ProtectedRefAccess
-
     belongs_to :protected_branch
 
-    delegate :project, to: :protected_branch
+    # protected_ref_project
+    delegate :project, to: :protected_branch, allow_nil: true, prefix: :protected_ref
 
-    validates :access_level, presence: true, inclusion: {
-      in: ALLOWED_ACCESS_LEVELS
-    }
-
-    def self.human_access_levels
-      {
-        Gitlab::Access::MASTER => "Masters",
-        Gitlab::Access::DEVELOPER => "Developers + Masters",
-        Gitlab::Access::NO_ACCESS => "No one"
-      }.with_indifferent_access
-    end
-
-    def check_access(user)
-      return false if access_level == Gitlab::Access::NO_ACCESS
-
-      super
+    # We cannot delegate to :protected_branch here (even with allow_nil: true)
+    # like above because it results in
+    # 'undefined method `project_group_links' for nil:NilClass' errors.
+    def protected_branch_group
+      protected_branch.group
     end
   end
 end
+
+ProtectedBranchAccess.include_mod_with('ProtectedBranchAccess::Scopes')
+ProtectedBranchAccess.prepend_mod_with('ProtectedBranchAccess')

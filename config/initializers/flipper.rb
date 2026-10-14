@@ -1,8 +1,6 @@
-require 'flipper/middleware/memoizer'
+# frozen_string_literal: true
 
-unless Rails.env.test?
-  Rails.application.config.middleware.use Flipper::Middleware::Memoizer,
-    lambda { Feature.flipper }
-
-  Feature.register_feature_groups
+Rails.application.configure do
+  config.flipper.preload = false
+  config.flipper.memoizer = false
 end

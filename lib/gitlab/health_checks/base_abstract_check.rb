@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module HealthChecks
     module BaseAbstractCheck
@@ -9,12 +11,12 @@ module Gitlab
         name.sub(/_check$/, '').capitalize
       end
 
-      def readiness
-        raise NotImplementedError
+      def available?
+        true
       end
 
-      def liveness
-        HealthChecks::Result.new(true)
+      def readiness
+        raise NotImplementedError
       end
 
       def metrics
@@ -34,11 +36,9 @@ module Gitlab
       end
 
       def catch_timeout(seconds, &block)
-        begin
-          Timeout.timeout(seconds.to_i, &block)
-        rescue Timeout::Error => ex
-          ex
-        end
+        Timeout.timeout(seconds.to_i, &block)
+      rescue Timeout::Error => ex
+        ex
       end
     end
   end

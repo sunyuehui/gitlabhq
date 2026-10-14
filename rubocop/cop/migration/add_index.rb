@@ -1,13 +1,15 @@
+# frozen_string_literal: true
+
 require_relative '../../migration_helpers'
 
 module RuboCop
   module Cop
     module Migration
       # Cop that checks if indexes are added in a concurrent manner.
-      class AddIndex < RuboCop::Cop::Cop
+      class AddIndex < RuboCop::Cop::Base
         include MigrationHelpers
 
-        MSG = '`add_index` requires downtime, use `add_concurrent_index` instead'.freeze
+        MSG = '`add_index` requires downtime, use `add_concurrent_index` instead'
 
         def on_def(node)
           return unless in_migration?(node)
@@ -27,7 +29,7 @@ module RuboCop
             # data in these tables yet.
             next if new_tables.include?(first_arg)
 
-            add_offense(send_node, :selector)
+            add_offense(send_node.loc.selector)
           end
         end
 

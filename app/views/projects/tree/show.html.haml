@@ -1,18 +1,24 @@
-- @no_container = true
+- add_page_specific_style 'page_bundles/tree'
 - breadcrumb_title _("Repository")
-- @content_class = "limit-container-width" unless fluid_layout
-
 - page_title @path.presence || _("Files"), @ref
-= content_for :meta_tags do
-  = auto_discovery_link_tag(:atom, project_commits_url(@project, @ref, rss_url_options), title: "#{@project.name}:#{@ref} commits")
+- @content_class = "repository-max-width"
 
-- if show_new_repo?
-  - content_for :page_specific_javascripts do
-    = webpack_bundle_tag 'common_vue'
-    = webpack_bundle_tag 'repo'
+- if @gitaly_unavailable
+  = render 'shared/errors/gitaly_unavailable', reason: s_('Tree|Unable to load repository files')
+- else
+  - ref_type_enum_value = @ref_type&.upcase
+  - current_route_path = request.fullpath.match(%r{-/tree/[^/]+/(.+$)}).to_a[1]
+  - add_page_startup_graphql_call('repository/path_last_commit', { projectPath: @project.full_path, ref: current_ref, path: current_route_path || "", refType: ref_type_enum_value})
+  - add_page_startup_graphql_call('repository/permissions', { projectPath: @project.full_path })
 
-= render "projects/commits/head"
+  = content_for :meta_tags do
+    = auto_discovery_link_tag(:atom, project_commits_url(@project, @ref, rss_url_options), title: "#{@project.name}:#{@ref} commits")
 
-%div{ class: [container_class, ("limit-container-width" unless fluid_layout)] }
   = render 'projects/last_push'
-  = render 'projects/files', commit: @last_commit, project: @project, ref: @ref, content_url: project_tree_path(@project, @id)
+
+  = render 'projects/files', commit: @last_commit, project: @project, ref: @ref, content_url: project_tree_path(@project, @id, ref_type: @ref_type)
+
+  = render 'shared/web_ide_path'
+
+  -# https://gitlab.com/gitlab-org/gitlab/-/issues/408388#note_1578533983
+  #js-ambiguous-ref-modal{ data: { ambiguous: @is_ambiguous_ref.to_s, ref: current_ref } }

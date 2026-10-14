@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class AnalyticsStageEntity < Grape::Entity
   include EntityDateHelper
 
@@ -6,7 +8,5 @@ class AnalyticsStageEntity < Grape::Entity
   expose :legend
   expose :description
 
-  expose :median, as: :value do |stage|
-    stage.median && !stage.median.zero? ? distance_of_time_in_words(stage.median) : nil
-  end
+  expose :project_median, as: :value
 end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Auth::UniqueIpsLimiter, :clean_gitlab_redis_shared_state do
+RSpec.describe Gitlab::Auth::UniqueIpsLimiter, :clean_gitlab_redis_shared_state do
   include_context 'unique ips sign in limit'
   let(:user) { create(:user) }
 
@@ -20,14 +22,14 @@ describe Gitlab::Auth::UniqueIpsLimiter, :clean_gitlab_redis_shared_state do
     end
 
     it 'resets count after specified time window' do
-      Timecop.freeze do
+      freeze_time do
         expect(described_class.update_and_return_ips_count(user.id, 'ip2')).to eq(1)
         expect(described_class.update_and_return_ips_count(user.id, 'ip3')).to eq(2)
+      end
 
-        Timecop.travel(Time.now.utc + described_class.config.unique_ips_limit_time_window) do
-          expect(described_class.update_and_return_ips_count(user.id, 'ip4')).to eq(1)
-          expect(described_class.update_and_return_ips_count(user.id, 'ip5')).to eq(2)
-        end
+      travel_to(Time.now.utc + described_class.config.unique_ips_limit_time_window) do
+        expect(described_class.update_and_return_ips_count(user.id, 'ip4')).to eq(1)
+        expect(described_class.update_and_return_ips_count(user.id, 'ip5')).to eq(2)
       end
     end
   end
@@ -41,7 +43,7 @@ describe Gitlab::Auth::UniqueIpsLimiter, :clean_gitlab_redis_shared_state do
 
     context 'allow 2 unique ips' do
       before do
-        current_application_settings.update!(unique_ips_limit_per_user: 2)
+        Gitlab::CurrentSettings.current_application_settings.update!(unique_ips_limit_per_user: 2)
       end
 
       it 'blocks user trying to login from third ip' do
@@ -52,6 +54,13 @@ describe Gitlab::Auth::UniqueIpsLimiter, :clean_gitlab_redis_shared_state do
         expect(described_class.limit_user! { user }).to eq(user)
 
         change_ip('ip3')
+
+        expect(Gitlab::AuthLogger).to receive(:error).with(hash_including(
+          message: 'too_many_ips',
+          remote_ip: 'ip3',
+          unique_ips_count: 3,
+          user_id: user.id
+        )).and_call_original
         expect { described_class.limit_user! { user } }.to raise_error(Gitlab::Auth::TooManyIps)
       end
     end

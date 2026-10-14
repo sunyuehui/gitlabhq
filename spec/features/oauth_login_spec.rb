@@ -1,82 +1,86 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'OAuth Login', :js, :allow_forgery_protection do
+RSpec.describe 'OAuth Login', :with_current_organization, :allow_forgery_protection, feature_category: :system_access do
   include DeviseHelpers
 
   def enter_code(code)
     fill_in 'user_otp_attempt', with: code
-    click_button 'Verify code'
+    click_button s_('TwoFactorAuth|Verify code')
   end
 
   def stub_omniauth_config(provider)
     OmniAuth.config.add_mock(provider, OmniAuth::AuthHash.new(provider: provider.to_s, uid: "12345"))
-    set_devise_mapping(context: Rails.application)
-    Rails.application.env_config['omniauth.auth'] = OmniAuth.config.mock_auth[provider]
+    stub_omniauth_provider(provider)
   end
 
-  providers = [:github, :twitter, :bitbucket, :gitlab, :google_oauth2,
-               :facebook, :cas3, :auth0, :authentiq]
+  providers = [:google_oauth2, :auth0, :salesforce]
 
-  before(:all) do
-    # The OmniAuth `full_host` parameter doesn't get set correctly (it gets set to something like `http://localhost`
-    # here), and causes integration tests to fail with 404s. We set the `full_host` by removing the request path (and
-    # anything after it) from the request URI.
-    @omniauth_config_full_host = OmniAuth.config.full_host
-    OmniAuth.config.full_host = ->(request) { request['REQUEST_URI'].sub(/#{request['REQUEST_PATH']}.*/, '') }
+  around do |example|
+    with_omniauth_full_host { example.run }
   end
 
-  after(:all) do
-    OmniAuth.config.full_host = @omniauth_config_full_host
+  def expect_login_with_provider(provider, remember_me: false, enter_two_factor: false, additional_info: {})
+    login_via(provider.to_s, user, uid, remember_me: remember_me, additional_info: additional_info)
+    enter_code(user.current_otp) if enter_two_factor
+
+    expect(page).to have_current_path root_path, ignore_query: true
   end
 
   providers.each do |provider|
-    context "when the user logs in using the #{provider} provider" do
-      context 'when two-factor authentication is disabled' do
-        it 'logs the user in' do
-          stub_omniauth_config(provider)
-          user = create(:omniauth_user, extern_uid: 'my-uid', provider: provider.to_s)
-          login_via(provider.to_s, user, 'my-uid')
+    context "when the user logs in using the #{provider} provider", :js do
+      let(:uid) { 'my-uid' }
+      let(:user) { create(:omniauth_user, extern_uid: uid, provider: provider.to_s) }
+      let(:two_factor_user) { create(:omniauth_user, :two_factor, extern_uid: uid, provider: provider.to_s) }
 
-          expect(current_path).to eq root_path
-        end
+      provider == :salesforce ? let(:additional_info) { { extra: { email_verified: true } } } : let(:additional_info) { {} }
+
+      before do
+        stub_omniauth_config(provider)
+
+        clear_browser_session
+        clear_remember_me_cookie
+
+        expect(ActiveSession).to receive(:cleanup).with(user).at_least(:once).and_call_original
       end
 
       context 'when two-factor authentication is enabled' do
-        it 'logs the user in' do
-          stub_omniauth_config(provider)
-          user = create(:omniauth_user, :two_factor, extern_uid: 'my-uid', provider: provider.to_s)
-          login_via(provider.to_s, user, 'my-uid')
+        let(:user) { two_factor_user }
 
-          enter_code(user.current_otp)
-          expect(current_path).to eq root_path
+        it 'when bypass-two-factor is enabled' do
+          allow(Gitlab.config.omniauth).to receive_messages(allow_bypass_two_factor: true)
+          expect_login_with_provider(provider, enter_two_factor: false, additional_info: additional_info)
+        end
+
+        it 'when bypass-two-factor is disabled' do
+          allow(Gitlab.config.omniauth).to receive_messages(allow_bypass_two_factor: false)
+          expect_login_with_provider(provider, enter_two_factor: true, additional_info: additional_info)
         end
       end
 
       context 'when "remember me" is checked' do
         context 'when two-factor authentication is disabled' do
           it 'remembers the user after a browser restart' do
-            stub_omniauth_config(provider)
-            user = create(:omniauth_user, extern_uid: 'my-uid', provider: provider.to_s)
-            login_via(provider.to_s, user, 'my-uid', remember_me: true)
+            expect_login_with_provider(provider, remember_me: true, additional_info: additional_info)
 
             clear_browser_session
 
             visit(root_path)
-            expect(current_path).to eq root_path
+            expect(page).to have_current_path root_path, ignore_query: true
           end
         end
 
         context 'when two-factor authentication is enabled' do
+          let(:user) { two_factor_user }
+
           it 'remembers the user after a browser restart' do
-            stub_omniauth_config(provider)
-            user = create(:omniauth_user, :two_factor, extern_uid: 'my-uid', provider: provider.to_s)
-            login_via(provider.to_s, user, 'my-uid', remember_me: true)
-            enter_code(user.current_otp)
+            expect_login_with_provider(provider, remember_me: true, enter_two_factor: true, additional_info: additional_info)
 
             clear_browser_session
 
             visit(root_path)
-            expect(current_path).to eq root_path
+            expect(page).to have_current_path root_path, ignore_query: true
           end
         end
       end
@@ -84,30 +88,79 @@ feature 'OAuth Login', :js, :allow_forgery_protection do
       context 'when "remember me" is not checked' do
         context 'when two-factor authentication is disabled' do
           it 'does not remember the user after a browser restart' do
-            stub_omniauth_config(provider)
-            user = create(:omniauth_user, extern_uid: 'my-uid', provider: provider.to_s)
-            login_via(provider.to_s, user, 'my-uid', remember_me: false)
+            expect_login_with_provider(provider, additional_info: additional_info)
 
             clear_browser_session
 
             visit(root_path)
-            expect(current_path).to eq new_user_session_path
+            expect(page).to have_current_path new_user_session_path, ignore_query: true
           end
         end
 
         context 'when two-factor authentication is enabled' do
+          let(:user) { two_factor_user }
+
           it 'does not remember the user after a browser restart' do
-            stub_omniauth_config(provider)
-            user = create(:omniauth_user, :two_factor, extern_uid: 'my-uid', provider: provider.to_s)
-            login_via(provider.to_s, user, 'my-uid', remember_me: false)
-            enter_code(user.current_otp)
+            expect_login_with_provider(provider, enter_two_factor: true, additional_info: additional_info)
 
             clear_browser_session
 
             visit(root_path)
-            expect(current_path).to eq new_user_session_path
+            expect(page).to have_current_path new_user_session_path, ignore_query: true
           end
         end
+      end
+    end
+  end
+
+  context 'using GitLab as an OAuth provider' do
+    let_it_be(:user) { create(:user) }
+
+    let(:redirect_uri) { Gitlab::Routing.url_helpers.root_url }
+
+    # We can't use let_it_be to set the redirect_uri when creating the
+    # record as the host / port depends on whether or not the spec uses
+    # JS.
+    let(:application) do
+      create(:oauth_application, scopes: 'api', redirect_uri: redirect_uri, confidential: true)
+    end
+
+    let(:params) do
+      {
+        response_type: 'code',
+        client_id: application.uid,
+        redirect_uri: redirect_uri,
+        state: 'state'
+      }
+    end
+
+    before do
+      sign_in(user)
+
+      create(:organization)
+      create(:oauth_access_token, application: application, resource_owner_id: user.id, scopes: 'api')
+    end
+
+    context 'when JS is enabled', :js do
+      it 'includes the fragment in the redirect if it is simple' do
+        visit "#{Gitlab::Routing.url_helpers.oauth_authorization_url(params)}#a_test-hash"
+
+        expect(page).to have_current_path("#{Gitlab::Routing.url_helpers.root_url}#a_test-hash", ignore_query: true)
+      end
+
+      it 'does not include the fragment if it contains forbidden characters' do
+        visit "#{Gitlab::Routing.url_helpers.oauth_authorization_url(params)}#a_test-hash."
+
+        expect(page).to have_current_path(Gitlab::Routing.url_helpers.root_url, ignore_query: true)
+      end
+    end
+
+    context 'when JS is disabled' do
+      it 'provides a basic HTML page including a link without the fragment' do
+        visit "#{Gitlab::Routing.url_helpers.oauth_authorization_url(params)}#a_test-hash"
+
+        expect(page).to have_current_path(oauth_authorization_path(params))
+        expect(page).to have_selector("a[href^='#{redirect_uri}']")
       end
     end
   end

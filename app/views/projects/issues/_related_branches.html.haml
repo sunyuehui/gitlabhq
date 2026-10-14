@@ -1,14 +1,17 @@
 - if @related_branches.any?
-  %h2.related-branches-title
-    = pluralize(@related_branches.count, 'Related Branch')
-  %ul.unstyled-list.related-merge-requests
-    - @related_branches.each do |branch|
-      %li
-        - target = @project.repository.find_branch(branch).dereferenced_target
-        - pipeline = @project.pipeline_for(branch, target.sha) if target
-        - if pipeline
-          %span.related-branch-ci-status
-            = render_pipeline_status(pipeline)
-        %span.related-branch-info
-          %strong
-            = link_to branch, project_compare_path(@project, from: @project.default_branch, to: branch), class: "ref-name"
+  = render ::Layouts::CrudComponent.new(_('Related branches'),
+    icon: 'branch',
+    count: @related_branches.size,
+    options: { class: 'gl-mt-5' },
+    body_options: { class: 'gl-p-3' },
+    is_collapsible: true) do |c|
+    - c.with_body do
+      %ul.related-merge-requests.content-list
+        - @related_branches.each do |branch|
+          %li{ class: '!gl-p-0 !gl-border-b-0' }
+            .item-body.gl-p-3
+              .gl-flex.gl-items-center.gl-gap-3
+                - if branch[:pipeline_status].present?
+                  %span.-gl-my-2
+                    = render 'ci/status/icon', status: branch[:pipeline_status]
+                = link_to branch[:name], branch[:compare_path], class: 'ref-name'

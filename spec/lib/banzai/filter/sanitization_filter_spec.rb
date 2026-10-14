@@ -1,74 +1,52 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::Filter::SanitizationFilter do
+RSpec.describe Banzai::Filter::SanitizationFilter, feature_category: :markdown do
   include FilterSpecHelper
+  using RSpec::Parameterized::TableSyntax
 
-  describe 'default whitelist' do
-    it 'sanitizes tags that are not whitelisted' do
-      act = %q{<textarea>no inputs</textarea> and <blink>no blinks</blink>}
-      exp = 'no inputs and no blinks'
-      expect(filter(act).to_html).to eq exp
-    end
+  it_behaves_like 'default allowlist'
 
-    it 'sanitizes tag attributes' do
-      act = %q{<a href="http://example.com/bar.html" onclick="bar">Text</a>}
-      exp = %q{<a href="http://example.com/bar.html">Text</a>}
-      expect(filter(act).to_html).to eq exp
-    end
-
-    it 'sanitizes javascript in attributes' do
-      act = %q(<a href="javascript:alert('foo')">Text</a>)
-      exp = '<a>Text</a>'
-      expect(filter(act).to_html).to eq exp
-    end
-
-    it 'sanitizes mixed-cased javascript in attributes' do
-      act = %q(<a href="javaScript:alert('foo')">Text</a>)
-      exp = '<a>Text</a>'
-      expect(filter(act).to_html).to eq exp
-    end
-
-    it 'allows whitelisted HTML tags from the user' do
-      exp = act = "<dl>\n<dt>Term</dt>\n<dd>Definition</dd>\n</dl>"
-      expect(filter(act).to_html).to eq exp
-    end
-
-    it 'sanitizes `class` attribute on any element' do
-      act = %q{<strong class="foo">Strong</strong>}
-      expect(filter(act).to_html).to eq %q{<strong>Strong</strong>}
-    end
-
-    it 'sanitizes `id` attribute on any element' do
-      act = %q{<em id="foo">Emphasis</em>}
-      expect(filter(act).to_html).to eq %q{<em>Emphasis</em>}
-    end
-  end
-
-  describe 'custom whitelist' do
-    it 'customizes the whitelist only once' do
+  describe 'custom allowlist' do
+    it 'customizes the allowlist only once' do
       instance = described_class.new('Foo')
-      3.times { instance.whitelist }
+      control_count = instance.allowlist[:transformers].size
 
-      expect(instance.whitelist[:transformers].size).to eq 4
+      3.times { instance.allowlist }
+
+      expect(instance.allowlist[:transformers].size).to eq control_count
+    end
+
+    it 'customizes the allowlist only once for different instances' do
+      instance1 = described_class.new('Foo1')
+      instance2 = described_class.new('Foo2')
+      control_count = instance1.allowlist[:transformers].size
+
+      instance1.allowlist
+      instance2.allowlist
+
+      expect(instance1.allowlist[:transformers].size).to eq control_count
+      expect(instance2.allowlist[:transformers].size).to eq control_count
     end
 
     it 'sanitizes `class` attribute from all elements' do
-      act = %q{<pre class="code highlight white c"><code>&lt;span class="k"&gt;def&lt;/span&gt;</code></pre>}
-      exp = %q{<pre><code>&lt;span class="k"&gt;def&lt;/span&gt;</code></pre>}
+      act = %q(<pre class="code highlight white c"><code>&lt;span class="k"&gt;def&lt;/span&gt;</code></pre>)
+      exp = %q(<pre><code>&lt;span class="k"&gt;def&lt;/span&gt;</code></pre>)
       expect(filter(act).to_html).to eq exp
     end
 
     it 'sanitizes `class` attribute from non-highlight spans' do
-      act = %q{<span class="k">def</span>}
-      expect(filter(act).to_html).to eq %q{<span>def</span>}
+      act = %q(<span class="k">def</span>)
+      expect(filter(act).to_html).to eq %q(<span>def</span>)
     end
 
-    it 'allows `style` attribute on table elements' do
-      html = <<-HTML.strip_heredoc
-      <table>
-        <tr><th style="text-align: center">Head</th></tr>
-        <tr><td style="text-align: right">Body</th></tr>
-      </table>
+    it 'allows `text-align` property in `style` attribute on table elements' do
+      html = <<~HTML
+        <table>
+          <tr><th style="text-align: center">Head</th></tr>
+          <tr><td style="text-align: right">Body</th></tr>
+        </table>
       HTML
 
       doc = filter(html)
@@ -77,14 +55,52 @@ describe Banzai::Filter::SanitizationFilter do
       expect(doc.at_css('td')['style']).to eq 'text-align: right'
     end
 
+    it 'disallows other properties in `style` attribute on table elements' do
+      html = <<~HTML
+        <table>
+          <tr><th style="text-align: foo">Head</th></tr>
+          <tr><td style="position: fixed; height: 50px; width: 50px; background: red; z-index: 999; font-size: 36px; text-align: center">Body</th></tr>
+        </table>
+      HTML
+
+      doc = filter(html)
+
+      expect(doc.at_css('th')['style']).to be_nil
+      expect(doc.at_css('td')['style']).to eq 'text-align: center'
+    end
+
+    it 'disallows `text-align` property in `style` attribute on other elements' do
+      html = <<~HTML
+        <div style="text-align: center">Text</div>
+      HTML
+
+      doc = filter(html)
+
+      expect(doc.at_css('div')['style']).to be_nil
+    end
+
     it 'allows `span` elements' do
-      exp = act = %q{<span>Hello</span>}
+      exp = act = %q(<span>Hello</span>)
       expect(filter(act).to_html).to eq exp
     end
 
     it 'allows `abbr` elements' do
-      exp = act = %q{<abbr title="HyperText Markup Language">HTML</abbr>}
+      exp = act = %q(<abbr title="HyperText Markup Language">HTML</abbr>)
       expect(filter(act).to_html).to eq exp
+    end
+
+    it 'disallows the `name` attribute globally, allows on `a`' do
+      html = <<~HTML
+        <img name="getElementById" src="">
+        <span name="foo" class="bar">Hi</span>
+        <a name="foo" class="bar">Bye</a>
+      HTML
+
+      doc = filter(html)
+
+      expect(doc.at_css('img')).not_to have_attribute('name')
+      expect(doc.at_css('span')).not_to have_attribute('name')
+      expect(doc.at_css('a')).to have_attribute('name')
     end
 
     it 'allows `summary` elements' do
@@ -97,14 +113,21 @@ describe Banzai::Filter::SanitizationFilter do
       expect(filter(act).to_html).to eq exp
     end
 
-    it 'allows `data-math-style` attribute on `code` and `pre` elements' do
+    it 'allows `rel=license` in links' do
+      exp = act = '<a rel="license" href="http://example.com">rel-license</a>'
+      expect(filter(act).to_html).to eq exp
+    end
+
+    it 'allows `data-math-style` attribute on `span`, code` and `pre` elements' do
       html = <<-HTML
+      <span class="code" data-math-style="inline">something</span>
       <pre class="code" data-math-style="inline">something</pre>
       <code class="code" data-math-style="inline">something</code>
       <div class="code" data-math-style="inline">something</div>
       HTML
 
       output = <<-HTML
+      <span data-math-style="inline">something</span>
       <pre data-math-style="inline">something</pre>
       <code data-math-style="inline">something</code>
       <div>something</div>
@@ -113,135 +136,263 @@ describe Banzai::Filter::SanitizationFilter do
       expect(filter(html).to_html).to eq(output)
     end
 
-    it 'removes `rel` attribute from `a` elements' do
-      act = %q{<a href="#" rel="nofollow">Link</a>}
-      exp = %q{<a href="#">Link</a>}
+    it 'allows `data-placeholder` attributes on `span`, `a` and `img` elements' do
+      html = <<-HTML
+      <span class="code" data-placeholder="true">something</span>
+      <a href="example.com" class="code" data-placeholder="true">something</a>
+      <img src="example.com" class="code" data-placeholder="true" />
+      <div data-placeholder-text="true" data-placeholder="true">something</div>
+      HTML
 
-      expect(filter(act).to_html).to eq exp
+      output = <<-HTML
+      <span data-placeholder="true">something</span>
+      <a href="example.com" data-placeholder="true">something</a>
+      <img src="example.com" data-placeholder="true">
+      <div>something</div>
+      HTML
+
+      expect(filter(html).to_html).to eq(output)
     end
 
-    # Adapted from the Sanitize test suite: http://git.io/vczrM
-    protocols = {
-      'protocol-based JS injection: simple, no spaces' => {
-        input:  '<a href="javascript:alert(\'XSS\');">foo</a>',
-        output: '<a>foo</a>'
-      },
+    it 'allows the `data-sourcepos` attribute globally' do
+      exp = %q(<p data-sourcepos="1:1-1:10">foo/bar.md</p>)
+      act = filter(exp)
 
-      'protocol-based JS injection: simple, spaces before' => {
-        input:  '<a href="javascript    :alert(\'XSS\');">foo</a>',
-        output: '<a>foo</a>'
-      },
+      expect(act.to_html).to eq exp
+    end
 
-      'protocol-based JS injection: simple, spaces after' => {
-        input:  '<a href="javascript:    alert(\'XSS\');">foo</a>',
-        output: '<a>foo</a>'
-      },
+    describe 'footnotes' do
+      it 'allows the footnote attributes' do
+        html = <<~HTML
+          <section data-footnotes>
+          <a href="#fn-first" id="fnref-first" data-footnote-ref data-footnote-backref data-footnote-backref-idx>foo/bar.md</a>
+          </section>
+        HTML
 
-      'protocol-based JS injection: simple, spaces before and after' => {
-        input:  '<a href="javascript    :   alert(\'XSS\');">foo</a>',
-        output: '<a>foo</a>'
-      },
+        act = filter(html)
+        section = act.at_css('section')
+        link = act.at_css('a')
 
-      'protocol-based JS injection: preceding colon' => {
-        input:  '<a href=":javascript:alert(\'XSS\');">foo</a>',
-        output: '<a>foo</a>'
-      },
+        expect(section.has_attribute?('data-footnotes')).to be true
+        expect(link['href']).to eq('#fn-first')
+        expect(link['id']).to eq('fnref-first')
+        expect(link.has_attribute?('data-footnote-ref')).to be true
+        expect(link.has_attribute?('data-footnote-backref')).to be true
+        expect(link.has_attribute?('data-footnote-backref-idx')).to be true
+      end
 
-      'protocol-based JS injection: UTF-8 encoding' => {
-        input:  '<a href="javascript&#58;">foo</a>',
-        output: '<a>foo</a>'
-      },
+      it 'allows correct footnote id property on links' do
+        exp = %q(<a href="#fn-first" id="fnref-first">foo/bar.md</a>)
+        act = filter(exp)
 
-      'protocol-based JS injection: long UTF-8 encoding' => {
-        input:  '<a href="javascript&#0058;">foo</a>',
-        output: '<a>foo</a>'
-      },
+        expect(act.to_html).to eq exp
+      end
 
-      'protocol-based JS injection: long UTF-8 encoding without semicolons' => {
-        input:  '<a href=&#0000106&#0000097&#0000118&#0000097&#0000115&#0000099&#0000114&#0000105&#0000112&#0000116&#0000058&#0000097&#0000108&#0000101&#0000114&#0000116&#0000040&#0000039&#0000088&#0000083&#0000083&#0000039&#0000041>foo</a>',
-        output: '<a>foo</a>'
-      },
+      it 'allows correct footnote id property on li element' do
+        exp = %q(<ol><li id="fn-last">footnote</li></ol>)
+        act = filter(exp)
 
-      'protocol-based JS injection: hex encoding' => {
-        input:  '<a href="javascript&#x3A;">foo</a>',
-        output: '<a>foo</a>'
-      },
+        expect(act.to_html).to eq exp
+      end
 
-      'protocol-based JS injection: long hex encoding' => {
-        input:  '<a href="javascript&#x003A;">foo</a>',
-        output: '<a>foo</a>'
-      },
+      it 'removes invalid id for footnote links' do
+        exp = %q(<a href="#fn1">link</a>)
 
-      'protocol-based JS injection: hex encoding without semicolons' => {
-        input:  '<a href=&#x6A&#x61&#x76&#x61&#x73&#x63&#x72&#x69&#x70&#x74&#x3A&#x61&#x6C&#x65&#x72&#x74&#x28&#x27&#x58&#x53&#x53&#x27&#x29>foo</a>',
-        output: '<a>foo</a>'
-      },
+        %w[fnrefx test xfnref-1].each do |id|
+          act = filter(%(<a href="#fn1" id="#{id}">link</a>))
 
-      'protocol-based JS injection: null char' => {
-        input:  "<a href=java\0script:alert(\"XSS\")>foo</a>",
-        output: '<a href="java"></a>'
-      },
+          expect(act.to_html).to eq exp
+        end
+      end
 
-      'protocol-based JS injection: invalid URL char' => {
-        input: '<img src=java\script:alert("XSS")>',
-        output: '<img>'
-      },
+      it 'removes invalid id for footnote li' do
+        exp = %q(<ol><li>footnote</li></ol>)
 
-      'protocol-based JS injection: spaces and entities' => {
-        input:  '<a href=" &#14;  javascript:alert(\'XSS\');">foo</a>',
-        output: '<a href="">foo</a>'
-      },
+        %w[fnx test xfn-1].each do |id|
+          act = filter(%(<ol><li id="#{id}">footnote</li></ol>))
 
-      'protocol whitespace' => {
-        input: '<a href=" http://example.com/"></a>',
-        output: '<a href="http://example.com/"></a>'
-      }
-    }
-
-    protocols.each do |name, data|
-      it "disallows #{name}" do
-        doc = filter(data[:input])
-
-        expect(doc.to_html).to eq data[:output]
+          expect(act.to_html).to eq exp
+        end
       end
     end
 
-    it 'disallows data links' do
-      input = '<a href="data:text/html;base64,PHNjcmlwdD5hbGVydCgnWFNTJyk8L3NjcmlwdD4K">XSS</a>'
-      output = filter(input)
+    describe 'heading anchors' do
+      it 'allows id property on headings' do
+        exp = %q(<h1 id="user-content-this-is-a-header"></h1>)
+        act = filter(exp)
 
-      expect(output.to_html).to eq '<a>XSS</a>'
+        expect(act.to_html).to eq exp
+      end
+
+      it 'removes id property for non-user-content links' do
+        act = filter(%q(<h1 id="this-is-a-header"></h1>))
+        exp = %q(<h1></h1>)
+
+        expect(act.to_html).to eq exp
+      end
     end
 
-    it 'disallows vbscript links' do
-      input = '<a href="vbscript:alert(document.domain)">XSS</a>'
-      output = filter(input)
+    describe 'remove_unsafe_classes' do
+      # rubocop:disable Layout/LineLength -- keep table rows on one line
+      where(:html, :sanitized) do
+        %q(<a href="#this-is-a-header" class="anchor"></a>) | %q(<a href="#this-is-a-header" class="anchor"></a>)
+        %q(<a href="#this-is-a-header" class="some-other-class anchor"></a>) | %q(<a href="#this-is-a-header"></a>)
 
-      expect(output.to_html).to eq '<a>XSS</a>'
+        %q(<div class="markdown-alert markdown-alert-note"></div>) | %q(<div class="markdown-alert markdown-alert-note"></div>)
+        %q(<div class="markdown-alert markdown-alert-tip"></div>) | %q(<div class="markdown-alert markdown-alert-tip"></div>)
+        %q(<div class="markdown-alert markdown-alert-important"></div>) | %q(<div class="markdown-alert markdown-alert-important"></div>)
+        %q(<div class="markdown-alert markdown-alert-warning"></div>) | %q(<div class="markdown-alert markdown-alert-warning"></div>)
+        %q(<div class="markdown-alert markdown-alert-caution"></div>) | %q(<div class="markdown-alert markdown-alert-caution"></div>)
+        %q(<div class="other_class markdown-alert markdown-alert-caution"></div>) | %q(<div></div>)
+
+        %q(<p class="markdown-alert-title"></p>) | %q(<p class="markdown-alert-title"></p>)
+        %q(<p class="markdown-alert-title other_class"></p>) | %q(<p></p>)
+
+        %q(<span class="idiff left right deletion addition"></span>) | %q(<span class="idiff left right deletion addition"></span>)
+        %q(<span class="idiff left addition"></span>) | %q(<span class="idiff left addition"></span>)
+        %q(<span class="idiff left addition other_class"></span>) | %q(<span></span>)
+        %q(<span class="left addition"></span>) | %q(<span></span>)
+
+        %q(<code class="idiff"></code>) | %q(<code class="idiff"></code>)
+        %q(<code class="other_class"></code>) | %q(<code></code>)
+
+        %q(<ul class="task-list"></ul>) | %q(<ul class="task-list"></ul>)
+        %q(<ul class="other-list"></ul>) | %q(<ul></ul>)
+
+        %q(<ol class="task-list"></ol>) | %q(<ol class="task-list"></ol>)
+        %q(<ol class="other-list"></ol>) | %q(<ol></ol>)
+
+        %q(<ul><li class="task-list-item"></li></ul>) | %q(<ul><li class="task-list-item"></li></ul>)
+        %q(<ul><li class="inapplicable task-list-item"></li></ul>) | %q(<ul><li class="inapplicable task-list-item"></li></ul>)
+        %q(<ul><li class="other task-list-item"></li></ul>) | %q(<ul><li></li></ul>)
+
+        %q(<ul><li><input type="checkbox" class="task-list-item-checkbox"></li></ul>) | %q(<ul><li><input type="checkbox" class="task-list-item-checkbox"></li></ul>)
+        %q(<ul><li><input type="checkbox" class="other-checkbox"></li></ul>) | %q(<ul><li></li></ul>)
+
+        %(<table><tr><th class="task-table-item"><input type="checkbox" class="task-list-item-checkbox"></th></tr></table>) | %(<table><tbody><tr><th class="task-table-item"><input type="checkbox" class="task-list-item-checkbox"></th></tr></tbody></table>)
+        %(<table><tr><th class="other-class"><input type="checkbox" class="other-checkbox"></th></tr></table>) | %(<table><tbody><tr><th></th></tr></tbody></table>)
+
+        %q(<img src="example.jpg" class="glfm-float-right">) | %q(<img src="example.jpg" class="glfm-float-right">)
+        %q(<img src="example.jpg" class="glfm-float-left">)  | %q(<img src="example.jpg" class="glfm-float-left">)
+        %q(<img src="example.jpg" class="glfm-float-none">)  | %q(<img src="example.jpg" class="glfm-float-none">)
+        %q(<img src="example.jpg" class="other-class">)      | %q(<img src="example.jpg">)
+        %q(<img src="example.jpg" class="glfm-float-right other-class">) | %q(<img src="example.jpg">)
+      end
+      # rubocop:enable Layout/LineLength
+
+      with_them do
+        it 'removes classes' do
+          act = filter(html)
+
+          expect(act.to_html).to eq_html sanitized
+        end
+      end
     end
 
-    it 'disallows invalid URIs' do
-      expect(Addressable::URI).to receive(:parse).with('foo://example.com')
-        .and_raise(Addressable::URI::InvalidURIError)
+    describe 'tasklist inputs' do
+      it 'leaves tasklist inputs' do
+        exp = %q(<ul><li><input type="checkbox" class="task-list-item-checkbox"></li></ul>)
+        act = filter(exp)
 
-      input = '<a href="foo://example.com">Foo</a>'
-      output = filter(input)
+        expect(act.to_html).to eq exp
+      end
 
-      expect(output.to_html).to eq '<a>Foo</a>'
+      it 'leaves data-indeterminate attribute on tasklist inputs' do
+        exp = %q(<ul><li><input type="checkbox" class="task-list-item-checkbox" data-indeterminate="true"></li></ul>)
+        act = filter(exp)
+
+        expect(act.to_html).to eq_html exp
+      end
+
+      it 'removes tasklist inputs outside of lists' do
+        exp = %q(<p> Hello</p>)
+        act = filter(%q(<p><input type="checkbox" class="task-list-item-checkbox"> Hello</p>))
+
+        expect(act.to_html).to eq exp
+      end
+
+      it 'removes non-tasklist class inputs' do
+        exp = %q(<ul><li></li></ul>)
+        act = filter(%q(<ul><li><input type="checkbox"></li></ul>))
+
+        expect(act.to_html).to eq_html exp
+      end
+
+      it 'removes non-tasklist type inputs' do
+        exp = %q(<ul><li></li></ul>)
+        act = filter(%q(<ul><li><input type="password" class="task-list-item-checkbox"></li></ul>))
+
+        expect(act.to_html).to eq_html exp
+      end
     end
 
-    it 'allows non-standard anchor schemes' do
-      exp = %q{<a href="irc://irc.freenode.net/git">IRC</a>}
-      act = filter(exp)
+    describe 'JSON tables' do
+      it 'allows `data-table-*` attributes on `table` elements with valid fields' do
+        fields_json = '[{"key":"a","label":"A","sortable":true}]'
+        html = <<-HTML
+          <table data-table-fields='#{fields_json}' data-table-filter="true" data-table-markdown="true">
+          </table>
+        HTML
 
-      expect(act.to_html).to eq exp
+        doc = filter(html)
+
+        expect(doc.at_css('table')['data-table-fields']).to eq fields_json
+        expect(doc.at_css('table')['data-table-filter']).to eq 'true'
+        expect(doc.at_css('table')['data-table-markdown']).to eq 'true'
+      end
+
+      it 'strips extra keys from data-table-fields entries' do
+        html = <<-HTML
+          <table data-table-fields='[{"key":"a","label":"A","class":"evil","thClass":"bad","variant":"danger"}]'>
+          </table>
+        HTML
+
+        doc = filter(html)
+        fields = Gitlab::Json.safe_parse(doc.at_css('table')['data-table-fields'])
+
+        expect(fields).to eq [{ 'key' => 'a', 'label' => 'A' }]
+      end
+
+      it 'removes data-table-fields when value is not valid JSON' do
+        html = <<-HTML
+          <table data-table-fields="not json">
+          </table>
+        HTML
+
+        doc = filter(html)
+
+        expect(doc.at_css('table')['data-table-fields']).to be_nil
+      end
+
+      it 'removes data-table-fields when value is a JSON object instead of array' do
+        html = <<-HTML
+          <table data-table-fields='{"key":"a"}'>
+          </table>
+        HTML
+
+        doc = filter(html)
+
+        expect(doc.at_css('table')['data-table-fields']).to be_nil
+      end
+
+      it 'removes data-table-fields when value is an array with non-hash elements' do
+        html = <<-HTML
+          <table data-table-fields='["string", 123]'>
+          </table>
+        HTML
+
+        doc = filter(html)
+
+        expect(doc.at_css('table')['data-table-fields']).to be_nil
+      end
     end
+  end
 
-    it 'allows relative links' do
-      exp = %q{<a href="foo/bar.md">foo/bar.md</a>}
-      act = filter(exp)
+  it_behaves_like 'does not use pipeline timing check'
 
-      expect(act.to_html).to eq exp
-    end
+  it_behaves_like 'a filter timeout' do
+    let(:text) { 'text' }
+    let(:expected_result) { described_class::COMPLEX_MARKDOWN_MESSAGE }
+    let(:expected_timeout) { described_class::SANITIZATION_RENDER_TIMEOUT }
   end
 end

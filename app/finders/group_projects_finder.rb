@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # GroupProjectsFinder
 #
 # Used to filter Projects  by set of params
@@ -7,8 +9,13 @@
 #   project_ids_relation: int[] - project ids to use
 #   group
 #   options:
-#     only_owned: boolean
+#     exclude_shared: boolean
+#       When true, only projects within the group are included in the result.
 #     only_shared: boolean
+#       When true, only projects arising from group-project shares are included in the result.
+#     limit: integer
+#     include_subgroups: boolean
+#     include_ancestor_groups: boolean
 #   params:
 #     sort: string
 #     visibility_level: int
@@ -16,58 +23,81 @@
 #     personal: boolean
 #     search: string
 #     non_archived: boolean
+#     with_issues_enabled: boolean
+#     with_merge_requests_enabled: boolean
+#     min_access_level: int
+#     owned: boolean
 #
 class GroupProjectsFinder < ProjectsFinder
+  DEFAULT_PROJECTS_LIMIT = 100
+
   attr_reader :group, :options
 
   def initialize(group:, params: {}, options: {}, current_user: nil, project_ids_relation: nil)
-    super(params: params, current_user: current_user, project_ids_relation: project_ids_relation)
-    @group   = group
+    super(
+      params: params,
+      current_user: current_user,
+      project_ids_relation: project_ids_relation
+    )
+    @group = group
     @options = options
+  end
+
+  def execute
+    collection = super
+    limit(collection)
   end
 
   private
 
+  def filter_projects(collection)
+    projects = super
+    by_feature_availability(projects)
+  end
+
+  def limit(collection)
+    limit = options[:limit]
+
+    limit.present? ? collection.with_limit(limit) : collection
+  end
+
   def init_collection
-    projects = if current_user
-                 collection_with_user
-               else
-                 collection_without_user
-               end
+    projects =
+      if only_shared?
+        [shared_projects]
+      elsif exclude_shared?
+        [projects_within_group]
+      else
+        [projects_within_group, shared_projects]
+      end
+
+    projects.map! do |project_relation|
+      filter_by_visibility(project_relation)
+    end
 
     union(projects)
   end
 
-  def collection_with_user
-    if group.users.include?(current_user)
-      if only_shared?
-        [shared_projects]
-      elsif only_owned?
-        [owned_projects]
-      else
-        [shared_projects, owned_projects]
-      end
-    else
-      if only_shared?
-        [shared_projects.public_or_visible_to_user(current_user)]
-      elsif only_owned?
-        [owned_projects.public_or_visible_to_user(current_user)]
-      else
-        [
-          owned_projects.public_or_visible_to_user(current_user),
-          shared_projects.public_or_visible_to_user(current_user)
-        ]
-      end
+  def by_feature_availability(projects)
+    projects = projects.with_issues_available_for_user(current_user) if params[:with_issues_enabled].present?
+    if params[:with_merge_requests_enabled].present?
+      projects = projects.with_merge_requests_available_for_user(current_user)
     end
+
+    projects
   end
 
-  def collection_without_user
-    if only_shared?
-      [shared_projects.public_only]
-    elsif only_owned?
-      [owned_projects.public_only]
+  def filter_by_visibility(relation)
+    if current_user
+      if owned_projects?
+        relation.visible_to_user_and_access_level(current_user, Gitlab::Access::OWNER)
+      elsif min_access_level?
+        relation.visible_to_user_and_access_level(current_user, params[:min_access_level])
+      else
+        relation.public_or_visible_to_user(current_user)
+      end
     else
-      [shared_projects.public_only, owned_projects.public_only]
+      relation.public_only
     end
   end
 
@@ -79,19 +109,41 @@ class GroupProjectsFinder < ProjectsFinder
     end
   end
 
-  def only_owned?
-    options.fetch(:only_owned, false)
+  def exclude_shared?
+    options.fetch(:exclude_shared, false)
+  end
+
+  def owned_projects?
+    params.fetch(:owned, false)
   end
 
   def only_shared?
     options.fetch(:only_shared, false)
   end
 
-  def owned_projects
-    group.projects
+  # subgroups are supported only for owned projects not for shared
+  def include_subgroups?
+    options.fetch(:include_subgroups, false)
+  end
+
+  # ancestor groups are supported only for owned projects not for shared
+  def include_ancestor_groups?
+    options.fetch(:include_ancestor_groups, false)
+  end
+
+  def projects_within_group
+    return group.projects unless include_subgroups? || include_ancestor_groups?
+
+    union_relations = []
+    union_relations << Project.for_group_and_its_subgroups(group) if include_subgroups?
+    union_relations << Project.for_group_and_its_ancestor_groups(group) if include_ancestor_groups?
+
+    Project.from_union(union_relations)
   end
 
   def shared_projects
     group.shared_projects
   end
 end
+
+GroupProjectsFinder.prepend_mod_with('GroupProjectsFinder')

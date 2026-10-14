@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
       class Manual < Status::Core
         def text
-          s_('CiStatusText|manual')
+          s_('CiStatusText|Manual')
         end
 
         def label
@@ -11,11 +13,15 @@ module Gitlab
         end
 
         def icon
-          'icon_status_manual'
+          'status_manual'
         end
 
         def favicon
           'favicon_status_manual'
+        end
+
+        def details_path
+          nil
         end
       end
     end

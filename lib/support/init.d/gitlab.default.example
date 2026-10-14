@@ -23,8 +23,8 @@ pid_path="$app_root/tmp/pids"
 socket_path="$app_root/tmp/sockets"
 
 # web_server_pid_path defines the path in which to create the pid file fo the web_server
-# The default is "$pid_path/unicorn.pid"
-web_server_pid_path="$pid_path/unicorn.pid"
+# The default is "$pid_path/puma.pid"
+web_server_pid_path="$pid_path/puma.pid"
 
 # sidekiq_pid_path defines the path in which to create the pid file for sidekiq
 # The default is "$pid_path/sidekiq.pid"
@@ -40,7 +40,7 @@ gitlab_workhorse_pid_path="$pid_path/gitlab-workhorse.pid"
 # socket. To listen on TCP connections (needed by Apache) change to:
 # '-listenNetwork tcp -listenAddr 127.0.0.1:8181'
 #
-# The -authBackend setting tells gitlab-workhorse where it can reach Unicorn.
+# The -authBackend setting tells gitlab-workhorse where it can reach the GitLab Rails application.
 # For relative URL support change to:
 # '-authBackend http://127.0.0.1/8080/gitlab'
 # Read more in http://doc.gitlab.com/ce/install/relative_url.html
@@ -68,7 +68,7 @@ gitlab_workhorse_log="$app_root/log/gitlab-workhorse.log"
 # The -pages-domain must be specified the same as in `gitlab.yml > pages > host`.
 # Set `gitlab_pages_enabled=true` if you want to enable the Pages feature.
 gitlab_pages_enabled=false
-gitlab_pages_options="-pages-domain example.com -pages-root $app_root/shared/pages -listen-proxy 127.0.0.1:8090"
+gitlab_pages_options="-config $app_root/gitlab-pages/gitlab-pages.conf"
 gitlab_pages_log="$app_root/log/gitlab-pages.log"
 
 # mail_room_enabled specifies whether mail_room, which is used to process incoming email, is enabled.

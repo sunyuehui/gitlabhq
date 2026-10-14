@@ -1,48 +1,25 @@
-- public_project_count = ProjectsFinder.new(current_user: current_user).execute.count
+.welcome-grid
+  = render_if_exists "dashboard/projects/blank_state_extra_info"
 
-- if current_user.can_create_group?
-  .blank-state
-    .blank-state-icon
-      = custom_icon("add_new_group", size: 50)
-    .blank-state-body
-      %h3.blank-state-title
-        Create a group for several dependent projects.
-      %p.blank-state-text
-        Groups are the best way to manage projects and members.
-      = link_to new_group_path, class: "btn btn-new" do
-        New group
+  - if current_user.can_create_project?
+    = render Onboarding::ActionCardComponent.new(title: _('Create a project'),
+      description: _('Projects are where you store your code, access issues, wiki, and other features of GitLab.'),
+      icon: 'project',
+      href: new_project_path,
+      link_options: { data: { testid: 'new-project-button' }})
 
-.blank-state
-  .blank-state-icon
-    = custom_icon("add_new_project", size: 50)
-  .blank-state-body
-    %h3.blank-state-title
-      Create a project
-    %p.blank-state-text
-      - if current_user.can_create_project?
-        You don't have access to any projects right now.
-        You can create up to
-        %strong= number_with_delimiter(current_user.projects_limit)
-        = succeed "." do
-          = "project".pluralize(current_user.projects_limit)
-      - else
-        If you are added to a project, it will be displayed here.
-    - if current_user.can_create_project?
-      = link_to new_project_path, class: "btn btn-new" do
-        New project
+  = render Onboarding::ActionCardComponent.new(title: _('Explore public projects'),
+    description: _('Public projects are an easy way to allow everyone to have read-only access.'),
+    icon: 'earth',
+    href: explore_projects_path)
 
-- if public_project_count > 0
-  .blank-state
-    .blank-state-icon
-      = custom_icon("globe", size: 50)
-    .blank-state-body
-      %h3.blank-state-title
-        Explore public projects
-      %p.blank-state-text
-        There are
-        = number_with_delimiter(public_project_count)
-        public projects on this server.
-        Public projects are an easy way to allow
-        everyone to have read-only access.
-      = link_to trending_explore_projects_path, class: "btn btn-new" do
-        Browse projects
+  - if current_user.can_create_group?
+    = render Onboarding::ActionCardComponent.new(title: _('Create a group'),
+      description: _('Groups are the best way to manage projects and members.'),
+      icon: 'group',
+      href: new_group_path)
+
+  = render Onboarding::ActionCardComponent.new(title: _('Learn more about GitLab'),
+    description: _('Take a look at the documentation to discover all of GitLab’s capabilities.'),
+    icon: 'bulb',
+    href: Gitlab.doc_url)

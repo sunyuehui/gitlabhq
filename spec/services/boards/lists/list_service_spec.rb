@@ -1,33 +1,66 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Boards::Lists::ListService do
-  let(:project) { create(:project) }
-  let(:board) { create(:board, project: project) }
-  let(:label) { create(:label, project: project) }
-  let!(:list) { create(:list, board: board, label: label) }
-  let(:service) { described_class.new(project, double) }
+RSpec.describe Boards::Lists::ListService, feature_category: :planning_views do
+  let_it_be(:user) { create(:user) }
+  let_it_be(:group) { create(:group) }
 
-  describe '#execute' do
-    context 'when the board has a backlog list' do
-      let!(:backlog_list) { create(:backlog_list, board: board) }
-
-      it 'does not create a backlog list' do
-        expect { service.execute(board) }.not_to change(board.lists, :count)
+  RSpec.shared_examples 'FOSS lists only' do
+    context 'when board contains a non FOSS list' do
+      # This scenario may happen when there used to be an EE license and user downgraded
+      let_it_be(:backlog_list) { board.lists.backlog.first }
+      let_it_be(:milestone) { create(:milestone, group: group) }
+      let_it_be(:assignee_list) do
+        list = build(:list, board: board, user_id: user.id, list_type: List.list_types[:assignee], position: 0)
+        list.send(:ensure_group_or_project) # Necessary as this is called on a before_validation callback
+        list.save!(validate: false)
+        list
       end
 
-      it "returns board's lists" do
-        expect(service.execute(board)).to eq [backlog_list, list, board.closed_list]
+      let_it_be(:milestone_list) do
+        list = build(:list, board: board, milestone_id: milestone.id, list_type: List.list_types[:milestone],
+          position: 1)
+        list.send(:ensure_group_or_project) # Necessary as this is called on a before_validation callback
+        list.save!(validate: false)
+        list
+      end
+
+      it "returns only FOSS board's lists" do
+        # just making sure these non FOSS lists actually exist on the board
+        expect(board.lists.with_types([List.list_types[:assignee], List.list_types[:milestone]]).count).to eq 2
+        # check that the FOSS lists are not returned from the service
+        expect(service.execute(board)).to match_array [backlog_list, list, board.lists.closed.first]
       end
     end
+  end
 
-    context 'when the board does not have a backlog list' do
-      it 'creates a backlog list' do
-        expect { service.execute(board) }.to change(board.lists, :count).by(1)
-      end
+  describe '#execute' do
+    let(:service) { described_class.new(parent, user) }
 
-      it "returns board's lists" do
-        expect(service.execute(board)).to eq [board.backlog_list, list, board.closed_list]
-      end
+    context 'when board parent is a project' do
+      let_it_be(:project) { create(:project, group: group) }
+      let_it_be_with_reload(:board) { create(:board, project: project) }
+      let_it_be(:label) { create(:label, project: project) }
+      let_it_be(:list) { create(:list, board: board, label: label) }
+      let_it_be(:unrelated_list) { create(:list) }
+
+      let(:parent) { project }
+
+      it_behaves_like 'lists list service'
+      it_behaves_like 'FOSS lists only'
+    end
+
+    context 'when board parent is a group' do
+      let_it_be_with_reload(:board) { create(:board, group: group) }
+      let_it_be(:label) { create(:group_label, group: group) }
+      let_it_be(:list) { create(:list, board: board, label: label) }
+      let_it_be(:unrelated_list) { create(:list) }
+
+      let(:parent) { group }
+
+      it_behaves_like 'lists list service'
+      it_behaves_like 'FOSS lists only'
     end
   end
 end

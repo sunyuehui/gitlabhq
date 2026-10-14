@@ -1,98 +1,89 @@
-- page_title 'Two-Factor Authentication', 'Account'
-- if show_new_nav?
-  - add_to_breadcrumbs("Account", profile_account_path)
-- else
-  - header_title "Two-Factor Authentication", profile_two_factor_auth_path
-- @content_class = "limit-container-width" unless fluid_layout
+- title = s_('ProfilesAuthentication|Password and authentication')
+- breadcrumb_title title
+- page_title title
+- troubleshooting_link = link_to _('Try the troubleshooting steps here.'), help_page_path('user/profile/account/two_factor_authentication_troubleshooting.md'), target: '_blank', rel: 'noopener noreferrer'
 
-= render 'profiles/head'
+- content_for :after_flash_content do
+  .flash-container.flash-container-page.sticky
+    - if @error
+      = render Pajamas::AlertComponent.new(title: @error[:message],
+        variant: :danger,
+        dismissible: false) do |c|
+        - c.with_body do
+          = troubleshooting_link
 
-- content_for :page_specific_javascripts do
-  - if inject_u2f_api?
-    = page_specific_javascript_bundle_tag('u2f')
-  = page_specific_javascript_bundle_tag('two_factor_auth')
+    = render 'profiles/accounts/two_factor_enabled_alert'
 
-.js-two-factor-auth{ 'data-two-factor-skippable' => "#{two_factor_skippable?}", 'data-two_factor_skip_url' => skip_profile_two_factor_auth_path }
-  .row.prepend-top-default
-    .col-lg-4
-      %h4.prepend-top-0
-        Register Two-Factor Authentication App
-      %p
-        Use an app on your mobile device to enable two-factor authentication (2FA).
-    .col-lg-8
-      - if current_user.two_factor_otp_enabled?
-        = icon "check inverse", base: "circle", class: "text-success", text: "You've already enabled two-factor authentication using mobile authenticator applications. You can disable it from your account settings page."
-      - else
-        %p
-          Download the Google Authenticator application from App Store or Google Play Store and scan this code.
-          More information is available in the #{link_to('documentation', help_page_path('profile/two_factor_authentication'))}.
-        .row.append-bottom-10
-          .col-md-4
-            = raw @qr_code
-          .col-md-8
-            .account-well
-              %p.prepend-top-0.append-bottom-0
-                Can't scan the code?
-              %p.prepend-top-0.append-bottom-0
-                To add the entry manually, provide the following details to the application on your phone.
-              %p.prepend-top-0.append-bottom-0
-                Account:
-                = @account_string
-              %p.prepend-top-0.append-bottom-0
-                Key:
-                = current_user.otp_secret.scan(/.{4}/).join(' ')
-              %p.two-factor-new-manual-content
-                Time based: Yes
-        = form_tag profile_two_factor_auth_path, method: :post do |f|
-          - if @error
-            .alert.alert-danger
-              = @error
-          .form-group
-            = label_tag :pin_code, nil, class: "label-light"
-            = text_field_tag :pin_code, nil, class: "form-control", required: true
-          .prepend-top-default
-            = submit_tag 'Register with two-factor app', class: 'btn btn-success'
+= render ::Layouts::PageHeadingComponent.new(s_('ProfilesAuthentication|Manage authentication')) do |c|
+  - c.with_description do
+    - unless current_user.allow_passkey_authentication?
+      - learn_more_link = link_to('', help_page_path('administration/settings/sign_in_restrictions.md', anchor: 'password-and-passkey-authentication'), target: '_blank', rel: 'noreferrer')
+      %span.gl-text-warning= sprite_icon('warning')
+      = safe_format(s_('ProfilesAuthentication|Password and passkey sign-in have been restricted for your account. %{link_start}Learn more%{link_end}.'), tag_pair(learn_more_link, :link_start, :link_end))
 
-  %hr
+= render ::Layouts::SettingsSectionComponent.new(_('Password'), options: { class: '-gl-mb-[2rem]' }) do |c|
+  - c.with_description do
+    .gl-flex.gl-flex-wrap.gl-gap-3.gl-justify-between.gl-items-center.gl-mt-2
+      %div
+        - learn_more_link = link_to('', help_page_path('user/profile/user_passwords.md', anchor: 'password-requirements'),  target: '_blank', rel: 'noreferrer')
+        = safe_format(s_('ProfilesAuthentication|All passwords must meet %{link_start}password requirements%{link_end}.'), tag_pair(learn_more_link, :link_start, :link_end))
+      - if current_user.allow_password_authentication?
+        .gl-w-full{ class: "@sm/panel:gl-w-auto" }
+          = render Pajamas::ButtonComponent.new(variant: :default, href: edit_user_settings_password_path, button_options: { data: { testid: 'change-password-button' }}) do
+            = s_('ProfilesAuthentication|Change password')
 
-  .row.prepend-top-default
-    .col-lg-4
-      %h4.prepend-top-0
-        Register Universal Two-Factor (U2F) Device
-      %p
-        Use a hardware device to add the second factor of authentication.
-      %p
-        As U2F devices are only supported by a few browsers, we require that you set up a
-        two-factor authentication app before a U2F device. That way you'll always be able to
-        log in - even when you're using an unsupported browser.
-    .col-lg-8
-      - if @u2f_registration.errors.present?
-        = form_errors(@u2f_registration)
-      = render "u2f/register"
+= render ::Layouts::SettingsSectionComponent.new(s_("ProfilesAuthentication|Passkeys sign-in")) do |c|
+  - c.with_description do
+    %div
+      - learn_more_link = link_to('', help_page_path('auth/passkeys.md'), target: '_blank', rel: 'noreferrer')
+      = safe_format(s_("ProfilesAuthentication|Passkeys allow you to sign in securely with your device instead of a password. %{link_start}Learn more about passkeys%{link_end}."), tag_pair(learn_more_link, :link_start, :link_end))
+  - c.with_body do
+    %p
+      %span.gl-font-bold
+        = _('Status:')
+      - passkey_status = current_user.allow_passkey_authentication? && @passkeys.present? ? _('Active') : _('Inactive')
+      = passkey_status
+    = render 'passkeys'
 
-      %hr
+- if display_providers_on_profile?
+  = render ::Layouts::SettingsSectionComponent.new(s_('ProfilesAuthentication|Service sign-in')) do |c|
+    - c.with_description do
+      %div
+        = s_('ProfilesAuthentication|Connect a service for sign-in.')
+    - c.with_body do
+      = render 'providers', providers: button_based_providers, group_saml_identities: local_assigns[:group_saml_identities]
 
-      %h5 U2F Devices (#{@u2f_registrations.length})
+= render ::Layouts::SettingsSectionComponent.new(s_('ProfilesAuthentication|Two-factor authentication (2FA)')) do |c|
+  - c.with_description do
+    .gl-flex.gl-flex-wrap.gl-gap-3.gl-justify-between.gl-items-center.gl-mt-2
+      %div
+        - if current_user.allow_passkey_authentication?
+          = s_('ProfilesAuthentication|Enable additional security methods for two-factor authentication. Once enabled, you can also use your passkeys for 2FA.')
+        - else
+          = s_('ProfilesAuthentication|Enable additional security methods for two-factor authentication.')
+      - if current_user.two_factor_enabled?
+        .gl-w-full{ class: "@sm/panel:gl-w-auto" }
+          .js-two-factor-action-confirm{ data: disable_two_factor_authentication_data(current_password_required?, current_user.allow_passkey_authentication? && @passkeys.present?) }
+    - if current_user.allow_passkey_authentication? && !current_user.two_factor_enabled? && @passkeys.present?
+      = render Pajamas::AlertComponent.new(dismissible: false, alert_options: { class: 'gl-mt-5' }) do |c|
+        - c.with_body do
+          = s_('ProfilesAuthentication|To use passkeys as your default two-factor authentication, please register at least one backup 2FA method first below.')
+  - c.with_body do
+    %p
+      %span.gl-font-bold
+        = _('Status:')
+      #{current_user.two_factor_enabled? ? _('Active') : _('Inactive')}
+    = render 'default_2fa_method'
+    = render 'otp_registration', {troubleshooting_link: troubleshooting_link}
+    = render 'webauthn_registration'
+    = render 'passkeys_2fa'
+    - if current_user.two_factor_enabled?
+      = render 'recovery_codes'
 
-      - if @u2f_registrations.present?
-        .table-responsive
-          %table.table.table-bordered.u2f-registrations
-            %colgroup
-              %col{ width: "50%" }
-              %col{ width: "30%" }
-              %col{ width: "20%" }
-            %thead
-              %tr
-                %th Name
-                %th Registered On
-                %th
-            %tbody
-              - @u2f_registrations.each do |registration|
-                %tr
-                  %td= registration.name.presence || "<no name set>"
-                  %td= registration.created_at.to_date.to_s(:medium)
-                  %td= link_to "Delete", profile_u2f_registration_path(registration), method: :delete, class: "btn btn-danger pull-right", data: { confirm: "Are you sure you want to delete this device? This action cannot be undone." }
-
-      - else
-        .settings-message.text-center
-          You don't have any U2F devices registered yet.
+- if Gitlab::CurrentSettings.email_otp_enabled?
+  #email-otp-settings
+    = render ::Layouts::SettingsSectionComponent.new(s_("Profiles|Email one-time password (email OTP)")) do |c|
+      - c.with_description do
+        = s_("Profiles|Automatically sends a verification code to your primary email address during sign-in.")
+      - c.with_body do
+        #js-email-otp-action-confirm{ data: email_otp_enrollment_restriction_confirm_data(current_user) }

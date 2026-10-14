@@ -1,20 +1,22 @@
+# frozen_string_literal: true
+
 require_relative '../../migration_helpers'
 
 module RuboCop
   module Cop
     module Migration
       # Cop that checks if 'timestamps' method is called with timezone information.
-      class Timestamps < RuboCop::Cop::Cop
+      class Timestamps < RuboCop::Cop::Base
         include MigrationHelpers
 
-        MSG = 'Do not use `timestamps`, use `timestamps_with_timezone` instead'.freeze
+        MSG = 'Do not use `timestamps`, use `timestamps_with_timezone` instead'
 
         # Check methods in table creation.
         def on_def(node)
           return unless in_migration?(node)
 
           node.each_descendant(:send) do |send_node|
-            add_offense(send_node, :selector) if method_name(send_node) == :timestamps
+            add_offense(send_node.loc.selector) if method_name(send_node) == :timestamps
           end
         end
 

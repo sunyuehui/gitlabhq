@@ -1,30 +1,28 @@
-export default function deviseState(data) {
-  if (data.project_archived) {
-    return 'archived';
-  } else if (data.branch_missing) {
-    return 'missingBranch';
-  } else if (!data.commits_count) {
-    return 'nothingToMerge';
-  } else if (this.mergeStatus === 'unchecked') {
-    return 'checking';
-  } else if (data.has_conflicts) {
-    return 'conflicts';
-  } else if (data.work_in_progress) {
-    return 'workInProgress';
-  } else if (this.onlyAllowMergeIfPipelineSucceeds && this.isPipelineFailed) {
-    return 'pipelineFailed';
-  } else if (this.hasMergeableDiscussionsState) {
-    return 'unresolvedDiscussions';
-  } else if (this.isPipelineBlocked) {
-    return 'pipelineBlocked';
-  } else if (this.hasSHAChanged) {
-    return 'shaMismatch';
-  } else if (this.mergeWhenPipelineSucceeds) {
-    return this.mergeError ? 'autoMergeFailed' : 'mergeWhenPipelineSucceeds';
-  } else if (!this.canMerge) {
-    return 'notAllowedToMerge';
-  } else if (this.canBeMerged) {
-    return 'readyToMerge';
+import { DETAILED_MERGE_STATUS, MWCP_MERGE_STRATEGY } from '../constants';
+import { stateKey } from './state_maps';
+
+export default function deviseState() {
+  if (this.detailedMergeStatus === DETAILED_MERGE_STATUS.PREPARING) {
+    return stateKey.preparing;
+  }
+  if (!this.commitsCount) {
+    return stateKey.nothingToMerge;
+  }
+  if (this.projectArchived) {
+    return stateKey.archived;
+  }
+  if (this.branchMissing) {
+    return stateKey.missingBranch;
+  }
+  if (this.canMerge && this.isSHAMismatch) {
+    return stateKey.shaMismatch;
+  }
+  if (
+    this.detailedMergeStatus === DETAILED_MERGE_STATUS.MERGEABLE ||
+    this.detailedMergeStatus === DETAILED_MERGE_STATUS.CI_STILL_RUNNING ||
+    (!this.autoMergeEnabled && this.preferredAutoMergeStrategy === MWCP_MERGE_STRATEGY)
+  ) {
+    return stateKey.readyToMerge;
   }
   return null;
 }

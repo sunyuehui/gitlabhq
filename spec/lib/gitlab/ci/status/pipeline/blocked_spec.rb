@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Status::Pipeline::Blocked do
+RSpec.describe Gitlab::Ci::Status::Pipeline::Blocked, feature_category: :continuous_integration do
   let(:pipeline) { double('pipeline') }
 
   subject do
@@ -9,7 +11,7 @@ describe Gitlab::Ci::Status::Pipeline::Blocked do
 
   describe '#text' do
     it 'overrides status text' do
-      expect(subject.text).to eq 'blocked'
+      expect(subject.text).to eq 'Blocked'
     end
   end
 
@@ -21,6 +23,7 @@ describe Gitlab::Ci::Status::Pipeline::Blocked do
 
   describe '.matches?' do
     let(:user) { double('user') }
+
     subject { described_class.matches?(pipeline, user) }
 
     context 'when pipeline is blocked' do

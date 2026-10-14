@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe PushEventPayloadService do
+RSpec.describe PushEventPayloadService, feature_category: :source_code_management do
   let(:event) { create(:push_event) }
 
   describe '#execute' do
@@ -68,7 +70,7 @@ describe PushEventPayloadService do
 
   describe '#commit_from_id' do
     it 'returns nil when creating a new ref' do
-      service = described_class.new(event, before: Gitlab::Git::BLANK_SHA)
+      service = described_class.new(event, before: Gitlab::Git::SHA1_BLANK_SHA)
 
       expect(service.commit_from_id).to be_nil
     end
@@ -82,7 +84,7 @@ describe PushEventPayloadService do
 
   describe '#commit_to_id' do
     it 'returns nil when removing an existing ref' do
-      service = described_class.new(event, after: Gitlab::Git::BLANK_SHA)
+      service = described_class.new(event, after: Gitlab::Git::SHA1_BLANK_SHA)
 
       expect(service.commit_to_id).to be_nil
     end
@@ -154,43 +156,41 @@ describe PushEventPayloadService do
 
   describe '#create?' do
     it 'returns true when creating a new ref' do
-      service = described_class.new(event, before: Gitlab::Git::BLANK_SHA)
+      service = described_class.new(event, before: Gitlab::Git::SHA1_BLANK_SHA)
 
-      expect(service.create?).to eq(true)
+      expect(service.create?).to be(true)
     end
 
     it 'returns false when pushing to an existing ref' do
       service = described_class.new(event, before: 'foo')
 
-      expect(service.create?).to eq(false)
+      expect(service.create?).to be(false)
     end
   end
 
   describe '#remove?' do
     it 'returns true when removing an existing ref' do
-      service = described_class.new(event, after: Gitlab::Git::BLANK_SHA)
+      service = described_class.new(event, after: Gitlab::Git::SHA1_BLANK_SHA)
 
-      expect(service.remove?).to eq(true)
+      expect(service.remove?).to be(true)
     end
 
     it 'returns false pushing to an existing ref' do
       service = described_class.new(event, after: 'foo')
 
-      expect(service.remove?).to eq(false)
+      expect(service.remove?).to be(false)
     end
   end
 
   describe '#action' do
     it 'returns :created when creating a ref' do
-      service = described_class.new(event, before: Gitlab::Git::BLANK_SHA)
+      service = described_class.new(event, before: Gitlab::Git::SHA1_BLANK_SHA)
 
       expect(service.action).to eq(:created)
     end
 
     it 'returns :removed when removing an existing ref' do
-      service = described_class.new(event,
-                                    before: '123',
-                                    after: Gitlab::Git::BLANK_SHA)
+      service = described_class.new(event, before: '123', after: Gitlab::Git::SHA1_BLANK_SHA)
 
       expect(service.action).to eq(:removed)
     end

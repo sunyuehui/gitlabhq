@@ -1,20 +1,30 @@
+# frozen_string_literal: true
+
 module API
   module MilestoneResponses
     extend ActiveSupport::Concern
 
     included do
       helpers do
+        include ::API::Concerns::Milestones::GroupProjectParams
+
         params :optional_params do
           optional :description, type: String, desc: 'The description of the milestone'
-          optional :due_date, type: String, desc: 'The due date of the milestone. The ISO 8601 date format (%Y-%m-%d)'
-          optional :start_date, type: String, desc: 'The start date of the milestone. The ISO 8601 date format (%Y-%m-%d)'
+          optional :due_date, type: String, desc: 'Due date of the milestone, in ISO 8601 format (`YYYY-MM-DD`).'
+          optional :start_date, type: String, desc: 'Start date of the milestone, in ISO 8601 format (`YYYY-MM-DD`).'
         end
 
         params :list_params do
           optional :state, type: String, values: %w[active closed all], default: 'all',
-                           desc: 'Return "active", "closed", or "all" milestones'
-          optional :iids, type: Array[Integer], desc: 'The IIDs of the milestones'
+            desc: 'Return "active", "closed", or "all" milestones'
+          optional :iids, type: Array[Integer], coerce_with: ::API::Validations::Types::CommaSeparatedToIntegerArray.coerce, desc: 'Return only the milestones having the given `iid`. Ignored if `include_ancestors` is `true`.'
+          optional :title, type: String, desc: 'The title of the milestones'
           optional :search, type: String, desc: 'The search criteria for the title or description of the milestone'
+          optional :include_parent_milestones, type: Grape::API::Boolean, desc: 'If `true`, includes milestones from all parent groups. [Deprecated](https://gitlab.com/gitlab-org/gitlab/-/issues/433298). Use `include_ancestors` instead.'
+          optional :include_ancestors, type: Grape::API::Boolean, desc: 'Include milestones from all parent groups'
+          optional :updated_before, type: DateTime, desc: 'Return milestones updated before the specified datetime. Format: ISO 8601 YYYY-MM-DDTHH:MM:SSZ'
+          optional :updated_after, type: DateTime, desc: 'Return milestones updated after the specified datetime. Format: ISO 8601 YYYY-MM-DDTHH:MM:SSZ'
+          mutually_exclusive :include_ancestors, :include_parent_milestones
           use :pagination
         end
 
@@ -22,16 +32,22 @@ module API
           requires :milestone_id, type: Integer, desc: 'The milestone ID number'
           optional :title, type: String, desc: 'The title of the milestone'
           optional :state_event, type: String, values: %w[close activate],
-                                 desc: 'The state event of the milestone '
+            desc: 'State event of the milestone.'
           use :optional_params
-          at_least_one_of :title, :description, :due_date, :state_event
+          at_least_one_of :title, :description, :start_date, :due_date, :state_event
         end
 
         def list_milestones_for(parent)
-          milestones = parent.milestones
-          milestones = Milestone.filter_by_state(milestones, params[:state])
-          milestones = filter_by_iid(milestones, params[:iids]) if params[:iids].present?
-          milestones = filter_by_search(milestones, params[:search]) if params[:search]
+          if params.include?(:include_parent_milestones)
+            params[:include_ancestors] = params.delete(:include_parent_milestones)
+          else
+            # include_ancestors should default to false
+            params[:include_ancestors] ||= false
+          end
+
+          milestones = MilestonesFinder.new(
+            params.merge(parent_finder_params(parent))
+          ).execute
 
           present paginate(milestones), with: Entities::Milestone
         end
@@ -71,8 +87,16 @@ module API
 
           params = build_finder_params(milestone, parent)
 
-          issuables = finder_klass.new(current_user, params).execute
+          issuables = finder_klass.new(current_user, params).execute.with_api_entity_associations
           present paginate(issuables), with: entity, current_user: current_user
+        end
+
+        def parent_finder_params(parent)
+          if parent.is_a?(Project)
+            project_finder_params(parent, params)
+          else
+            group_finder_params(parent, params)
+          end
         end
 
         def build_finder_params(milestone, parent)

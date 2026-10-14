@@ -1,12 +1,9 @@
-- content_for :page_specific_javascripts do
-  = page_specific_javascript_bundle_tag('stl_viewer')
-
 .file-content.is-stl-loading
-  .text-center#js-stl-viewer{ data: { endpoint: blob_raw_path } }
-    = icon('spinner spin 2x', class: 'prepend-top-default append-bottom-default', 'aria-hidden' => 'true', 'aria-label' => 'Loading')
-  .text-center.prepend-top-default.append-bottom-default.stl-controls
+  .gl-text-center#js-stl-viewer{ data: { endpoint: blob_raw_path } }
+    = gl_loading_icon(size: "md", css_class: "gl-my-4")
+  .gl-text-center.gl-mt-3.gl-mb-3.stl-controls
     .btn-group
-      %button.btn.btn-default.btn-sm.js-material-changer{ data: { type: 'wireframe' } }
-        Wireframe
-      %button.btn.btn-default.btn-sm.active.js-material-changer{ data: { type: 'default' } }
-        Solid
+      = render Pajamas::ButtonComponent.new(size: :small, button_options: { class: 'js-material-changer', data: { material: 'wireframe' } }) do
+        = _('Wireframe')
+      = render Pajamas::ButtonComponent.new(size: :small, button_options: { class: 'js-material-changer selected', data: { material: 'default' } }) do
+        = _('Solid')

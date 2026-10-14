@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module HealthChecks
     class DbCheck
@@ -10,16 +12,14 @@ module Gitlab
           'db_ping'
         end
 
-        def is_successful?(result)
-          result == '1'
+        def successful?(result)
+          result == Gitlab::Database.database_base_models.size
         end
 
         def check
           catch_timeout 10.seconds do
-            if Gitlab::Database.postgresql?
-              ActiveRecord::Base.connection.execute('SELECT 1 as ping')&.first&.[]('ping')
-            else
-              ActiveRecord::Base.connection.execute('SELECT 1 as ping')&.first&.first&.to_s
+            Gitlab::Database.database_base_models.sum do |_, base|
+              base.connection.select_value('SELECT 1')
             end
           end
         end

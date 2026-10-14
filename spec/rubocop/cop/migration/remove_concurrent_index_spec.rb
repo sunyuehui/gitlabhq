@@ -1,41 +1,31 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
-require 'rubocop'
-require 'rubocop/rspec/support'
-
+require 'rubocop_spec_helper'
 require_relative '../../../../rubocop/cop/migration/remove_concurrent_index'
 
-describe RuboCop::Cop::Migration::RemoveConcurrentIndex do
-  include CopHelper
-
-  subject(:cop) { described_class.new }
-
+RSpec.describe RuboCop::Cop::Migration::RemoveConcurrentIndex, feature_category: :database do
   context 'in migration' do
     before do
       allow(cop).to receive(:in_migration?).and_return(true)
     end
 
     it 'registers an offense when remove_concurrent_index is used inside a change method' do
-      inspect_source(cop, 'def change; remove_concurrent_index :table, :column; end')
-
-      aggregate_failures do
-        expect(cop.offenses.size).to eq(1)
-        expect(cop.offenses.map(&:line)).to eq([1])
-      end
+      expect_offense(<<~RUBY)
+        def change
+            ^^^^^^ `remove_concurrent_index` is not reversible [...]
+          remove_concurrent_index :table, :column
+        end
+      RUBY
     end
 
     it 'registers no offense when remove_concurrent_index is used inside an up method' do
-      inspect_source(cop, 'def up; remove_concurrent_index :table, :column; end')
-
-      expect(cop.offenses.size).to eq(0)
+      expect_no_offenses('def up; remove_concurrent_index :table, :column; end')
     end
   end
 
   context 'outside of migration' do
     it 'registers no offense' do
-      inspect_source(cop, 'def change; remove_concurrent_index :table, :column; end')
-
-      expect(cop.offenses.size).to eq(0)
+      expect_no_offenses('def change; remove_concurrent_index :table, :column; end')
     end
   end
 end

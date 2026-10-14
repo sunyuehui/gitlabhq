@@ -1,25 +1,29 @@
-.bs-callout.clearfix
-  %p
-    User cohorts are shown for the last #{@cohorts[:months_included]}
-    months. Only users with activity are counted in the cohort total; inactive
-    users are counted separately.
-    = link_to icon('question-circle'), help_page_path('user/admin_area/user_cohorts', anchor: 'cohorts'), title: 'About this feature', target: '_blank'
+- number_of_data_columns = @cohorts[:months_included] - 1
 
-.table-holder
+.table-holder{ class: '@xl/panel:gl-table' }
   %table.table
     %thead
       %tr
-        %th Registration month
-        %th Inactive users
-        %th Cohort total
-        - @cohorts[:months_included].times do |i|
-          %th Month #{i}
+        %th{ colspan: 3, class: '!gl-pt-6 !gl-border-r' }
+          = s_("Cohorts|New users")
+        %th{ colspan: number_of_data_columns, class: '!gl-font-bold !gl-pt-6' }
+          = s_("Cohorts|Returning users")
+      %tr
+        %th{ class: "!gl-border-t-0" }
+          = s_("Cohorts|Registration month")
+        %th{ class: "!gl-border-t-0" }
+          = s_("Cohorts|Inactive users")
+        %th{ class: "!gl-border-t-0 !gl-border-r" }
+          = s_("Cohorts|Active users")
+        - number_of_data_columns.times do |i|
+          %th{ class: "!gl-border-t-0" }
+            = s_("Cohorts|Month %{month_index}") % { month_index: i + 1 }
     %tbody
       - @cohorts[:cohorts].each do |cohort|
         %tr
           %td= cohort[:registration_month]
           %td= cohort[:inactive]
-          %td= cohort[:total]
+          %td{ class: "!gl-border-r" }= cohort[:total]
           - cohort[:activity_months].each do |activity_month|
             %td
               - next if cohort[:total] == '0'

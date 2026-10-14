@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Adds support for WITH statements when using PostgreSQL. The code here is taken
 # from https://github.com/shmay/ctes_in_my_pg which at the time of writing has
 # not been pushed to RubyGems. The license of this repository is as follows:
@@ -38,6 +40,8 @@ module ActiveRecord::Querying
   delegate :with, to: :all
 end
 
+# Rails 7.1 defines #with method.
+# Therefore, this file can be either simplified or completely removed.
 module ActiveRecord
   class Relation
     # WithChain objects act as placeholder for queries in which #with does not have any parameter.
@@ -49,23 +53,26 @@ module ActiveRecord
 
       # Returns a new relation expressing WITH RECURSIVE
       def recursive(*args)
-        @scope.with_values += args
+        @scope.with_values_ += args
         @scope.recursive_value = true
+        @scope.extend(Gitlab::Database::ReadOnlyRelation)
         @scope
       end
     end
 
-    def with_values
-      @values[:with] || []
+    def with_values_
+      @values[:with_values] || []
     end
 
-    def with_values=(values)
-      raise ImmutableRelation if @loaded
-      @values[:with] = values
+    def with_values_=(values)
+      raise UnmodifiableRelation if @loaded
+
+      @values[:with_values] = values
     end
 
     def recursive_value=(value)
-      raise ImmutableRelation if @loaded
+      raise UnmodifiableRelation if @loaded
+
       @values[:recursive] = value
     end
 
@@ -87,26 +94,24 @@ module ActiveRecord
       if opts == :chain
         WithChain.new(self)
       else
-        self.with_values += [opts] + rest
+        self.with_values_ += [opts] + rest
         self
       end
     end
 
-    def build_arel
-      arel = super()
+    def build_arel(*)
+      arel = super
 
-      build_with(arel) if @values[:with]
+      build_with(arel) if @values[:with_values]
 
       arel
     end
 
     def build_with(arel)
-      with_statements = with_values.flat_map do |with_value|
+      with_statements = with_values_.flat_map do |with_value|
         case with_value
-        when String
-          with_value
         when Hash
-          with_value.map  do |name, expression|
+          with_value.map do |name, expression|
             case expression
             when String
               select = Arel::Nodes::SqlLiteral.new "(#{expression})"
@@ -115,17 +120,17 @@ module ActiveRecord
             end
             Arel::Nodes::As.new Arel::Nodes::SqlLiteral.new("\"#{name}\""), select
           end
-        when Arel::Nodes::As
+        when String, Arel::Nodes::As, Gitlab::Database::AsWithMaterialized
           with_value
         end
       end
 
-      unless with_statements.empty?
-        if recursive_value
-          arel.with :recursive, with_statements
-        else
-          arel.with with_statements
-        end
+      return if with_statements.empty?
+
+      if recursive_value
+        arel.with :recursive, with_statements
+      else
+        arel.with with_statements
       end
     end
   end

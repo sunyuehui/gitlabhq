@@ -1,139 +1,274 @@
+# frozen_string_literal: true
+
+# This module makes it possible to handle items as a list, where the order of items can be easily altered
+# Requirements:
+#
+# The model must have the following named columns:
+#  - id: integer
+#  - relative_position: integer
+#
+# The model must support a concept of siblings via a child->parent relationship,
+# to enable rebalancing and `GROUP BY` in queries.
+# - example: project -> issues, project is the parent relation (issues table has a parent_id column)
+#
+# Two class methods must be defined when including this concern:
+#
+#     include RelativePositioning
+#
+#     # base query used for the position calculation
+#     def self.relative_positioning_query_base(issue)
+#       where(deleted: false)
+#     end
+#
+#     # column that should be used in GROUP BY
+#     def self.relative_positioning_parent_column
+#       :project_id
+#     end
+#
+# The following class methods may be overridden to customize positioning behaviour,
+# for example when the underlying column has been migrated to bigint:
+#
+#     def self.relative_positioning_min_position = Gitlab::Database::MIN_BIGINT_VALUE
+#     def self.relative_positioning_max_position = Gitlab::Database::MAX_BIGINT_VALUE
+#
 module RelativePositioning
   extend ActiveSupport::Concern
+  include ::Gitlab::RelativePositioning
 
-  MIN_POSITION = 0
-  START_POSITION = Gitlab::Database::MAX_INT_VALUE / 2
-  MAX_POSITION = Gitlab::Database::MAX_INT_VALUE
-  IDEAL_DISTANCE = 500
-
-  included do
-    after_save :save_positionable_neighbours
-  end
-
-  def max_relative_position
-    self.class.in_projects(project.id).maximum(:relative_position)
-  end
-
-  def prev_relative_position
-    prev_pos = nil
-
-    if self.relative_position
-      prev_pos = self.class
-        .in_projects(project.id)
-        .where('relative_position < ?', self.relative_position)
-        .maximum(:relative_position)
+  class_methods do
+    def relative_positioning_column(_object = nil)
+      arel_table[:relative_position]
     end
 
-    prev_pos
-  end
-
-  def next_relative_position
-    next_pos = nil
-
-    if self.relative_position
-      next_pos = self.class
-        .in_projects(project.id)
-        .where('relative_position > ?', self.relative_position)
-        .minimum(:relative_position)
+    def relative_positioning_min_position
+      ::Gitlab::RelativePositioning::MIN_POSITION
     end
 
-    next_pos
+    def relative_positioning_max_position
+      ::Gitlab::RelativePositioning::MAX_POSITION
+    end
+
+    def relative_positioning_start_position
+      ::Gitlab::RelativePositioning::START_POSITION
+    end
+
+    def relative_positioning_ideal_distance
+      ::Gitlab::RelativePositioning::IDEAL_DISTANCE
+    end
+
+    def relative_positioning_max_gap
+      ::Gitlab::RelativePositioning::MAX_GAP
+    end
+
+    def mover
+      ::Gitlab::RelativePositioning::Mover.new(
+        relative_positioning_start_position,
+        relative_positioning_min_position..relative_positioning_max_position,
+        ideal_distance: relative_positioning_ideal_distance,
+        max_gap: relative_positioning_max_gap
+      )
+    end
+
+    def move_nulls_to_end(objects)
+      move_nulls(objects, at_end: true)
+    end
+
+    def move_nulls_to_start(objects)
+      move_nulls(objects, at_end: false)
+    end
+
+    private
+
+    # @api private
+    # No-op by default; overridden on Issue to preload work_item_positions (avoids an N+1).
+    def preload_positioning_associations(_objects); end
+
+    # @api private
+    # Persists a batch of positions; overridden on Issue to write work_item_positions.
+    def assign_relative_positions(mapping)
+      ::Gitlab::Database::BulkUpdate.execute([:relative_position], mapping, &:model_class)
+    end
+
+    # @api private
+    def gap_size(context, gaps:, at_end:, starting_from:)
+      ideal = relative_positioning_ideal_distance
+      min_pos = relative_positioning_min_position
+      max_pos = relative_positioning_max_position
+
+      total_width = ideal * gaps
+      size = if at_end && starting_from + total_width >= max_pos
+               (max_pos - starting_from) / gaps
+             elsif !at_end && starting_from - total_width <= min_pos
+               (starting_from - min_pos) / gaps
+             else
+               ideal
+             end
+
+      return [size, starting_from] if size >= ::Gitlab::RelativePositioning::MIN_GAP
+
+      terminus = context.at_position(starting_from)
+
+      if at_end
+        terminus.shift_left
+        max_relative_position = terminus.relative_position
+        [[(max_pos - max_relative_position) / gaps, ideal].min, max_relative_position]
+      else
+        terminus.shift_right
+        min_relative_position = terminus.relative_position
+        [[(min_relative_position - min_pos) / gaps, ideal].min, min_relative_position]
+      end
+    end
+
+    # @api private
+    # @param [Array<RelativePositioning>] objects The objects to give positions to. The relative
+    #                                             order will be preserved (i.e. when this method returns,
+    #                                             objects.first.relative_position < objects.last.relative_position)
+    # @param [Boolean] at_end: The placement.
+    #                          If `true`, then all objects with `null` positions are placed _after_
+    #                          all siblings with positions. If `false`, all objects with `null`
+    #                          positions are placed _before_ all siblings with positions.
+    # @returns [Number] The number of moved records.
+    def move_nulls(objects, at_end:)
+      preload_positioning_associations(objects)
+      objects = objects.reject(&:relative_position)
+      return 0 if objects.empty?
+
+      objects.first.check_repositioning_allowed!
+
+      number_of_gaps = objects.size # 1 to the nearest neighbour, and one between each
+      representative = mover.context(objects.first)
+
+      position = if at_end
+                   representative.max_relative_position
+                 else
+                   representative.min_relative_position
+                 end
+
+      position ||= relative_positioning_start_position
+
+      gap = 0
+      attempts = 10 # consolidate up to 10 gaps to find enough space
+      while gap < 1 && attempts > 0
+        gap, position = gap_size(representative, gaps: number_of_gaps, at_end: at_end, starting_from: position)
+        attempts -= 1
+      end
+
+      # Allow placing items next to each other, if we have to.
+      gap = 1 if gap < ::Gitlab::RelativePositioning::MIN_GAP
+      delta = at_end ? gap : -gap
+      indexed = (at_end ? objects : objects.reverse).each_with_index
+
+      min_pos = relative_positioning_min_position
+      max_pos = relative_positioning_max_position
+      lower_bound, upper_bound = at_end ? [position, max_pos] : [min_pos, position]
+
+      representative.model_class.transaction do
+        indexed.each_slice(100) do |batch|
+          mapping = batch.to_h.transform_values! do |i|
+            desired_pos = position + (delta * (i + 1))
+            { relative_position: desired_pos.clamp(lower_bound, upper_bound) }
+          end
+
+          assign_relative_positions(mapping)
+        end
+      end
+
+      objects.size
+    end
+  end
+
+  # To be overridden on child classes whenever
+  # blocking position updates is necessary.
+  def check_repositioning_allowed!
+    nil
   end
 
   def move_between(before, after)
-    return move_after(before) unless after
-    return move_before(after) unless before
+    before, after = [before, after].sort_by(&:relative_position) if before && after
 
-    # If there is no place to insert an issue we need to create one by moving the before issue closer
-    # to its predecessor. This process will recursively move all the predecessors until we have a place
-    if (after.relative_position - before.relative_position) < 2
-      before.move_before
-      @positionable_neighbours = [before]
-    end
-
-    self.relative_position = position_between(before.relative_position, after.relative_position)
+    self.class.mover.move(self, before, after)
+  rescue NoSpaceLeft => e
+    could_not_move(e)
+    raise e
   end
 
   def move_after(before = self)
-    pos_before = before.relative_position
-    pos_after = before.next_relative_position
-
-    if before.shift_after?
-      issue_to_move = self.class.in_projects(project.id).find_by!(relative_position: pos_after)
-      issue_to_move.move_after
-      @positionable_neighbours = [issue_to_move]
-
-      pos_after = issue_to_move.relative_position
-    end
-
-    self.relative_position = position_between(pos_before, pos_after)
+    self.class.mover.move(self, before, nil)
+  rescue NoSpaceLeft => e
+    could_not_move(e)
+    raise e
   end
 
   def move_before(after = self)
-    pos_after = after.relative_position
-    pos_before = after.prev_relative_position
-
-    if after.shift_before?
-      issue_to_move = self.class.in_projects(project.id).find_by!(relative_position: pos_before)
-      issue_to_move.move_before
-      @positionable_neighbours = [issue_to_move]
-
-      pos_before = issue_to_move.relative_position
-    end
-
-    self.relative_position = position_between(pos_before, pos_after)
+    self.class.mover.move(self, nil, after)
+  rescue NoSpaceLeft => e
+    could_not_move(e)
+    raise e
   end
 
   def move_to_end
-    self.relative_position = position_between(max_relative_position || START_POSITION, MAX_POSITION)
+    self.class.mover.move_to_end(self)
+  rescue NoSpaceLeft => e
+    could_not_move(e)
+    self.relative_position = self.class.relative_positioning_max_position
   end
 
-  # Indicates if there is an issue that should be shifted to free the place
-  def shift_after?
-    next_pos = next_relative_position
-    next_pos && (next_pos - relative_position) == 1
+  def move_to_start
+    self.class.mover.move_to_start(self)
+  rescue NoSpaceLeft => e
+    could_not_move(e)
+    self.relative_position = self.class.relative_positioning_min_position
   end
 
-  # Indicates if there is an issue that should be shifted to free the place
-  def shift_before?
-    prev_pos = prev_relative_position
-    prev_pos && (relative_position - prev_pos) == 1
+  def next_object_by_relative_position(ignoring: nil, order: :asc)
+    relation = relative_positioning_scoped_items(ignoring: ignoring).reorder(relative_position: order)
+
+    relation = if order == :asc
+                 relation.where(self.class.arel_table[:relative_position].gt(relative_position))
+               else
+                 relation.where(self.class.arel_table[:relative_position].lt(relative_position))
+               end
+
+    relation.first
   end
 
-  private
-
-  # This method takes two integer values (positions) and
-  # calculates the position between them. The range is huge as
-  # the maximum integer value is 2147483647. We are incrementing position by IDEAL_DISTANCE * 2 every time
-  # when we have enough space. If distance is less then IDEAL_DISTANCE we are calculating an average number
-  def position_between(pos_before, pos_after)
-    pos_before ||= MIN_POSITION
-    pos_after ||= MAX_POSITION
-
-    pos_before, pos_after = [pos_before, pos_after].sort
-
-    halfway = (pos_after + pos_before) / 2
-    distance_to_halfway = pos_after - halfway
-
-    if distance_to_halfway < IDEAL_DISTANCE
-      halfway
-    else
-      if pos_before == MIN_POSITION
-        pos_after - IDEAL_DISTANCE
-      elsif pos_after == MAX_POSITION
-        pos_before + IDEAL_DISTANCE
-      else
-        halfway
-      end
-    end
+  def relative_positioning_scoped_items(ignoring: nil)
+    relation = self.class.relative_positioning_query_base(self)
+    relation = exclude_self(relation, excluded: ignoring) if ignoring.present?
+    relation
   end
 
-  def save_positionable_neighbours
-    return unless @positionable_neighbours
+  # This method is used during rebalancing - override it to customise the update
+  # logic:
+  def update_relative_siblings(relation, range, delta)
+    # Only the range predicate uses the flag-aware column (Issue -> work_item_positions when
+    # the read flag is on) so it hits the positioning index; the SET still writes the model's
+    # own relative_position, table-qualified to disambiguate the joined table.
+    position = self.class.arel_table[:relative_position]
 
-    status = @positionable_neighbours.all?(&:save)
-    @positionable_neighbours = nil
+    relation
+      .where(self.class.relative_positioning_column(self).between(range))
+      .update_all(relative_position: position + delta)
+  end
 
-    status
+  # This method is used to exclude the current self (or another object)
+  # from a relation. Customize this if `id <> :id` is not sufficient
+  def exclude_self(relation, excluded: self)
+    relation.id_not_in(excluded.id)
+  end
+
+  # Override if you want to be notified of failures to move
+  def could_not_move(exception); end
+
+  # Override if the implementing class is not a simple application record, for
+  # example if the record is loaded from a union.
+  def reset_relative_position
+    reset.relative_position
+  end
+
+  # Override if the model class needs a more complicated computation (e.g. the
+  # object is a member of a union).
+  def model_class
+    self.class
   end
 end

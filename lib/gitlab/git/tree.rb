@@ -1,30 +1,52 @@
-# Gitaly note: JV: needs 1 RPC, migration is in progress.
+# frozen_string_literal: true
 
 module Gitlab
   module Git
     class Tree
       include Gitlab::EncodingHelper
+      extend Gitlab::Git::WrapsGitalyErrors
 
-      attr_accessor :id, :root_id, :name, :path, :type,
-        :mode, :commit_id, :submodule_url
+      attr_accessor :id, :type, :mode, :commit_id, :submodule_url, :ref_type, :last_commit
+      attr_writer :name, :path, :flat_path
 
       class << self
         # Get list of tree objects
         # for repository based on commit sha and path
-        # Uses rugged for raw objects
-        #
-        # Gitaly migration: https://gitlab.com/gitlab-org/gitaly/issues/320
-        def where(repository, sha, path = nil)
+        def tree_entries(
+          repository:,
+          sha:,
+          path: nil,
+          recursive: false,
+          skip_flat_paths: true,
+          rescue_not_found:  true,
+          pagination_params: nil,
+          with_last_commit: false
+        )
           path = nil if path == '' || path == '/'
 
-          Gitlab::GitalyClient.migrate(:tree_entries) do |is_enabled|
-            if is_enabled
-              client = Gitlab::GitalyClient::CommitService.new(repository)
-              client.tree_entries(repository, sha, path)
-            else
-              tree_entries_from_rugged(repository, sha, path)
-            end
+          wrapped_gitaly_errors do
+            repository.gitaly_commit_client.tree_entries(
+              repository, sha, path, recursive, skip_flat_paths, pagination_params,
+              with_last_commit: with_last_commit)
           end
+
+        # Incorrect revision or path could lead to index error.
+        # We silently handle such errors by returning an empty set of entries and cursor
+        # unless the parameter rescue_not_found is set to false.
+        rescue Gitlab::Git::Index::IndexError => e
+          return [[], nil] if rescue_not_found
+
+          raise e
+
+        # Gitaly reports a stale page token as InvalidArgument, which WrapsGitalyErrors
+        # flattens into ArgumentError. Its other InvalidArgument causes, such as a bad
+        # revision or a non-treeish path, have to keep bubbling up untouched.
+        rescue ArgumentError => e
+          raise unless e.message.include?('could not find starting OID')
+
+          # e.cause is the GRPC::BadStatus, so the gRPC status and metadata survive.
+          raise Gitlab::Git::InvalidPageToken.new(e.cause),
+            "Invalid page token: #{pagination_params&.dig(:page_token)}"
         end
 
         private
@@ -48,7 +70,7 @@ module Gitlab
             entry[:name] == path_arr[0] && entry[:type] == :tree
           end
 
-          return nil unless entry
+          return unless entry
 
           if path_arr.size > 1
             path_arr.shift
@@ -57,38 +79,10 @@ module Gitlab
             entry[:oid]
           end
         end
-
-        def tree_entries_from_rugged(repository, sha, path)
-          commit = repository.lookup(sha)
-          root_tree = commit.tree
-
-          tree = if path
-                   id = find_id_by_path(repository, root_tree.oid, path)
-                   if id
-                     repository.lookup(id)
-                   else
-                     []
-                   end
-                 else
-                   root_tree
-                 end
-
-          tree.map do |entry|
-            new(
-              id: entry[:oid],
-              root_id: root_tree.oid,
-              name: entry[:name],
-              type: entry[:type],
-              mode: entry[:filemode].to_s(8),
-              path: path ? File.join(path, entry[:name]) : entry[:name],
-              commit_id: sha
-            )
-          end
-        end
       end
 
       def initialize(options)
-        %w(id root_id name path type mode commit_id).each do |key|
+        %w[id name path flat_path type mode commit_id].each do |key|
           self.send("#{key}=", options[key.to_sym]) # rubocop:disable GitlabSecurity/PublicSend
         end
       end
@@ -99,6 +93,10 @@ module Gitlab
 
       def path
         encode! @path
+      end
+
+      def flat_path
+        encode! @flat_path
       end
 
       def dir?

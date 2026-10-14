@@ -1,8 +1,13 @@
+# frozen_string_literal: true
+
 class ExternalIssue
   include Referable
 
+  attr_reader :project
+
   def initialize(issue_identifier, project)
-    @issue_identifier, @project = issue_identifier, project
+    @issue_identifier = issue_identifier
+    @project = project
   end
 
   def to_s
@@ -21,6 +26,15 @@ class ExternalIssue
     "External Issue #{self}"
   end
 
+  def web_url
+    tracker = project.external_issue_tracker
+    return unless tracker
+
+    URI.parse(tracker.issue_url(id)).to_s
+  rescue URI::InvalidURIError
+    nil
+  end
+
   def ==(other)
     other.is_a?(self.class) && (to_s == other.to_s)
   end
@@ -30,21 +44,25 @@ class ExternalIssue
     [self.class, to_s].hash
   end
 
-  def project
-    @project
-  end
-
   def project_id
-    @project.id
+    project.id
   end
 
-  def to_reference(_from_project = nil, full: nil)
+  def to_reference(_from = nil, full: nil)
+    reference_link_text
+  end
+
+  def reference_link_text(from = nil)
+    return "##{id}" if /^\d+$/.match?(id)
+
     id
   end
 
-  def reference_link_text(from_project = nil)
-    return "##{id}" if id =~ /^\d+$/
+  def supports_time_tracking?
+    false
+  end
 
-    id
+  def notes
+    Note.none
   end
 end

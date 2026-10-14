@@ -1,11 +1,16 @@
-resource :profile, only: [:show, :update] do
-  member do
-    get :audit_log
-    get :applications, to: 'oauth/applications#index'
+# frozen_string_literal: true
 
-    put :reset_private_token
+# for secondary email confirmations - uses the same confirmation controller as :users
+devise_for :emails, path: 'profile/emails', controllers: { confirmations: :confirmations }
+
+resource :profile, only: [] do
+  member do
+    get :audit_log, to: redirect('-/user_settings/authentication_log')
+    get :applications, to: redirect('-/user_settings/applications')
+
     put :reset_incoming_email_token
-    put :reset_rss_token
+    put :reset_feed_token
+    put :reset_static_object_token
     put :update_username
   end
 
@@ -14,43 +19,58 @@ resource :profile, only: [:show, :update] do
       member do
         delete :unlink
       end
+      post :generate_support_pin
     end
-    resource :notifications, only: [:show, :update]
-    resource :password, only: [:new, :create, :edit, :update] do
-      member do
-        put :reset
+
+    resource :notifications, only: [:show, :update] do
+      scope(
+        path: 'groups/*id',
+        id: Gitlab::PathRegex.full_namespace_route_regex,
+        as: :group,
+        controller: :groups,
+        constraints: { format: /(html|json)/ }
+      ) do
+        patch '/', action: :update
+        put '/', action: :update
       end
     end
+
+    resource :slack, only: [:edit] do
+      member do
+        get :slack_link
+      end
+    end
+
     resource :preferences, only: [:show, :update]
-    resources :keys, only: [:index, :show, :create, :destroy]
-    resources :gpg_keys, only: [:index, :create, :destroy] do
+
+    resources :comment_templates, only: [:index, :show], action: :index
+
+    resources :emails, only: [:index, :create, :destroy] do
       member do
-        put :revoke
-      end
-    end
-    resources :emails, only: [:index, :create, :destroy]
-    resources :chat_names, only: [:index, :new, :create, :destroy] do
-      collection do
-        delete :deny
+        put :resend_confirmation_instructions
       end
     end
 
     resource :avatar, only: [:destroy]
 
-    resources :personal_access_tokens, only: [:index, :create] do
-      member do
-        put :revoke
-      end
-    end
+    get 'chat_names', to: redirect('-/user_settings/integration_accounts')
+
+    get 'chat_names/new', to: redirect { |_params, request|
+      "-/user_settings/integration_accounts/new?#{request.query_string}"
+    }
 
     resource :two_factor_auth, only: [:show, :create, :destroy] do
       member do
-        post :create_u2f
         post :codes
         patch :skip
+        post :create_webauthn
+        delete :destroy_otp
+        delete :destroy_webauthn, path: 'destroy_webauthn/:id'
       end
     end
 
-    resources :u2f_registrations, only: [:destroy]
+    resources :passkeys, only: [:new, :create, :destroy]
+
+    resources :usage_quotas, only: [:index]
   end
 end

@@ -1,12 +1,12 @@
+# frozen_string_literal: true
+
 class ProjectSnippet < Snippet
+  self.allow_legacy_sti_class = true
+
   belongs_to :project
-  belongs_to :author, class_name: "User"
 
   validates :project, presence: true
+  validates :secret, inclusion: { in: [false] }
 
-  # Scopes
-  scope :fresh, -> { order("created_at DESC") }
-
-  participant :author
-  participant :notes_with_associations
+  scope :by_project, ->(project) { where(project: project) }
 end

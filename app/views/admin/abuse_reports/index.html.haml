@@ -1,19 +1,6 @@
-- page_title 'Abuse Reports'
-%h3.page-title Abuse Reports
-%hr
-.abuse-reports
-  - if @abuse_reports.present?
-    .table-holder
-      %table.table.responsive-table
-        %thead.hidden-sm.hidden-xs
-          %tr
-            %th User
-            %th Reported by
-            %th.wide Message
-            %th Action
-        = render @abuse_reports
-    = paginate @abuse_reports, theme: 'gitlab'
-  - else
-    .empty-state
-      .text-center
-        %h4 There are no abuse reports! #{emoji_icon('tada')}
+- page_title _('Abuse reports')
+
+= render ::Layouts::PageHeadingComponent.new(_('Abuse reports'), options: { data: { event_tracking_load: 'true', event_tracking: 'view_admin_abuse_reports_pageload' } })
+
+#js-abuse-reports-list-app{ data: abuse_reports_list_data(@abuse_reports) }
+  = gl_loading_icon(css_class: 'gl-my-5', size: 'md')

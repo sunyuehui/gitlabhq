@@ -1,12 +1,14 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Status::Failed do
+RSpec.describe Gitlab::Ci::Status::Failed, feature_category: :continuous_integration do
   subject do
     described_class.new(double('subject'), double('user'))
   end
 
   describe '#text' do
-    it { expect(subject.text).to eq 'failed' }
+    it { expect(subject.text).to eq 'Failed' }
   end
 
   describe '#label' do
@@ -14,7 +16,7 @@ describe Gitlab::Ci::Status::Failed do
   end
 
   describe '#icon' do
-    it { expect(subject.icon).to eq 'icon_status_failed' }
+    it { expect(subject.icon).to eq 'status_failed' }
   end
 
   describe '#favicon' do
@@ -23,5 +25,9 @@ describe Gitlab::Ci::Status::Failed do
 
   describe '#group' do
     it { expect(subject.group).to eq 'failed' }
+  end
+
+  describe '#details_path' do
+    it { expect(subject.details_path).to be_nil }
   end
 end

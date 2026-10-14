@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe DeployKeysProject do
+RSpec.describe DeployKeysProject do
   describe "Associations" do
     it { is_expected.to belong_to(:deploy_key) }
     it { is_expected.to belong_to(:project) }
@@ -8,13 +10,14 @@ describe DeployKeysProject do
 
   describe "Validation" do
     it { is_expected.to validate_presence_of(:project_id) }
-    it { is_expected.to validate_presence_of(:deploy_key_id) }
+    it { is_expected.to validate_presence_of(:deploy_key) }
   end
 
   describe "Destroying" do
     let(:project)     { create(:project) }
-    subject           { create(:deploy_keys_project, project: project) }
     let(:deploy_key)  { subject.deploy_key }
+
+    subject           { create(:deploy_keys_project, project: project) }
 
     context "when the deploy key is only used by this project" do
       context "when the deploy key is public" do
@@ -23,7 +26,7 @@ describe DeployKeysProject do
         end
 
         it "doesn't destroy the deploy key" do
-          subject.destroy
+          subject.destroy!
 
           expect { deploy_key.reload }.not_to raise_error
         end
@@ -31,7 +34,7 @@ describe DeployKeysProject do
 
       context "when the deploy key is private" do
         it "destroys the deploy key" do
-          subject.destroy
+          subject.destroy!
 
           expect { deploy_key.reload }.to raise_error(ActiveRecord::RecordNotFound)
         end
@@ -46,7 +49,7 @@ describe DeployKeysProject do
       end
 
       it "doesn't destroy the deploy key" do
-        subject.destroy
+        subject.destroy!
 
         expect { deploy_key.reload }.not_to raise_error
       end

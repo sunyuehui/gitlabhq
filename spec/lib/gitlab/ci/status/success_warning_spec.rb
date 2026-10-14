@@ -1,24 +1,36 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Status::SuccessWarning do
+RSpec.describe Gitlab::Ci::Status::SuccessWarning, feature_category: :continuous_integration do
+  let(:status) { double('status') }
+
   subject do
-    described_class.new(double('status'))
+    described_class.new(status)
   end
 
-  describe '#test' do
-    it { expect(subject.text).to eq 'passed' }
+  describe '#text' do
+    it { expect(subject.text).to eq 'Warning' }
   end
 
   describe '#label' do
     it { expect(subject.label).to eq 'passed with warnings' }
   end
 
+  describe '#status_tooltip' do
+    it { expect(subject.status_tooltip).to eq 'passed with warnings' }
+  end
+
   describe '#icon' do
-    it { expect(subject.icon).to eq 'icon_status_warning' }
+    it { expect(subject.icon).to eq 'status_warning' }
   end
 
   describe '#group' do
-    it { expect(subject.group).to eq 'success_with_warnings' }
+    it { expect(subject.group).to eq 'success-with-warnings' }
+  end
+
+  describe '#name' do
+    it { expect(subject.name).to eq 'SUCCESS_WITH_WARNINGS' }
   end
 
   describe '.matches?' do
@@ -35,7 +47,7 @@ describe Gitlab::Ci::Status::SuccessWarning do
         end
 
         it 'is a correct match' do
-          expect(described_class.matches?(matchable, double)).to eq true
+          expect(described_class.matches?(matchable, double)).to be true
         end
       end
 
@@ -45,7 +57,7 @@ describe Gitlab::Ci::Status::SuccessWarning do
         end
 
         it 'does not match' do
-          expect(described_class.matches?(matchable, double)).to eq false
+          expect(described_class.matches?(matchable, double)).to be false
         end
       end
     end
@@ -61,13 +73,13 @@ describe Gitlab::Ci::Status::SuccessWarning do
         end
 
         it 'does not match' do
-          expect(described_class.matches?(matchable, double)).to eq false
+          expect(described_class.matches?(matchable, double)).to be false
         end
       end
 
       context 'when matchable subject does not have warnings' do
         it 'does not match' do
-          expect(described_class.matches?(matchable, double)).to eq false
+          expect(described_class.matches?(matchable, double)).to be false
         end
       end
     end

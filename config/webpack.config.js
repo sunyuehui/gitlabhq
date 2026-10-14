@@ -1,160 +1,666 @@
-'use strict';
+// eslint-disable-next-line import-x/order
+const crypto = require('./helpers/patched_crypto');
 
-var fs = require('fs');
-var path = require('path');
-var webpack = require('webpack');
-var StatsWriterPlugin = require('webpack-stats-plugin').StatsWriterPlugin;
-var CopyWebpackPlugin = require('copy-webpack-plugin');
-var CompressionPlugin = require('compression-webpack-plugin');
-var NameAllModulesPlugin = require('name-all-modules-plugin');
-var BundleAnalyzerPlugin = require('webpack-bundle-analyzer').BundleAnalyzerPlugin;
-var WatchMissingNodeModulesPlugin = require('react-dev-utils/WatchMissingNodeModulesPlugin');
+// eslint-disable-next-line import-x/order
+const vueVersion = require('./vue3migration/version');
 
-var ROOT_PATH = path.resolve(__dirname, '..');
-var IS_PRODUCTION = process.env.NODE_ENV === 'production';
-var IS_DEV_SERVER = process.argv.join(' ').indexOf('webpack-dev-server') !== -1;
-var DEV_SERVER_HOST = process.env.DEV_SERVER_HOST || 'localhost';
-var DEV_SERVER_PORT = parseInt(process.env.DEV_SERVER_PORT, 10) || 3808;
-var DEV_SERVER_LIVERELOAD = process.env.DEV_SERVER_LIVERELOAD !== 'false';
-var WEBPACK_REPORT = process.env.WEBPACK_REPORT;
-var NO_COMPRESSION = process.env.NO_COMPRESSION;
+const { VUE_VERSION, USE_VUE3, USE_VUE3_COMPILER, VUE_LOADER_MODULE, logVueVersion } = vueVersion;
 
-var config = {
-  // because sqljs requires fs.
-  node: {
-    fs: "empty"
+logVueVersion('[V]');
+
+const fs = require('fs');
+const path = require('path');
+
+const BABEL_VERSION = require('@babel/core/package.json').version;
+
+const BABEL_LOADER_VERSION = require('babel-loader/package.json').version;
+const CompressionPlugin = require('compression-webpack-plugin');
+const CopyWebpackPlugin = require('copy-webpack-plugin');
+// eslint-disable-next-line import-x/no-dynamic-require
+const { VueLoaderPlugin } = require(VUE_LOADER_MODULE);
+// eslint-disable-next-line import-x/no-dynamic-require
+const VUE_LOADER_VERSION = require(`${VUE_LOADER_MODULE}/package.json`).version;
+const EXACT_VUE_VERSION = require('vue/package.json').version;
+
+const webpack = require('webpack');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
+const { StatsWriterPlugin } = require('webpack-stats-plugin');
+const WEBPACK_VERSION = require('webpack/package.json').version;
+const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin');
+const { isCustomElement } = require('./vue3migration/compilers/vue3_template');
+
+const {
+  IS_EE,
+  IS_JH,
+  ROOT_PATH,
+  WEBPACK_OUTPUT_PATH,
+  SOURCEGRAPH_PUBLIC_PATH,
+  GITLAB_WEB_IDE_PUBLIC_PATH,
+  copyFilesPatterns,
+  IS_PRODUCTION,
+  IS_DEV_SERVER,
+  DEV_SERVER_HOST,
+  DEV_SERVER_PUBLIC_ADDR,
+  DEV_SERVER_PORT,
+  DEV_SERVER_ALLOWED_HOSTS,
+  DEV_SERVER_LIVERELOAD,
+} = require('./webpack.constants');
+const { PDF_JS_WORKER_PUBLIC_PATH, PDF_JS_CMAPS_PUBLIC_PATH } = require('./pdfjs.constants');
+const { generateEntries, applyVue3Migrations } = require('./webpack.helpers');
+const { loadVue3Migrations } = require('./vue3migration/migration');
+
+const createIncrementalWebpackCompiler = require('./helpers/incremental_webpack_compiler');
+const vendorDllHash = require('./helpers/vendor_dll_hash');
+
+const GraphqlKnownOperationsPlugin = require('./plugins/graphql_known_operations_plugin');
+const Vue3MigrationManifestPlugin = require('./vue3migration/plugins/manifest');
+const WebpackVue3InfectionPlugin = require('./vue3migration/plugins/webpack');
+const { supportedBrowsersHash } = require('./helpers/supported_browsers');
+const { aliases } = require('./helpers/aliases');
+const { baseEntryPoints } = require('./helpers/entry_points');
+const { buildOutput } = require('./helpers/output');
+
+const VENDOR_DLL = process.env.WEBPACK_VENDOR_DLL && process.env.WEBPACK_VENDOR_DLL !== 'false';
+const CACHE_PATH = process.env.WEBPACK_CACHE_PATH || path.join(ROOT_PATH, 'tmp/cache/webpack');
+const INCREMENTAL_COMPILER_ENABLED =
+  IS_DEV_SERVER &&
+  process.env.DEV_SERVER_INCREMENTAL &&
+  process.env.DEV_SERVER_INCREMENTAL !== 'false';
+const INCREMENTAL_COMPILER_TTL = Number(process.env.DEV_SERVER_INCREMENTAL_TTL) || Infinity;
+const INCREMENTAL_COMPILER_RECORD_HISTORY = IS_DEV_SERVER && !process.env.CI;
+const WEBPACK_REPORT = process.env.WEBPACK_REPORT && process.env.WEBPACK_REPORT !== 'false';
+const WEBPACK_MEMORY_TEST =
+  process.env.WEBPACK_MEMORY_TEST && process.env.WEBPACK_MEMORY_TEST !== 'false';
+const NO_MINIFY = process.env.NO_MINIFY && process.env.NO_MINIFY !== 'false';
+let NO_COMPRESSION = process.env.NO_COMPRESSION && process.env.NO_COMPRESSION !== 'false';
+let NO_SOURCEMAPS = process.env.NO_SOURCEMAPS && process.env.NO_SOURCEMAPS !== 'false';
+let NO_HASHED_CHUNKS = process.env.NO_HASHED_CHUNKS && process.env.NO_HASHED_CHUNKS !== 'false';
+
+if (WEBPACK_REPORT) {
+  console.log('Webpack report enabled. Running a "slim" production build.');
+  // For our webpack report we need no source maps, compression _or_ hashed file names.
+  NO_SOURCEMAPS = true;
+  NO_COMPRESSION = true;
+  NO_HASHED_CHUNKS = true;
+}
+
+if (process.env.DEBUG_BABEL_ENV === 'true') {
+  console.debug(`BABEL_ENV inside Webpack is: ${process.env.BABEL_ENV}`);
+}
+
+const devtool = IS_PRODUCTION ? 'source-map' : 'cheap-module-eval-source-map';
+
+const incrementalCompiler = createIncrementalWebpackCompiler(
+  INCREMENTAL_COMPILER_RECORD_HISTORY,
+  INCREMENTAL_COMPILER_ENABLED,
+  path.join(CACHE_PATH, 'incremental-webpack-compiler-history.json'),
+  INCREMENTAL_COMPILER_TTL,
+);
+
+const alias = { ...aliases };
+
+// Mermaid v11's transitive deps use package.json "exports" without "main"
+// fallbacks. Webpack 4 doesn't support the exports field, so we alias them
+// to their actual entry files. (Rspack supports "exports", so it omits these.)
+Object.assign(alias, {
+  '@mermaid-js/layout-elk': path.join(
+    ROOT_PATH,
+    'node_modules/@mermaid-js/layout-elk/dist/mermaid-layout-elk.core.mjs',
+  ),
+  // ELK's lazily loaded chunk imports the bare `mermaid` package; map it to the aliased install.
+  mermaid$: 'mermaid-v11',
+  // @json-render/vue imports `@json-render/core/store-utils`, an "exports"-only
+  // subpath of @json-render/core.
+  '@json-render/core/store-utils': path.join(
+    ROOT_PATH,
+    'node_modules/@json-render/core/dist/store-utils.mjs',
+  ),
+  // vscode-languageserver-* ship UMD + ESM builds. Webpack 4 falls back to the
+  // UMD "main" field and emits a critical-dependency warning for the dynamic
+  // require() inside it. Point webpack directly at the clean ESM build.
+  'vscode-languageserver-types': path.join(
+    ROOT_PATH,
+    'node_modules/vscode-languageserver-types/lib/esm/main.js',
+  ),
+  'vscode-languageserver-textdocument': path.join(
+    ROOT_PATH,
+    'node_modules/vscode-languageserver-textdocument/lib/esm/main.js',
+  ),
+});
+
+let dll;
+
+if (VENDOR_DLL && !IS_PRODUCTION) {
+  const dllHash = vendorDllHash();
+  const dllCachePath = path.join(ROOT_PATH, `tmp/cache/webpack-dlls/${dllHash}`);
+  dll = {
+    manifestPath: path.join(dllCachePath, 'vendor.dll.manifest.json'),
+    cacheFrom: dllCachePath,
+    cacheTo: path.join(WEBPACK_OUTPUT_PATH, `dll.${dllHash}/`),
+    publicPath: `dll.${dllHash}/vendor.dll.bundle.js`,
+    exists: null,
+  };
+}
+
+const defaultJsOptions = {
+  cacheDirectory: path.join(CACHE_PATH, 'babel-loader'),
+  cacheIdentifier: [
+    process.env.BABEL_ENV || process.env.NODE_ENV || 'development',
+    webpack.version,
+    BABEL_VERSION,
+    BABEL_LOADER_VERSION,
+    // Ensure that changing supported browsers will refresh the cache
+    // in order to not pull in outdated files that import core-js
+    supportedBrowsersHash,
+    // A VUE_VERSION changes how we alias certain packages
+    // use a different cache to prevent issues when switching between versions
+    VUE_VERSION,
+    // package.json, yarn.lock and patch-package patches: transpiled output of a
+    // changed dependency must not be served from the cache of the old one.
+    vendorDllHash(),
+  ].join('|'),
+  cacheCompression: false,
+};
+
+const vueLoaderOptions = {
+  ident: 'vue-loader-options',
+
+  cacheDirectory: path.join(CACHE_PATH, 'vue-loader'),
+  cacheIdentifier: [
+    process.env.NODE_ENV || 'development',
+    webpack.version,
+    EXACT_VUE_VERSION,
+    VUE_LOADER_VERSION,
+    VUE_VERSION,
+    vendorDllHash(),
+  ].join('|'),
+  compilerOptions: {
+    whitespace: 'preserve',
   },
+};
+
+const shouldExcludeFromCompiling = (modulePath) => {
+  // file with .vue.js extension
+  if (/\.vue\.js$/.test(modulePath)) {
+    return false;
+  }
+
+  // graphql-ws
+  if (/graphql-ws/.test(modulePath)) {
+    return false;
+  }
+
+  // GitLab UI source files (in node_modules)
+  if (new RegExp(path.join(ROOT_PATH, 'node_modules/@gitlab/ui/src')).test(modulePath)) {
+    return false;
+  }
+
+  // Exclude other ./node_modules and ./vendor/assets modules
+  return (
+    new RegExp(path.join(ROOT_PATH, 'node_modules')).test(modulePath) ||
+    new RegExp(path.join(ROOT_PATH, 'vendor/assets')).test(modulePath)
+  );
+};
+
+// vue2_template.js wraps vue-template-compiler and injects distinct keys on same-tag
+// v-if/v-else branches (mirroring the Vue 3 compiler). It's the default for the Vue 2
+// build *and* for the `?vue3`-infected islands compiled here that run on @vue/compat:
+// without those keys the branches are patched in place, and @vue/compat crashes in
+// invokeDirectiveHook ("Cannot read properties of undefined (reading 'value')") when
+// they differ in directives (e.g. v-gl-tooltip on one branch only). The injected keys
+// are a no-op for the Vue 2 runtime. Only the full Vue 3 compiler build overrides it.
+vueLoaderOptions.compiler = path.join(ROOT_PATH, 'config/vue3migration/compilers/vue2_template.js');
+
+if (USE_VUE3) {
+  if (USE_VUE3_COMPILER) {
+    vueLoaderOptions.compiler = path.join(
+      ROOT_PATH,
+      'config/vue3migration/compilers/vue3_template.js',
+    );
+    vueLoaderOptions.compilerOptions.compatConfig = {
+      MODE: 2,
+
+      COMPILER_V_BIND_OBJECT_ORDER: 'suppress-warning',
+      COMPILER_V_BIND_SYNC: 'suppress-warning',
+      COMPILER_V_IF_V_FOR_PRECEDENCE: 'suppress-warning',
+      COMPILER_V_ON_NATIVE: 'suppress-warning',
+    };
+    // Has no real effect here, since we're using thread-loader which serializes config passing to threads
+    // Implemented in custom compiler itself instead, kept here for future upgrade and consistency with vite
+    vueLoaderOptions.compilerOptions.isCustomElement = isCustomElement;
+  }
+}
+
+let entriesState = {
+  autoEntriesCount: 0,
+  watchAutoEntries: [],
+};
+
+module.exports = {
+  /*
+    If there is a compilation error in production, we want to exit immediately
+    https://v4.webpack.js.org/configuration/other-options/#bail
+   */
+  bail: !IS_DEV_SERVER,
+  mode: IS_PRODUCTION ? 'production' : 'development',
+
   context: path.join(ROOT_PATH, 'app/assets/javascripts'),
-  entry: {
-    balsamiq_viewer:      './blob/balsamiq_viewer.js',
-    blob:                 './blob_edit/blob_bundle.js',
-    boards:               './boards/boards_bundle.js',
-    common:               './commons/index.js',
-    common_vue:           ['vue', './vue_shared/common_vue.js'],
-    common_d3:            ['d3'],
-    cycle_analytics:      './cycle_analytics/cycle_analytics_bundle.js',
-    commit_pipelines:     './commit/pipelines/pipelines_bundle.js',
-    deploy_keys:          './deploy_keys/index.js',
-    diff_notes:           './diff_notes/diff_notes_bundle.js',
-    environments:         './environments/environments_bundle.js',
-    environments_folder:  './environments/folder/environments_folder_bundle.js',
-    filtered_search:      './filtered_search/filtered_search_bundle.js',
-    graphs:               './graphs/graphs_bundle.js',
-    graphs_charts:        './graphs/graphs_charts.js',
-    graphs_show:          './graphs/graphs_show.js',
-    group:                './group.js',
-    groups:               './groups/index.js',
-    groups_list:          './groups_list.js',
-    how_to_merge:         './how_to_merge.js',
-    issue_show:           './issue_show/index.js',
-    integrations:         './integrations',
-    job_details:          './jobs/job_details_bundle.js',
-    locale:               './locale/index.js',
-    main:                 './main.js',
-    merge_conflicts:      './merge_conflicts/merge_conflicts_bundle.js',
-    monitoring:           './monitoring/monitoring_bundle.js',
-    network:              './network/network_bundle.js',
-    notebook_viewer:      './blob/notebook_viewer.js',
-    pdf_viewer:           './blob/pdf_viewer.js',
-    pipelines:            './pipelines/pipelines_bundle.js',
-    pipelines_charts:     './pipelines/pipelines_charts.js',
-    pipelines_details:    './pipelines/pipeline_details_bundle.js',
-    pipelines_times:      './pipelines/pipelines_times.js',
-    profile:              './profile/profile_bundle.js',
-    project_import_gl:    './projects/project_import_gitlab_project.js',
-    project_new:          './projects/project_new.js',
-    prometheus_metrics:   './prometheus_metrics',
-    protected_branches:   './protected_branches',
-    protected_tags:       './protected_tags',
-    repo:                 './repo/index.js',
-    sidebar:              './sidebar/sidebar_bundle.js',
-    schedule_form:        './pipeline_schedules/pipeline_schedule_form_bundle.js',
-    schedules_index:      './pipeline_schedules/pipeline_schedules_index_bundle.js',
-    snippet:              './snippet/snippet_bundle.js',
-    sketch_viewer:        './blob/sketch_viewer.js',
-    stl_viewer:           './blob/stl_viewer.js',
-    terminal:             './terminal/terminal_bundle.js',
-    u2f:                  ['vendor/u2f'],
-    ui_development_kit:   './ui_development_kit.js',
-    users:                './users/index.js',
-    raven:                './raven/index.js',
-    vue_merge_request_widget: './vue_merge_request_widget/index.js',
-    test:                 './test.js',
-    two_factor_auth:      './two_factor_auth.js',
-    performance_bar:      './performance_bar.js',
-    webpack_runtime:      './webpack.js',
+
+  entry: () => {
+    /*
+    If you create manual entries, ensure that these import `app/assets/javascripts/webpack.js` right at
+    the top of the entry in order to ensure that the public path is correctly determined for loading
+    assets async. See: https://webpack.js.org/configuration/output/#outputpublicpath
+
+    Note: WebPack 5 has an 'auto' option for the public path which could allow us to remove this option
+    Note 2: If you are using web-workers, you might need to reset the public path, see:
+    https://gitlab.com/gitlab-org/gitlab/-/issues/321656
+     */
+    const migrations = loadVue3Migrations();
+    const generated = generateEntries(baseEntryPoints.default, { migrations });
+    entriesState = generated.entriesState;
+    return {
+      ...applyVue3Migrations(baseEntryPoints, { migrations }),
+      ...incrementalCompiler.filterEntryPoints(generated.entries),
+    };
   },
 
-  output: {
-    path: path.join(ROOT_PATH, 'public/assets/webpack'),
-    publicPath: '/assets/webpack/',
-    filename: IS_PRODUCTION ? '[name].[chunkhash].bundle.js' : '[name].bundle.js',
-    chunkFilename: IS_PRODUCTION ? '[name].[chunkhash].chunk.js' : '[name].chunk.js',
+  output: buildOutput({ hashChunks: !NO_HASHED_CHUNKS }),
+
+  resolve: {
+    extensions: ['.mjs', '.js'],
+    alias,
   },
 
   module: {
+    strictExportPresence: true,
     rules: [
       {
-        test: /\.js$/,
-        exclude: /(node_modules|vendor\/assets)/,
+        type: 'javascript/auto',
+        exclude: /pdfjs-dist-v[34]/,
+        test: /\.mjs$/,
+        use: [],
+      },
+      {
+        test: /(pdfjs).*\.m?js?$/,
+        type: 'javascript/auto',
+        include: /node_modules/,
+        use: [
+          {
+            loader: 'babel-loader',
+            options: {
+              presets: [
+                ['@babel/preset-env', { targets: { esmodules: true }, modules: 'commonjs' }],
+              ],
+              plugins: ['@babel/plugin-transform-classes'],
+              ...defaultJsOptions,
+            },
+          },
+        ],
+      },
+      {
+        test: /(@gitlab\/web-ide).*\.js?$/,
+        include: /node_modules/,
         loader: 'babel-loader',
       },
       {
+        test: /gridstack\/.*\.js$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+      },
+      {
+        test: /jsonc-parser\/.*\.js$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+      },
+      {
+        test: /_worker\.js$/,
+        resourceQuery: /worker/,
+        use: [
+          {
+            loader: 'worker-loader',
+            options: {
+              publicPath: './',
+              filename: '[name].[contenthash:8].worker.js',
+            },
+          },
+          'babel-loader',
+        ],
+      },
+      {
+        // mermaid v11 and its transitive deps (@mermaid-js/parser, @iconify/utils,
+        // es-toolkit) use modern syntax (optional chaining, static blocks) that
+        // webpack 4 can't parse. Transpile them along with both mermaid versions.
+        // vscode-uri (pulled by monaco-yaml) ships the same kind of syntax in its UMD build.
+        test: /(mermaid(-v\d+)?|@mermaid-js|@iconify\/utils|es-toolkit|vscode-\w+)\/.*\.m?js$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+      },
+      {
+        test: /marked\/.*\.js?$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+      },
+      {
+        // @json-render/core and @json-render/vue (peer dependencies of
+        // @gitlab/duo-ui's gen-UI adapter) ship untranspiled ES2020 (optional
+        // chaining, nullish coalescing) that webpack 4 can't parse.
+        test: /@json-render\/.*\.m?js$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+      },
+      {
+        test: /@graphiql\/.*\.m?js$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+      },
+      {
+        test: /@radix-ui\/.*\.m?js$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+      },
+      {
+        test: /(@sentry|@sentry-internal)\/.*\.m?js$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+        options: {
+          plugins: ['@babel/plugin-transform-optional-chaining'],
+        },
+      },
+      {
+        test: /swagger-ui-dist\/.*\.js?$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+        options: defaultJsOptions,
+      },
+      {
+        test: /@swagger-api\/apidom-.*\.[mc]?js$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+        options: {
+          plugins: ['@babel/plugin-transform-class-properties'],
+          ...defaultJsOptions,
+        },
+      },
+      {
+        test: /swagger-client\/.*\.m?js$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+        options: {
+          plugins: ['@babel/plugin-transform-class-properties'],
+          ...defaultJsOptions,
+        },
+      },
+      {
+        test: /@swaggerexpert\/json-pointer\/.*\.[mc]?js$/,
+        include: /node_modules/,
+        loader: 'babel-loader',
+        options: {
+          plugins: ['@babel/plugin-transform-class-properties'],
+          ...defaultJsOptions,
+        },
+      },
+      {
+        // zod (a @gitlab/duo-ui dependency) ships ES2020 syntax (`export * as`, `??`)
+        // in both its ESM and CJS builds, which webpack 4's parser can't read.
+        test: /\.[mc]?js$/,
+        include: /node_modules\/zod\//,
+        loader: 'babel-loader',
+        options: defaultJsOptions,
+      },
+      {
+        // The Yjs CRDT stack ships untranspiled `?.` and `??`, which webpack 4's
+        // parser can't read. y-prosemirror publishes its `src/` directly.
+        test: /\.[mc]?js$/,
+        include: /node_modules\/(yjs|y-prosemirror|y-protocols|lib0)\//,
+        loader: 'babel-loader',
+        options: defaultJsOptions,
+      },
+      {
+        test: /\.(js|cjs)$/,
+        exclude: shouldExcludeFromCompiling,
+        use: [
+          {
+            loader: 'thread-loader',
+            options: {
+              workerParallelJobs: 20,
+              poolRespawn: false,
+              poolParallelJobs: 200,
+              poolTimeout: DEV_SERVER_LIVERELOAD ? Infinity : 5000,
+            },
+          },
+          {
+            loader: 'babel-loader',
+            options: defaultJsOptions,
+          },
+        ],
+      },
+      {
+        test: /\.(js|cjs)$/,
+        include: (modulePath) =>
+          /node_modules\/(monaco-worker-manager|monaco-marker-data-provider)\/index\.js/.test(
+            modulePath,
+          ) || /node_modules\/yaml/.test(modulePath),
+        loader: 'babel-loader',
+        options: {
+          plugins: ['@babel/plugin-transform-numeric-separator'],
+          ...defaultJsOptions,
+        },
+      },
+      {
         test: /\.vue$/,
-        loader: 'vue-loader',
+        loader: VUE_LOADER_MODULE,
+        options: vueLoaderOptions,
+      },
+      {
+        test: /\.(graphql|gql)$/,
+        exclude: /node_modules/,
+        loader: 'graphql-tag/loader',
       },
       {
         test: /\.svg$/,
-        loader: 'raw-loader',
+        oneOf: [
+          {
+            resourceQuery: /raw/,
+            loader: 'raw-loader',
+          },
+          {
+            exclude: /@gitlab\/svgs\/.+\.svg$/,
+            resourceQuery: /url/,
+            loader: 'file-loader',
+            options: {
+              name: '[name].[contenthash:8].[ext]',
+              esModule: false,
+            },
+          },
+          {
+            test: /@gitlab\/svgs\/.+\.svg$/,
+            loader: 'file-loader',
+            options: {
+              name: '[name].[contenthash:8].[ext]',
+            },
+          },
+        ],
       },
       {
-        test: /\.(gif|png)$/,
+        test: /\.(gif|png|mp4)$/,
         loader: 'url-loader',
         options: { limit: 2048 },
       },
       {
-        test: /\.(worker(\.min)?\.js|pdf|bmpr)$/,
+        test: /\.(worker(\.min)?\.js|pdf)$/,
         exclude: /node_modules/,
         loader: 'file-loader',
         options: {
-          name: '[name].[hash].[ext]',
-        }
+          name: '[name].[contenthash:8].[ext]',
+        },
       },
       {
-        test: /locale\/\w+\/(.*)\.js$/,
-        loader: 'exports-loader?locales',
-      },
-      {
-        test: /monaco-editor\/\w+\/vs\/loader\.js$/,
+        test: /.css$/,
         use: [
-          { loader: 'exports-loader', options: 'l.global' },
-          { loader: 'imports-loader', options: 'l=>{},this=>l,AMDLoader=>this,module=>undefined' },
+          'style-loader',
+          {
+            loader: 'css-loader',
+            options: {
+              modules: 'global',
+              localIdentName: '[name].[contenthash:8].[ext]',
+            },
+          },
         ],
-      }
-    ],
+      },
+      {
+        test: /\.(eot|ttf|woff|woff2)$/,
+        include: /node_modules\/(katex\/dist\/fonts|monaco-editor)/,
+        loader: 'file-loader',
+        options: {
+          name: '[name].[contenthash:8].[ext]',
+          esModule: false,
+        },
+      },
+      {
+        test: /editor\/schema\/.+\.json$/,
+        type: 'javascript/auto',
+        loader: 'file-loader',
+        options: {
+          name: '[name].[contenthash:8].[ext]',
+        },
+      },
+      {
+        exclude: /\.svg$/,
+        resourceQuery: /raw/,
+        loader: 'raw-loader',
+      },
+    ].filter(Boolean),
+  },
 
-    noParse: [/monaco-editor\/\w+\/vs\//],
+  optimization: {
+    // Terser forks (CPU count - 1) workers that run outside the main Node heap,
+    // so scripts/lib/assets_heap_sizing.rb must leave memory for them.
+    minimize: IS_PRODUCTION && !NO_MINIFY,
+    // Replace 'hashed' with 'deterministic' in webpack 5
+    moduleIds: 'hashed',
+    chunkIds: 'named', // at least makes named chunks stable,
+    runtimeChunk: 'single',
+    splitChunks: {
+      maxInitialRequests: 20,
+      // In order to prevent firewalls tripping up: https://gitlab.com/gitlab-org/gitlab/-/issues/22648
+      automaticNameDelimiter: '-',
+      cacheGroups: {
+        default: false,
+        common: () => ({
+          priority: 20,
+          name: 'main',
+          chunks: 'initial',
+          minChunks: entriesState.autoEntriesCount * 0.9,
+        }),
+        prosemirror: {
+          priority: 17,
+          name: 'prosemirror',
+          chunks: 'all',
+          test: /[\\/]node_modules[\\/]prosemirror.*?[\\/]/,
+          minChunks: 2,
+          reuseExistingChunk: true,
+        },
+        monaco: {
+          priority: 15,
+          name: 'monaco',
+          chunks: 'all',
+          test: /[\\/]node_modules[\\/]monaco-editor[\\/]/,
+          minChunks: 2,
+          reuseExistingChunk: true,
+        },
+        echarts: {
+          priority: 14,
+          name: 'echarts',
+          chunks: 'all',
+          test: /[\\/]node_modules[\\/](echarts|zrender)[\\/]/,
+          minChunks: 2,
+          reuseExistingChunk: true,
+        },
+        vendors: {
+          priority: 10,
+          chunks: 'async',
+          test: /[\\/](node_modules|vendor[\\/]assets[\\/]javascripts)[\\/]/,
+        },
+        commons: {
+          chunks: 'all',
+          minChunks: 2,
+          reuseExistingChunk: true,
+        },
+      },
+    },
   },
 
   plugins: [
+    !USE_VUE3 && new WebpackVue3InfectionPlugin(),
+    // A custom function is needed because chunkIds: "named" alone only
+    // affects chunks that already have names (entry points, chunks with
+    // magic comments such as:
+    //
+    // /* webpackChunkName: "my-chunk" */
+    //
+    // Anonymous chunks, such as dynamic imports without names, would
+    // still get incremental IDs and could cause different IDs to be
+    // assigned across different runs.
+    //
+    // See https://gitlab.com/gitlab-com/gl-infra/production/-/issues/20271.
+    // This should not be needed with Webpack 5.
+    !DEV_SERVER_LIVERELOAD &&
+      new webpack.NamedChunksPlugin((chunk) => {
+        // Keep named chunks as-is (entries, magic comments)
+        if (chunk.name) return chunk.name;
+
+        // Get all module IDs in this chunk, sorted for stability
+        const ids = Array.from(chunk.modulesIterable, (m) => m.id).sort();
+
+        const hash = crypto.createHash('sha256').update(ids.join('_')).digest('hex');
+
+        return hash.slice(0, 8);
+      }),
     // manifest filename must match config.webpack.manifest_filename
     // webpack-rails only needs assetsByChunkName to function properly
     new StatsWriterPlugin({
       filename: 'manifest.json',
-      transform: function(data, opts) {
-        var stats = opts.compiler.getStats().toJson({
+      transform(data, opts) {
+        const stats = opts.compiler.getStats().toJson({
           chunkModules: false,
           source: false,
           chunks: false,
           modules: false,
-          assets: true
+          assets: true,
+          errors: !IS_PRODUCTION,
+          warnings: !IS_PRODUCTION,
         });
+
+        // tell our rails helper where to find the DLL files
+        if (dll) {
+          stats.dllAssets = dll.publicPath;
+        }
         return JSON.stringify(stats, null, 2);
-      }
+      },
     }),
 
-    // prevent pikaday from including moment.js
-    new webpack.IgnorePlugin(/moment/, /pikaday/),
+    // enable vue-loader to use existing loader rules for other module types
+    new VueLoaderPlugin(),
+
+    // automatically configure monaco editor web workers
+    new MonacoWebpackPlugin({
+      filename: '[name].[contenthash:8].worker.js',
+      customLanguages: [
+        {
+          label: 'yaml',
+          entry: 'monaco-yaml',
+          worker: {
+            id: 'monaco-yaml/yamlWorker',
+            entry: 'monaco-yaml/yaml.worker',
+          },
+        },
+      ],
+    }),
+
+    new GraphqlKnownOperationsPlugin({ filename: 'graphql_known_operations.yml' }),
+
+    new Vue3MigrationManifestPlugin({ filename: 'vue3_migration.json' }),
 
     // fix legacy jQuery plugins which depend on globals
     new webpack.ProvidePlugin({
@@ -162,162 +668,354 @@ var config = {
       jQuery: 'jquery',
     }),
 
-    // assign deterministic module ids
-    new webpack.NamedModulesPlugin(),
-    new NameAllModulesPlugin(),
+    // if DLLs are enabled, detect whether the DLL exists and create it automatically if necessary
+    dll && {
+      apply(compiler) {
+        compiler.hooks.beforeCompile.tapAsync('DllAutoCompilePlugin', (params, callback) => {
+          if (dll.exists) {
+            callback();
+          } else if (fs.existsSync(dll.manifestPath)) {
+            console.log(`Using vendor DLL found at: ${dll.cacheFrom}`);
+            dll.exists = true;
+            callback();
+          } else {
+            console.log(
+              `Warning: No vendor DLL found at: ${dll.cacheFrom}. Compiling DLL automatically.`,
+            );
 
-    // assign deterministic chunk ids
-    new webpack.NamedChunksPlugin((chunk) => {
-      if (chunk.name) {
-        return chunk.name;
-      }
-      return chunk.modules.map((m) => {
-        var chunkPath = m.request.split('!').pop();
-        return path.relative(m.context, chunkPath);
-      }).join('_');
-    }),
+            // eslint-disable-next-line global-require
+            const dllConfig = require('./webpack.vendor.config');
+            const dllCompiler = webpack(dllConfig);
 
-    // create cacheable common library bundle for all vue chunks
-    new webpack.optimize.CommonsChunkPlugin({
-      name: 'common_vue',
-      chunks: [
-        'boards',
-        'commit_pipelines',
-        'cycle_analytics',
-        'deploy_keys',
-        'diff_notes',
-        'environments',
-        'environments_folder',
-        'filtered_search',
-        'groups',
-        'issue_show',
-        'job_details',
-        'merge_conflicts',
-        'monitoring',
-        'notebook_viewer',
-        'pdf_viewer',
-        'pipelines',
-        'pipelines_details',
-        'repo',
-        'schedule_form',
-        'schedules_index',
-        'sidebar',
-        'vue_merge_request_widget',
-      ],
-      minChunks: function(module, count) {
-        return module.resource && (/vue_shared/).test(module.resource);
+            dllCompiler.run((err, stats) => {
+              if (err) {
+                return callback(err);
+              }
+
+              const info = stats.toJson();
+
+              if (stats.hasErrors()) {
+                console.error(info.errors.join('\n\n'));
+                return callback('DLL not compiled successfully.');
+              }
+
+              if (stats.hasWarnings()) {
+                console.warn(info.warnings.join('\n\n'));
+                console.warn('DLL compiled with warnings.');
+              } else {
+                console.log('DLL compiled successfully.');
+              }
+
+              dll.exists = true;
+              return callback();
+            });
+          }
+        });
       },
-    }),
+    },
 
-    // create cacheable common library bundle for all d3 chunks
-    new webpack.optimize.CommonsChunkPlugin({
-      name: 'common_d3',
-      chunks: [
-        'graphs',
-        'monitoring',
-      ],
-    }),
+    // reference our compiled DLL modules
+    dll &&
+      new webpack.DllReferencePlugin({
+        context: ROOT_PATH,
+        manifest: dll.manifestPath,
+      }),
 
-    // create cacheable common library bundles
-    new webpack.optimize.CommonsChunkPlugin({
-      names: ['main', 'locale', 'common', 'webpack_runtime'],
-    }),
+    dll &&
+      new CopyWebpackPlugin({
+        patterns: [
+          {
+            from: dll.cacheFrom,
+            to: dll.cacheTo,
+          },
+        ],
+      }),
 
-    // enable scope hoisting
-    new webpack.optimize.ModuleConcatenationPlugin(),
+    !IS_EE &&
+      new webpack.NormalModuleReplacementPlugin(/^ee_component\/(.*)\.vue/, (resource) => {
+        // eslint-disable-next-line no-param-reassign
+        resource.request = path.join(
+          ROOT_PATH,
+          'app/assets/javascripts/vue_shared/components/empty_component.js',
+        );
+      }),
 
-    // copy pre-compiled vendor libraries verbatim
-    new CopyWebpackPlugin([
-      {
-        from: path.join(ROOT_PATH, `node_modules/monaco-editor/${IS_PRODUCTION ? 'min' : 'dev'}/vs`),
-        to: 'monaco-editor/vs',
-        transform: function(content, path) {
-          if (/\.js$/.test(path) && !/worker/i.test(path)) {
-            return (
-              '(function(){\n' +
-              'var define = this.define, require = this.require;\n' +
-              'window.define = define; window.require = require;\n' +
-              content +
-              '\n}.call(window.__monaco_context__ || (window.__monaco_context__ = {})));'
+    /*
+     The following `NormalModuleReplacementPlugin` adds support for exports field in `package.json`.
+     It might not necessarily be needed for all packages which expose it, but some packages
+     need it because they use the exports internally.
+
+     Webpack 4 doesn't have support for it, while vite does.
+     See also: https://github.com/webpack/webpack/issues/9509
+     */
+    ...[
+      '@swagger-api/apidom-reference',
+      '@swagger-api/apidom-json-pointer',
+      '@swaggerexpert/json-pointer',
+    ].map((packageName) => {
+      const packageJSON = fs.readFileSync(
+        path.join(ROOT_PATH, 'node_modules', packageName, 'package.json'),
+        'utf-8',
+      );
+      const { exports } = JSON.parse(packageJSON);
+      const regex = new RegExp(`^${packageName}`);
+      return new webpack.NormalModuleReplacementPlugin(regex, (resource) => {
+        const { request } = resource;
+        if (!request.endsWith('.js') && !request.endsWith('.mjs') && !request.endsWith('.cjs')) {
+          const relative = `./${path.relative(packageName, request)}`;
+          if (exports[relative]?.browser?.import || exports[relative]?.import) {
+            const newRequest = path.join(
+              packageName,
+              exports[relative]?.browser?.import || exports[relative]?.import,
+            );
+            console.log(`[exports-replacer]: ${request} => ${newRequest}`);
+            // eslint-disable-next-line no-param-reassign
+            resource.request = newRequest;
+          } else if (
+            packageName === '@swaggerexpert/json-pointer' &&
+            relative === './evaluate/realms/apidom'
+          ) {
+            const newRequest = path.join(packageName, 'es/evaluate/realms/apidom/index.mjs');
+            console.log(`[exports-replacer]: ${request} => ${newRequest}`);
+            // eslint-disable-next-line no-param-reassign
+            resource.request = newRequest;
+          } else {
+            console.warn(
+              `[exports-replacer]: Could not find import field for ${relative} in exports of [${packageName}]`,
             );
           }
-          return content;
+        }
+      });
+    }),
+
+    ...Object.entries({
+      '@mermaid-js/parser': 'dist/mermaid-parser.core.mjs',
+      chevrotain: 'lib/src/api.js',
+      '@chevrotain/cst-dts-gen': 'lib/src/api.js',
+      '@chevrotain/gast': 'lib/src/api.js',
+      '@chevrotain/regexp-to-ast': 'lib/src/api.js',
+      '@chevrotain/utils': 'lib/src/api.js',
+    }).map(
+      ([packageName, entry]) =>
+        new webpack.NormalModuleReplacementPlugin(
+          new RegExp(`^${packageName}$`),
+          `${packageName}/${entry}`,
+        ),
+    ),
+
+    new webpack.ContextReplacementPlugin(/^\.$/, (context) => {
+      if (/\/node_modules\/pdfjs-dist/.test(context.context)) {
+        for (const d of context.dependencies) {
+          if (d.critical) d.critical = false;
         }
       }
-    ]),
-  ],
-
-  resolve: {
-    extensions: ['.js'],
-    alias: {
-      '~':              path.join(ROOT_PATH, 'app/assets/javascripts'),
-      'emojis':         path.join(ROOT_PATH, 'fixtures/emojis'),
-      'empty_states':   path.join(ROOT_PATH, 'app/views/shared/empty_states'),
-      'icons':          path.join(ROOT_PATH, 'app/views/shared/icons'),
-      'images':         path.join(ROOT_PATH, 'app/assets/images'),
-      'vendor':         path.join(ROOT_PATH, 'vendor/assets/javascripts'),
-      'vue$':           'vue/dist/vue.esm.js',
-    }
-  }
-}
-
-if (IS_PRODUCTION) {
-  config.devtool = 'source-map';
-  config.plugins.push(
-    new webpack.NoEmitOnErrorsPlugin(),
-    new webpack.LoaderOptionsPlugin({
-      minimize: true,
-      debug: false
     }),
-    new webpack.optimize.UglifyJsPlugin({
-      sourceMap: true
+
+    !IS_JH &&
+      new webpack.NormalModuleReplacementPlugin(/^jh_component\/(.*)\.vue/, (resource) => {
+        // eslint-disable-next-line no-param-reassign
+        resource.request = path.join(
+          ROOT_PATH,
+          'app/assets/javascripts/vue_shared/components/empty_component.js',
+        );
+      }),
+    !IS_EE &&
+      !IS_JH &&
+      new webpack.NormalModuleReplacementPlugin(/^jh_else_ee\/(.*)\.vue/, (resource) => {
+        // eslint-disable-next-line no-param-reassign
+        resource.request = path.join(
+          ROOT_PATH,
+          'app/assets/javascripts/vue_shared/components/empty_component.js',
+        );
+      }),
+
+    new CopyWebpackPlugin({
+      patterns: copyFilesPatterns,
     }),
+
+    // compression can require a lot of compute time and is disabled in CI
+    // The cache never hits in CI and its temp files can collide:
+    // https://gitlab.com/gitlab-org/gitlab/-/work_items/630662
+    IS_PRODUCTION && !NO_COMPRESSION && new CompressionPlugin({ cache: !process.env.CI }),
+
+    // WatchForChangesPlugin
+    // TODO: publish this as a separate plugin
+    IS_DEV_SERVER && {
+      apply(compiler) {
+        compiler.hooks.emit.tapAsync('WatchForChangesPlugin', (compilation, callback) => {
+          const missingDeps = Array.from(compilation.missingDependencies);
+          const nodeModulesPath = path.join(ROOT_PATH, 'node_modules');
+          const hasMissingNodeModules = missingDeps.some(
+            (file) => file.indexOf(nodeModulesPath) !== -1,
+          );
+
+          // watch for changes to missing node_modules
+          if (hasMissingNodeModules) compilation.contextDependencies.add(nodeModulesPath);
+
+          // watch for changes to automatic entrypoints
+          entriesState.watchAutoEntries.forEach((watchPath) =>
+            compilation.contextDependencies.add(watchPath),
+          );
+
+          // report our auto-generated bundle count
+          if (incrementalCompiler.enabled) {
+            incrementalCompiler.logStatus(entriesState.autoEntriesCount);
+          } else {
+            console.log(
+              `${entriesState.autoEntriesCount} entries from '/pages' automatically added to webpack output.`,
+            );
+          }
+
+          callback();
+        });
+      },
+    },
+
+    // output the in-memory heap size upon compilation and exit
+    WEBPACK_MEMORY_TEST && {
+      apply(compiler) {
+        compiler.hooks.emit.tapAsync('ReportMemoryConsumptionPlugin', () => {
+          console.log('Assets compiled...');
+          if (global.gc) {
+            console.log('Running garbage collection...');
+            global.gc();
+          } else {
+            console.error(
+              "WARNING: you must use the --expose-gc node option to accurately measure webpack's heap size",
+            );
+          }
+          const memoryUsage = process.memoryUsage().heapUsed;
+          const toMB = (bytes) => Math.floor(bytes / 1024 / 1024);
+
+          console.log(`Webpack heap size: ${toMB(memoryUsage)} MB`);
+
+          const webpackStatistics = {
+            memoryUsage,
+            date: Date.now(), // milliseconds
+            commitSHA: process.env.CI_COMMIT_SHA,
+            nodeVersion: process.versions.node,
+            webpackVersion: WEBPACK_VERSION,
+          };
+
+          console.log(webpackStatistics);
+
+          fs.writeFileSync(
+            path.join(ROOT_PATH, 'webpack-dev-server.json'),
+            JSON.stringify(webpackStatistics),
+          );
+
+          // exit in case we're running webpack-dev-server
+          if (IS_DEV_SERVER) {
+            process.exit();
+          }
+        });
+      },
+    },
+
+    // optionally generate webpack bundle analysis
+    WEBPACK_REPORT &&
+      new BundleAnalyzerPlugin({
+        analyzerMode: 'static',
+        generateStatsFile: true,
+        openAnalyzer: false,
+        reportFilename: path.join(ROOT_PATH, 'webpack-report/index.html'),
+        statsFilename: path.join(ROOT_PATH, 'webpack-report/stats.json'),
+        statsOptions: {
+          source: false,
+          errors: false,
+          warnings: false,
+        },
+      }),
+
     new webpack.DefinePlugin({
-      'process.env': { NODE_ENV: JSON.stringify('production') }
-    })
-  );
+      // These are used to define window.gon.ee, window.gon.jh and other things properly in tests:
+      'process.env.IS_EE': JSON.stringify(IS_EE),
+      'process.env.IS_JH': JSON.stringify(IS_JH),
+      // These are used to check against "EE" properly in application code
+      IS_EE: IS_EE ? 'window.gon && window.gon.ee' : JSON.stringify(false),
+      IS_JH: IS_JH ? 'window.gon && window.gon.jh' : JSON.stringify(false),
+      // This is used by Sourcegraph because these assets are loaded dnamically
+      'process.env.SOURCEGRAPH_PUBLIC_PATH': JSON.stringify(SOURCEGRAPH_PUBLIC_PATH),
+      'process.env.GITLAB_WEB_IDE_PUBLIC_PATH': JSON.stringify(GITLAB_WEB_IDE_PUBLIC_PATH),
+      'window.IS_VITE': JSON.stringify(false),
+      ...(IS_PRODUCTION ? {} : { LIVE_RELOAD: DEV_SERVER_LIVERELOAD }),
+      'process.env.PDF_JS_WORKER_PUBLIC_PATH': JSON.stringify(PDF_JS_WORKER_PUBLIC_PATH),
+      'process.env.PDF_JS_CMAPS_PUBLIC_PATH': JSON.stringify(PDF_JS_CMAPS_PUBLIC_PATH),
+      // Vue 3 feature flags - https://link.vuejs.org/feature-flags
+      // These are required for the esm-bundler build of Vue to enable proper tree-shaking
+      ...(USE_VUE3
+        ? {
+            __VUE_OPTIONS_API__: JSON.stringify(true),
+            __VUE_PROD_DEVTOOLS__: JSON.stringify(false),
+            __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: JSON.stringify(false),
+          }
+        : {}),
+    }),
 
-  // zopfli requires a lot of compute time and is disabled in CI
-  if (!NO_COMPRESSION) {
-    // gracefully fall back to gzip if `node-zopfli` is unavailable (e.g. in CentOS 6)
-    try {
-      config.plugins.push(new CompressionPlugin({ algorithm: 'zopfli' }));
-    } catch(err) {
-      config.plugins.push(new CompressionPlugin({ algorithm: 'gzip' }));
-    }
-  }
-}
+    /* Pikaday has a optional dependency to moment.
+       We are currently not utilizing moment.
+       Ignoring this import removes warning from our development build.
+       Upstream reference:
+       https://github.com/Pikaday/Pikaday/blob/5c1a7559be/pikaday.js#L14
+    */
+    new webpack.IgnorePlugin(/moment/, /pikaday/),
+  ].filter(Boolean),
 
-if (IS_DEV_SERVER) {
-  config.devtool = 'cheap-module-eval-source-map';
-  config.devServer = {
-    host: DEV_SERVER_HOST,
-    port: DEV_SERVER_PORT,
-    disableHostCheck: true,
-    headers: { 'Access-Control-Allow-Origin': '*' },
-    stats: 'errors-only',
+  devServer: {
+    setupMiddlewares: (middlewares, devServer) => {
+      if (!devServer) {
+        throw new Error('webpack-dev-server is not defined');
+      }
+
+      const incrementalCompilerMiddleware = incrementalCompiler.createMiddleware(devServer);
+
+      if (incrementalCompilerMiddleware) {
+        middlewares.unshift({
+          name: 'incremental-compiler',
+          middleware: incrementalCompilerMiddleware,
+        });
+      }
+
+      return middlewares;
+    },
+    // Only print errors to CLI
+    devMiddleware: {
+      stats: 'errors-only',
+    },
+    host: DEV_SERVER_HOST || 'localhost',
+    port: DEV_SERVER_PORT || 3808,
+    // Setting up hot module reloading
+    // HMR works by setting up a websocket server and injecting
+    // a client script which connects to that server.
+    // The server will push messages to the client to reload parts
+    // of the JavaScript or reload the page if necessary
+    webSocketServer: DEV_SERVER_LIVERELOAD ? 'ws' : false,
     hot: DEV_SERVER_LIVERELOAD,
-    inline: DEV_SERVER_LIVERELOAD
-  };
-  config.plugins.push(
-    // watch node_modules for changes if we encounter a missing module compile error
-    new WatchMissingNodeModulesPlugin(path.join(ROOT_PATH, 'node_modules'))
-  );
-  if (DEV_SERVER_LIVERELOAD) {
-    config.plugins.push(new webpack.HotModuleReplacementPlugin());
-  }
-}
+    liveReload: DEV_SERVER_LIVERELOAD,
+    // The following settings are mainly needed for HMR support in gitpod.
+    // Per default only local hosts are allowed, but here we could
+    // allow different hosts (e.g. ['.gitpod'], all of gitpod),
+    // as the webpack server will run on a different subdomain than
+    // the rails application
+    ...(DEV_SERVER_ALLOWED_HOSTS ? { allowedHosts: DEV_SERVER_ALLOWED_HOSTS } : {}),
+    client: {
+      ...(DEV_SERVER_PUBLIC_ADDR ? { webSocketURL: DEV_SERVER_PUBLIC_ADDR } : {}),
+      overlay: {
+        runtimeErrors: (error) => {
+          if (error instanceof DOMException && error.message === 'The user aborted a request.') {
+            return false;
+          }
 
-if (WEBPACK_REPORT) {
-  config.plugins.push(
-    new BundleAnalyzerPlugin({
-      analyzerMode: 'static',
-      generateStatsFile: true,
-      openAnalyzer: false,
-      reportFilename: path.join(ROOT_PATH, 'webpack-report/index.html'),
-      statsFilename: path.join(ROOT_PATH, 'webpack-report/stats.json'),
-    })
-  );
-}
+          return true;
+        },
+      },
+    },
+  },
 
-module.exports = config;
+  devtool: NO_SOURCEMAPS ? false : devtool,
+
+  node: {
+    fs: 'empty', // editorconfig requires 'fs'
+    setImmediate: false,
+  },
+};

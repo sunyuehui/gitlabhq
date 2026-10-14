@@ -1,19 +1,19 @@
 import Renderer from './3d_viewer';
 
-document.addEventListener('DOMContentLoaded', () => {
+export default () => {
   const viewer = new Renderer(document.getElementById('js-stl-viewer'));
 
   [].slice.call(document.querySelectorAll('.js-material-changer')).forEach((el) => {
     el.addEventListener('click', (e) => {
-      const target = e.target;
+      const { currentTarget } = e;
 
       e.preventDefault();
 
-      document.querySelector('.js-material-changer.active').classList.remove('active');
-      target.classList.add('active');
-      target.blur();
+      document.querySelector('.js-material-changer.selected').classList.remove('selected');
+      currentTarget.classList.add('selected');
+      currentTarget.blur();
 
-      viewer.changeObjectMaterials(target.dataset.type);
+      viewer.changeObjectMaterials(currentTarget.dataset.material);
     });
   });
-});
+};

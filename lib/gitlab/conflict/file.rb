@@ -1,93 +1,49 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Conflict
     class File
       include Gitlab::Routing
       include IconsHelper
-
-      MissingResolution = Class.new(ResolutionError)
+      include Gitlab::Utils::StrongMemoize
 
       CONTEXT_LINES = 3
 
-      attr_reader :merge_file_result, :their_path, :our_path, :our_mode, :merge_request, :repository
+      CONFLICT_MARKER_OUR = 'conflict_marker_our'
+      CONFLICT_MARKER_THEIR = 'conflict_marker_their'
+      CONFLICT_MARKER_SEPARATOR = 'conflict_marker'
 
-      def initialize(merge_file_result, conflict, merge_request:)
-        @merge_file_result = merge_file_result
-        @their_path = conflict[:theirs][:path]
-        @our_path = conflict[:ours][:path]
-        @our_mode = conflict[:ours][:mode]
+      CONFLICT_TYPES = {
+        "old" => "conflict_their",
+        "new" => "conflict_our"
+      }.freeze
+
+      attr_reader :merge_request
+
+      # 'raw' holds the Gitlab::Git::Conflict::File that this instance wraps
+      attr_reader :raw
+
+      delegate :type, :content, :path, :ancestor_path, :their_path, :our_path, :our_mode, :our_blob, :repository, to: :raw
+
+      def initialize(raw, merge_request:)
+        @raw = raw
         @merge_request = merge_request
-        @repository = merge_request.project.repository
         @match_line_headers = {}
       end
 
-      def content
-        merge_file_result[:data]
-      end
-
-      def our_blob
-        @our_blob ||= repository.blob_at(merge_request.diff_refs.head_sha, our_path)
-      end
-
-      def type
-        lines unless @type
-
-        @type.inquiry
-      end
-
-      # Array of Gitlab::Diff::Line objects
       def lines
         return @lines if defined?(@lines)
 
-        begin
-          @type = 'text'
-          @lines = Gitlab::Conflict::Parser.new.parse(content,
-                                                      our_path: our_path,
-                                                      their_path: their_path,
-                                                      parent_file: self)
-        rescue Gitlab::Conflict::Parser::ParserError
-          @type = 'text-editor'
-          @lines = nil
-        end
+        @lines = raw.lines.nil? ? nil : map_raw_lines(raw.lines)
       end
 
       def resolve_lines(resolution)
-        section_id = nil
-
-        lines.map do |line|
-          unless line.type
-            section_id = nil
-            next line
-          end
-
-          section_id ||= line_code(line)
-
-          case resolution[section_id]
-          when 'head'
-            next unless line.type == 'new'
-          when 'origin'
-            next unless line.type == 'old'
-          else
-            raise MissingResolution, "Missing resolution for section ID: #{section_id}"
-          end
-
-          line
-        end.compact
-      end
-
-      def resolve_content(resolution)
-        if resolution == content
-          raise MissingResolution, "Resolved content has no changes for file #{our_path}"
-        end
-
-        resolution
+        map_raw_lines(raw.resolve_lines(resolution))
       end
 
       def highlight_lines!
-        their_file = lines.reject { |line| line.type == 'new' }.map(&:text).join("\n")
-        our_file = lines.reject { |line| line.type == 'old' }.map(&:text).join("\n")
-
-        their_highlight = Gitlab::Highlight.highlight(their_path, their_file, repository: repository).lines
-        our_highlight = Gitlab::Highlight.highlight(our_path, our_file, repository: repository).lines
+        their_highlight = Gitlab::Highlight.highlight(their_path, their_lines, language: their_language).lines
+        our_highlight = Gitlab::Highlight.highlight(our_path, our_lines, language: our_language).lines
 
         lines.each do |line|
           line.rich_text =
@@ -96,6 +52,41 @@ module Gitlab
             else
               our_highlight[line.new_line - 1].try(:html_safe)
             end
+        end
+      end
+
+      def diff_lines_for_serializer
+        # calculate sections and highlight lines before changing types
+        sections && highlight_lines!
+
+        sections.flat_map do |section|
+          if section[:conflict]
+            lines = []
+
+            lines << create_separator_line(section[:lines].first, CONFLICT_MARKER_OUR)
+
+            current_type = section[:lines].first.type
+            section[:lines].each do |line|
+              if line.type != current_type # insert a separator between our changes and theirs
+                lines << create_separator_line(line, CONFLICT_MARKER_SEPARATOR)
+                current_type = line.type
+              end
+
+              line.type = CONFLICT_TYPES[line.type]
+
+              # Swap the positions around due to conflicts/diffs display inconsistency
+              # https://gitlab.com/gitlab-org/gitlab/-/issues/291989
+              line.old_pos, line.new_pos = line.new_pos, line.old_pos
+
+              lines << line
+            end
+
+            lines << create_separator_line(lines.last, CONFLICT_MARKER_THEIR)
+
+            lines
+          else
+            section[:lines]
+          end
         end
       end
 
@@ -146,9 +137,15 @@ module Gitlab
 
               lines = tail_lines
             elsif conflict_before
-              # We're at the end of the file (no conflicts after), so just remove extra
-              # trailing lines.
+              # We're at the end of the file (no conflicts after)
+              number_of_trailing_lines = lines.size
+
+              # Remove extra trailing lines
               lines = lines.first(CONTEXT_LINES)
+
+              if number_of_trailing_lines > CONTEXT_LINES
+                lines << create_match_line(lines.last)
+              end
             end
           end
 
@@ -163,11 +160,15 @@ module Gitlab
       end
 
       def line_code(line)
-        Gitlab::Diff::LineCode.generate(our_path, line.new_pos, line.old_pos)
+        Gitlab::Git.diff_line_code(our_path, line.new_pos, line.old_pos)
       end
 
       def create_match_line(line)
         Gitlab::Diff::Line.new('', 'match', line.index, line.old_pos, line.new_pos)
+      end
+
+      def create_separator_line(line, type)
+        Gitlab::Diff::Line.new('', type, line.index, nil, nil)
       end
 
       # Any line beginning with a letter, an underscore, or a dollar can be used in a
@@ -211,7 +212,6 @@ module Gitlab
         json_hash.tap do |json_hash|
           if opts[:full_content]
             json_hash[:content] = content
-            json_hash[:blob_ace_mode] = our_blob && our_blob.language.try(:ace_mode)
           else
             json_hash[:sections] = sections if type.text?
             json_hash[:type] = type
@@ -222,20 +222,65 @@ module Gitlab
 
       def content_path
         conflict_for_path_project_merge_request_path(merge_request.project,
-                                                     merge_request,
-                                                     old_path: their_path,
-                                                     new_path: our_path)
+          merge_request,
+          old_path: their_path,
+          new_path: our_path)
       end
 
-      # Don't try to print merge_request or repository.
-      def inspect
-        instance_variables = [:merge_file_result, :their_path, :our_path, :our_mode, :type].map do |instance_variable|
-          value = instance_variable_get("@#{instance_variable}")
-
-          "#{instance_variable}=\"#{value}\""
+      def conflict_type(when_renamed: false)
+        if ancestor_path.present?
+          if our_path.present? && their_path.present?
+            :both_modified
+          elsif their_path.blank?
+            :modified_source_removed_target
+          else
+            :modified_target_removed_source
+          end
+        elsif our_path.present? && their_path.present?
+          :both_added
+        elsif their_path.blank?
+          when_renamed ? :renamed_same_file : :removed_target_renamed_source
+        else
+          :removed_source_renamed_target
         end
+      end
 
-        "#<#{self.class} #{instance_variables.join(' ')}>"
+      private
+
+      def map_raw_lines(raw_lines)
+        raw_lines.map do |raw_line|
+          Gitlab::Diff::Line.new(raw_line[:full_line], raw_line[:type],
+            raw_line[:line_obj_index], raw_line[:line_old],
+            raw_line[:line_new], parent_file: self)
+        end
+      end
+
+      def their_language
+        strong_memoize(:their_language) do
+          repository.gitattribute(their_path, 'gitlab-language')
+        end
+      end
+
+      def our_language
+        strong_memoize(:our_language) do
+          if our_path == their_path
+            their_language
+          else
+            repository.gitattribute(our_path, 'gitlab-language')
+          end
+        end
+      end
+
+      def their_lines
+        strong_memoize(:their_lines) do
+          lines.reject { |line| line.type == 'new' }.map(&:text).join("\n")
+        end
+      end
+
+      def our_lines
+        strong_memoize(:our_lines) do
+          lines.reject { |line| line.type == 'old' }.map(&:text).join("\n")
+        end
       end
     end
   end

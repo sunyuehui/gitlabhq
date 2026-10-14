@@ -1,20 +1,25 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Redis::Cache do
-  let(:config_file_name) { "config/redis.cache.yml" }
-  let(:environment_config_file_name) { "GITLAB_REDIS_CACHE_CONFIG_FILE" }
-  let(:config_old_format_socket) { "spec/fixtures/config/redis_cache_old_format_socket.yml" }
-  let(:config_new_format_socket) { "spec/fixtures/config/redis_cache_new_format_socket.yml" }
-  let(:old_socket_path) {"/path/to/old/redis.cache.sock" }
-  let(:new_socket_path) {"/path/to/redis.cache.sock" }
-  let(:config_old_format_host) { "spec/fixtures/config/redis_cache_old_format_host.yml" }
-  let(:config_new_format_host) { "spec/fixtures/config/redis_cache_new_format_host.yml" }
-  let(:redis_port) { 6380 }
-  let(:redis_database) { 10 }
-  let(:sentinel_port) { redis_port + 20000 }
-  let(:config_with_environment_variable_inside) { "spec/fixtures/config/redis_cache_config_with_env.yml"}
-  let(:config_env_variable_url) {"TEST_GITLAB_REDIS_CACHE_URL"}
-  let(:class_redis_url) { Gitlab::Redis::Cache::DEFAULT_REDIS_CACHE_URL }
+RSpec.describe Gitlab::Redis::Cache, feature_category: :redis do
+  let(:instance_specific_config_file) { "config/redis.cache.yml" }
 
   include_examples "redis_shared_examples"
+
+  describe '.active_support_config' do
+    it 'has a default ttl of 8 hours' do
+      expect(described_class.active_support_config[:expires_in]).to eq(8.hours)
+    end
+
+    it 'allows configuring the TTL through an env variable' do
+      stub_env('GITLAB_RAILS_CACHE_DEFAULT_TTL_SECONDS' => '86400')
+
+      expect(described_class.active_support_config[:expires_in]).to eq(1.day)
+    end
+
+    it 'has a pool set to false' do
+      expect(described_class.active_support_config[:pool]).to be(false)
+    end
+  end
 end

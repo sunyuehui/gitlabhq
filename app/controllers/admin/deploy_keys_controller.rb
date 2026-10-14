@@ -1,30 +1,34 @@
+# frozen_string_literal: true
+
 class Admin::DeployKeysController < Admin::ApplicationController
   before_action :deploy_keys, only: [:index]
   before_action :deploy_key, only: [:destroy, :edit, :update]
 
-  def index
-  end
+  feature_category :continuous_delivery
+  urgency :low
+
+  def index; end
 
   def new
     @deploy_key = deploy_keys.new
   end
 
   def create
-    @deploy_key = deploy_keys.new(create_params.merge(user: current_user))
+    @deploy_key = DeployKeys::CreateService.new(current_user,
+      create_params.merge(public: true, organization: admin_current_organization)).execute
 
-    if @deploy_key.save
+    if @deploy_key.persisted?
       redirect_to admin_deploy_keys_path
     else
       render 'new'
     end
   end
 
-  def edit
-  end
+  def edit; end
 
   def update
-    if deploy_key.update_attributes(update_params)
-      flash[:notice] = 'Deploy key was successfully updated.'
+    if deploy_key.update(update_params)
+      flash[:notice] = _('Deploy key was successfully updated.')
       redirect_to admin_deploy_keys_path
     else
       render 'edit'
@@ -35,7 +39,7 @@ class Admin::DeployKeysController < Admin::ApplicationController
     deploy_key.destroy
 
     respond_to do |format|
-      format.html { redirect_to admin_deploy_keys_path, status: 302 }
+      format.html { redirect_to admin_deploy_keys_path, status: :found }
       format.json { head :ok }
     end
   end
@@ -43,7 +47,7 @@ class Admin::DeployKeysController < Admin::ApplicationController
   protected
 
   def deploy_key
-    @deploy_key ||= deploy_keys.find(params[:id])
+    @deploy_key ||= deploy_keys.find(params.permit(:id)[:id])
   end
 
   def deploy_keys
@@ -51,10 +55,10 @@ class Admin::DeployKeysController < Admin::ApplicationController
   end
 
   def create_params
-    params.require(:deploy_key).permit(:key, :title, :can_push)
+    params.require(:deploy_key).permit(:key, :title, :expires_at)
   end
 
   def update_params
-    params.require(:deploy_key).permit(:title, :can_push)
+    params.require(:deploy_key).permit(:title)
   end
 end

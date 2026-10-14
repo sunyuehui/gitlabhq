@@ -1,23 +1,22 @@
-class PagesWorker
-  include Sidekiq::Worker
+# frozen_string_literal: true
 
-  sidekiq_options queue: :pages, retry: false
+class PagesWorker # rubocop:disable Scalability/IdempotentWorker
+  include ApplicationWorker
+
+  data_consistency :always
+
+  sidekiq_options retry: 3
+  feature_category :pages
+  loggable_arguments 0, 1
+  worker_resource_boundary :cpu
 
   def perform(action, *arg)
-    send(action, *arg) # rubocop:disable GitlabSecurity/PublicSend
+    deploy(*arg) if action == 'deploy'
   end
 
   def deploy(build_id)
-    build = Ci::Build.find_by(id: build_id)
-    result = Projects::UpdatePagesService.new(build.project, build).execute
-    if result[:status] == :success
-      result = Projects::UpdatePagesConfigurationService.new(build.project).execute
-    end
-    result
-  end
+    build = Ci::Build.find_by_id(build_id)
 
-  def remove(namespace_path, project_path)
-    full_path = File.join(Settings.pages.path, namespace_path, project_path)
-    FileUtils.rm_r(full_path, force: true)
+    Projects::UpdatePagesService.new(build.project, build).execute
   end
 end

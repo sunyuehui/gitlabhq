@@ -1,25 +1,36 @@
+<script>
+export default {
+  name: 'NotebookPrompt',
+  props: {
+    type: {
+      type: String,
+      required: false,
+      default: '',
+    },
+    count: {
+      type: Number,
+      required: false,
+      default: 0,
+    },
+    showOutput: {
+      type: Boolean,
+      required: false,
+      default: true,
+    },
+  },
+  computed: {
+    showTypeText() {
+      return this.type && this.count && this.showOutput;
+    },
+  },
+};
+</script>
+
 <template>
   <div class="prompt">
-    <span v-if="type && count">
-      {{ type }} [{{ count }}]:
-    </span>
+    <span v-if="showTypeText"> {{ type }} [{{ count }}]: </span>
   </div>
 </template>
-
-<script>
-  export default {
-    props: {
-      type: {
-        type: String,
-        required: false,
-      },
-      count: {
-        type: Number,
-        required: false,
-      },
-    },
-  };
-</script>
 
 <style scoped>
 .prompt {

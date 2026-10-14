@@ -1,29 +1,50 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::EtagCaching::Middleware do
+RSpec.describe Gitlab::EtagCaching::Middleware, :clean_gitlab_redis_shared_state do
   let(:app) { double(:app) }
   let(:middleware) { described_class.new(app) }
   let(:app_status_code) { 200 }
   let(:if_none_match) { nil }
-  let(:enabled_path) { '/gitlab-org/gitlab-ce/noteable/issue/1/notes' }
+  let(:enabled_path) { '/gitlab-org/gitlab-foss/commit/aaaaaaaa/pipelines.json' }
+  let(:endpoint) { 'commit_pipelines' }
+
+  describe '.skip!' do
+    it 'sets the skip header on the response' do
+      rsp = ActionDispatch::Response.new
+      rsp.set_header('Anything', 'Else')
+
+      described_class.skip!(rsp)
+
+      expect(rsp.headers.to_h).to eq(described_class::SKIP_HEADER_KEY => '1', 'Anything' => 'Else')
+    end
+  end
 
   context 'when ETag caching is not enabled for current route' do
-    let(:path) { '/gitlab-org/gitlab-ce/tree/master/noteable/issue/1/notes' }
+    let(:path) { '/gitlab-org/gitlab-foss/tree/master/noteable/issue/1/notes' }
 
     before do
       mock_app_response
     end
 
-    it 'does not add ETag header' do
+    it 'does not add ETag headers' do
       _, headers, _ = middleware.call(build_request(path, if_none_match))
 
       expect(headers['ETag']).to be_nil
+      expect(headers['X-Gitlab-From-Cache']).to be_nil
     end
 
     it 'passes status code from app' do
       status, _, _ = middleware.call(build_request(path, if_none_match))
 
       expect(status).to eq app_status_code
+    end
+
+    it 'does not set feature category attribute' do
+      expect(Gitlab::ApplicationContext).not_to receive(:push)
+
+      _, _, _ = middleware.call(build_request(path, if_none_match))
     end
   end
 
@@ -36,8 +57,9 @@ describe Gitlab::EtagCaching::Middleware do
     end
 
     it 'generates ETag' do
-      expect_any_instance_of(Gitlab::EtagCaching::Store)
-        .to receive(:touch).and_return('123')
+      expect_next_instance_of(Gitlab::EtagCaching::Store) do |instance|
+        expect(instance).to receive(:touch).and_return('123')
+      end
 
       middleware.call(build_request(path, if_none_match))
     end
@@ -47,9 +69,9 @@ describe Gitlab::EtagCaching::Middleware do
 
       it 'tracks "etag_caching_key_not_found" event' do
         expect(Gitlab::Metrics).to receive(:add_event)
-          .with(:etag_caching_middleware_used, endpoint: 'issue_notes')
+          .with(:etag_caching_middleware_used, endpoint: endpoint)
         expect(Gitlab::Metrics).to receive(:add_event)
-          .with(:etag_caching_key_not_found, endpoint: 'issue_notes')
+          .with(:etag_caching_key_not_found, endpoint: endpoint)
 
         middleware.call(build_request(path, if_none_match))
       end
@@ -64,10 +86,74 @@ describe Gitlab::EtagCaching::Middleware do
       mock_value_in_store('123')
     end
 
-    it 'returns this value as header' do
+    it 'returns the correct headers' do
       _, headers, _ = middleware.call(build_request(path, if_none_match))
 
       expect(headers['ETag']).to eq 'W/"123"'
+    end
+  end
+
+  context 'when the matching route requests that the ETag is skipped' do
+    let(:path) { enabled_path }
+    let(:app) do
+      proc do |_env|
+        response = ActionDispatch::Response.new
+
+        described_class.skip!(response)
+
+        [200, response.headers.to_h, '']
+      end
+    end
+
+    it 'returns the correct headers' do
+      expect(app).to receive(:call).and_call_original
+
+      _, headers, _ = middleware.call(build_request(path, if_none_match))
+
+      expect(headers).not_to have_key('ETag')
+      expect(headers).not_to have_key(described_class::SKIP_HEADER_KEY)
+    end
+  end
+
+  shared_examples 'sends a process_action.action_controller notification' do |status_code|
+    let(:expected_items) do
+      {
+        etag_route: endpoint,
+        params: {},
+        format: :html,
+        method: 'GET',
+        path: enabled_path,
+        status: status_code,
+        request_urgency: :low,
+        target_duration_s: 5,
+        metadata: a_hash_including(
+          {
+            'meta.caller_id' => 'Projects::CommitController#pipelines',
+            'meta.feature_category' => 'source_code_management'
+          }
+        )
+      }
+    end
+
+    it 'sends the expected payload' do
+      payload = payload_for('process_action.action_controller') do
+        middleware.call(build_request(path, if_none_match))
+      end
+
+      expect(payload).to include(expected_items)
+
+      expect(payload[:headers].env['HTTP_IF_NONE_MATCH']).to eq('W/"123"')
+    end
+
+    it "publishes process_action.action_controller event to be picked up by lograge's subscriber" do
+      # Lograge unhooks the default Rails subscriber (ActionController::LogSubscriber)
+      # and replaces with its own (Lograge::LogSubscribers::ActionController).
+      # When `lograge.keep_original_rails_log = true`, ActionController::LogSubscriber is kept.
+      expect_any_instance_of(Lograge::LogSubscribers::ActionController).to receive(:process_action)
+        .with(instance_of(ActiveSupport::Notifications::Event))
+        .and_call_original
+
+      middleware.call(build_request(path, if_none_match))
     end
   end
 
@@ -91,6 +177,24 @@ describe Gitlab::EtagCaching::Middleware do
       expect(status).to eq 304
     end
 
+    it 'sets correct headers' do
+      _, headers, _ = middleware.call(build_request(path, if_none_match))
+
+      expect(headers).to include('X-Gitlab-From-Cache' => 'true')
+    end
+
+    it "pushes expected information in to the context" do
+      expect(Gitlab::ApplicationContext).to receive(:push).with(
+        feature_category: 'source_code_management',
+        caller_id: 'Projects::CommitController#pipelines',
+        remote_ip: '127.0.0.1'
+      )
+
+      _, _, _ = middleware.call(build_request(path, if_none_match))
+    end
+
+    it_behaves_like 'sends a process_action.action_controller notification', 304
+
     it 'returns empty body' do
       _, _, body = middleware.call(build_request(path, if_none_match))
 
@@ -99,9 +203,9 @@ describe Gitlab::EtagCaching::Middleware do
 
     it 'tracks "etag_caching_cache_hit" event' do
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_middleware_used, endpoint: 'issue_notes')
+        .with(:etag_caching_middleware_used, endpoint: endpoint)
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_cache_hit, endpoint: 'issue_notes')
+        .with(:etag_caching_cache_hit, endpoint: endpoint)
 
       middleware.call(build_request(path, if_none_match))
     end
@@ -116,6 +220,35 @@ describe Gitlab::EtagCaching::Middleware do
         status, _, _ = middleware.call(build_request(path, if_none_match))
 
         expect(status).to eq 429
+      end
+
+      it_behaves_like 'sends a process_action.action_controller notification', 429
+    end
+  end
+
+  context 'when a prefixed GraphQL resource header matches the stored ETag', :clean_gitlab_redis_cache do
+    let(:path) { '/api/graphql' }
+    let(:resource_header) { '/api/graphql:pipelines/id/1' }
+    let(:etag) { Gitlab::EtagCaching::Store.new.touch(resource_header) }
+    let(:if_none_match) { %(W/"#{etag}") }
+
+    # The frontend sends eTag-cached GraphQL queries as POST to avoid URL length limits,
+    # so a 304 on POST is intentional even though HTTP only defines it for GET and HEAD.
+    where(:request_method) { %w[GET POST] }
+
+    with_them do
+      it 'returns a cached 304 response without calling the app', :aggregate_failures do
+        env = build_request(path, if_none_match, request_method: request_method).merge(
+          'HTTP_X_GITLAB_GRAPHQL_RESOURCE_ETAG' => resource_header
+        )
+
+        expect(app).not_to receive(:call)
+
+        status, headers, body = middleware.call(env)
+
+        expect(status).to eq(304)
+        expect(headers).to include('ETag' => if_none_match, 'X-Gitlab-From-Cache' => 'true')
+        expect(body).to be_empty
       end
     end
   end
@@ -138,9 +271,9 @@ describe Gitlab::EtagCaching::Middleware do
       mock_app_response
 
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_middleware_used, endpoint: 'issue_notes')
+        .with(:etag_caching_middleware_used, endpoint: endpoint)
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_resource_changed, endpoint: 'issue_notes')
+        .with(:etag_caching_resource_changed, endpoint: endpoint)
 
       middleware.call(build_request(path, if_none_match))
     end
@@ -156,9 +289,9 @@ describe Gitlab::EtagCaching::Middleware do
 
     it 'tracks "etag_caching_header_missing" event' do
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_middleware_used, endpoint: 'issue_notes')
+        .with(:etag_caching_middleware_used, endpoint: endpoint)
       expect(Gitlab::Metrics).to receive(:add_event)
-        .with(:etag_caching_header_missing, endpoint: 'issue_notes')
+        .with(:etag_caching_header_missing, endpoint: endpoint)
 
       middleware.call(build_request(path, if_none_match))
     end
@@ -175,9 +308,9 @@ describe Gitlab::EtagCaching::Middleware do
         'SCRIPT_NAME' => '/relative-gitlab'
       }
 
-      expect_any_instance_of(Gitlab::EtagCaching::Store)
-        .to receive(:get).with("/relative-gitlab#{enabled_path}")
-        .and_return(nil)
+      expect_next_instance_of(Gitlab::EtagCaching::Store) do |instance|
+        expect(instance).to receive(:get).with("/relative-gitlab#{enabled_path}").and_return(nil)
+      end
 
       middleware.call(env)
     end
@@ -188,11 +321,28 @@ describe Gitlab::EtagCaching::Middleware do
   end
 
   def mock_value_in_store(value)
-    allow_any_instance_of(Gitlab::EtagCaching::Store)
-      .to receive(:get).and_return(value)
+    allow_next_instance_of(Gitlab::EtagCaching::Store) do |instance|
+      allow(instance).to receive(:get).and_return(value)
+    end
   end
 
-  def build_request(path, if_none_match)
-    { 'PATH_INFO' => path, 'HTTP_IF_NONE_MATCH' => if_none_match }
+  def build_request(path, if_none_match, request_method: 'GET')
+    { 'PATH_INFO' => path,
+      'HTTP_IF_NONE_MATCH' => if_none_match,
+      'rack.input' => '',
+      'REQUEST_METHOD' => request_method,
+      'REMOTE_ADDR' => '127.0.0.1' }
+  end
+
+  def payload_for(event)
+    payload = nil
+    subscription = ActiveSupport::Notifications.subscribe event do |_, _, _, _, extra_payload|
+      payload = extra_payload
+    end
+
+    yield
+
+    ActiveSupport::Notifications.unsubscribe(subscription)
+    payload
   end
 end

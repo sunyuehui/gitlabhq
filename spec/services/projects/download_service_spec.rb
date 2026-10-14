@@ -1,30 +1,28 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Projects::DownloadService do
+RSpec.describe Projects::DownloadService, feature_category: :groups_and_projects do
   describe 'File service' do
     before do
       @user = create(:user)
       @project = create(:project, creator_id: @user.id, namespace: @user.namespace)
     end
 
-    context 'for a URL that is not on whitelist' do
+    context 'for a URL that is not on allowlist' do
       before do
         url = 'https://code.jquery.com/jquery-2.1.4.min.js'
         @link_to_file = download_file(@project, url)
       end
 
-      it { expect(@link_to_file).to eq(nil) }
+      it { expect(@link_to_file).to be_nil }
     end
 
-    context 'for URLs that are on the whitelist' do
+    context 'for URLs that are on the allowlist' do
       before do
-        sham_rack_app = ShamRack.at('mycompany.fogbugz.com').stub
-        sham_rack_app.register_resource('/rails_sample.jpg', File.read(Rails.root + 'spec/fixtures/rails_sample.jpg'), 'image/jpg')
-        sham_rack_app.register_resource('/doc_sample.txt', File.read(Rails.root + 'spec/fixtures/doc_sample.txt'), 'text/plain')
-      end
-
-      after do
-        ShamRack.unmount_all
+        # `ssrf_filter` resolves the hostname. See https://github.com/carrierwaveuploader/carrierwave/commit/91714adda998bc9e8decf5b1f5d260d808761304
+        stub_request(:get, %r{http://[\d.]+/rails_sample.jpg}).to_return(body: File.read(Rails.root + 'spec/fixtures/rails_sample.jpg'))
+        stub_request(:get, %r{http://[\d.]+/doc_sample.txt}).to_return(body: File.read(Rails.root + 'spec/fixtures/doc_sample.txt'))
       end
 
       context 'an image file' do

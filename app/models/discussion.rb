@@ -1,28 +1,71 @@
+# frozen_string_literal: true
+
 # A non-diff discussion on an issue, merge request, commit, or snippet, consisting of `DiscussionNote` notes.
 #
 # A discussion of this type can be resolvable.
 class Discussion
+  include GlobalID::Identification
   include ResolvableDiscussion
 
-  attr_reader :notes, :context_noteable
+  # Bump this if we need to refresh the cached versions of discussions
+  CACHE_VERSION = 1
 
-  delegate  :created_at,
-            :project,
-            :author,
+  attr_reader :context_noteable
+  attr_accessor :notes
 
-            :noteable,
-            :for_commit?,
-            :for_merge_request?,
+  delegate :created_at,
+    :project,
+    :namespace,
+    :author,
+    :noteable,
+    :commit_id,
+    :confidential?,
+    :for_commit?,
+    :for_design?,
+    :for_merge_request?,
+    :noteable_ability_name,
+    :to_ability_name,
+    :editable?,
+    :resolved_by_id,
+    :system_note_visible_for?,
+    :resource_parent,
+    :save,
+    to: :first_note
 
-            to: :first_note
+  def declarative_policy_delegate
+    first_note
+  end
 
-  def self.build(notes, context_noteable = nil)
-    notes.first.discussion_class(context_noteable).new(notes, context_noteable)
+  def project_id
+    project&.id
+  end
+
+  def self.build(notes, context_noteable = nil, inverse_relations: true)
+    notes.first.discussion_class(context_noteable).new(notes, context_noteable, inverse_relations: inverse_relations)
   end
 
   def self.build_collection(notes, context_noteable = nil)
     grouped_notes = notes.group_by { |n| n.discussion_id(context_noteable) }
     grouped_notes.values.map { |notes| build(notes, context_noteable) }
+  end
+
+  def self.build_discussions(discussion_ids, context_noteable = nil, preload_note_diff_file: false)
+    notes = model_class.where(discussion_id: discussion_ids).order_created_at_id_asc
+    notes = notes.inc_note_diff_file if preload_note_diff_file
+
+    grouped_notes = notes.group_by(&:discussion_id)
+    grouped_notes.transform_values { |notes| Discussion.build(notes, context_noteable) }
+  end
+
+  def self.lazy_find(discussion_id)
+    BatchLoader.for(discussion_id).batch do |discussion_ids, loader|
+      results = model_class.where(discussion_id: discussion_ids).order_created_at_id_asc.to_a.group_by(&:discussion_id)
+      results.each do |discussion_id, notes|
+        next if notes.empty?
+
+        loader.call(discussion_id, Discussion.build(notes))
+      end
+    end
   end
 
   # Returns an alphanumeric discussion ID based on `build_discussion_id`
@@ -61,16 +104,26 @@ class Discussion
     DiscussionNote
   end
 
-  def initialize(notes, context_noteable = nil)
+  def self.model_class
+    Note
+  end
+
+  def initialize(notes, context_noteable = nil, inverse_relations: true)
     @notes = notes
     @context_noteable = context_noteable
+
+    notes.each { |n| n.discussion = self } if inverse_relations
+  end
+
+  def on_image?
+    false
   end
 
   def ==(other)
     other.class == self.class &&
-      other.context_noteable == self.context_noteable &&
-      other.id == self.id &&
-      other.notes == self.notes
+      other.context_noteable == context_noteable &&
+      other.id == id &&
+      other.notes == notes
   end
 
   def last_updated_at
@@ -79,6 +132,10 @@ class Discussion
 
   def last_updated_by
     last_note.author
+  end
+
+  def updated?
+    last_updated_at != created_at
   end
 
   def id
@@ -101,8 +158,8 @@ class Discussion
     false
   end
 
-  def new_discussion?
-    notes.length == 1
+  def can_convert_to_discussion?
+    false
   end
 
   def last_note
@@ -119,5 +176,40 @@ class Discussion
 
   def reply_attributes
     first_note.slice(:type, :noteable_type, :noteable_id, :commit_id, :discussion_id)
+  end
+
+  def cache_key
+    # Need to use the notes' cache key so cache will be invalidated when note
+    # within a discussion has been deleted or has different data after post
+    # processing of content.
+    notes_sha = Digest::SHA1.hexdigest(notes.map(&:post_processed_cache_key).join(':'))
+
+    [
+      CACHE_VERSION,
+      id,
+      notes_sha,
+      resolved_at
+    ].join(':')
+  end
+
+  # Consolidate discussions GID. There is no need to have different GID for different class names as the discussion_id
+  # hash is already unique per discussion. This also fixes the issue where same discussion may return different GIDs
+  # depending on number of notes it has.
+  def to_global_id(options = {})
+    GlobalID.new(::Gitlab::GlobalId.build(model_name: discussion_class.to_s, id: id))
+  end
+
+  def discussion_class
+    ::Discussion
+  end
+
+  def noteable_collection_name
+    noteable.class.underscore.pluralize
+  end
+
+  def can_reply_to_system_note?
+    return true if noteable.supports_replying_to_system_notes?
+
+    !first_note.system?
   end
 end

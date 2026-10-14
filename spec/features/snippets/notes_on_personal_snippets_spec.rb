@@ -1,21 +1,28 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'Comments on personal snippets', :js do
+RSpec.describe 'Comments on personal snippets', :js, feature_category: :source_code_management do
   include NoteInteractionHelpers
+  include Spec::Support::Helpers::ModalHelpers
 
-  let!(:user)    { create(:user) }
-  let!(:snippet) { create(:personal_snippet, :public) }
+  let_it_be(:snippet, freeze: false) { create(:personal_snippet, :public) }
+  let_it_be(:other_note) { create(:note_on_personal_snippet) }
+
+  let(:user_name) { 'Test User' }
+  let!(:user) { create(:user, name: user_name) }
   let!(:snippet_notes) do
     [
       create(:note_on_personal_snippet, noteable: snippet, author: user),
       create(:note_on_personal_snippet, noteable: snippet)
     ]
   end
-  let!(:other_note) { create(:note_on_personal_snippet) }
 
   before do
     sign_in user
     visit snippet_path(snippet)
+
+    wait_for_requests
   end
 
   subject { page }
@@ -42,13 +49,28 @@ describe 'Comments on personal snippets', :js do
         expect(page).to have_selector('.note-emoji-button')
       end
     end
+
+    it 'shows the status of a note author' do
+      status = create(:user_status, user: user)
+      visit snippet_path(snippet)
+
+      within("#note_#{snippet_notes[0].id}") do
+        expect(page).to show_user_status(status)
+      end
+    end
+
+    it 'shows the author name' do
+      within("#note_#{snippet_notes[0].id}") do
+        expect(page).to have_content(user_name)
+      end
+    end
   end
 
   context 'when submitting a note' do
     it 'shows a valid form' do
-      is_expected.to have_css('.js-main-target-form', visible: true, count: 1)
-      expect(find('.js-main-target-form .js-comment-button').value)
-        .to eq('Comment')
+      is_expected.to have_css('.js-main-target-form', visible: :visible, count: 1)
+      expect(find('.js-main-target-form .js-comment-button button', match: :first))
+        .to have_content('Comment')
 
       page.within('.js-main-target-form') do
         expect(page).not_to have_link('Cancel')
@@ -57,9 +79,10 @@ describe 'Comments on personal snippets', :js do
 
     it 'previews a note' do
       fill_in 'note[note]', with: 'This is **awesome**!'
+
       find('.js-md-preview-button').click
 
-      page.within('.new-note .md-preview') do
+      page.within('.new-note .md-preview-holder') do
         expect(page).to have_content('This is awesome!')
         expect(page).to have_selector('strong')
       end
@@ -72,38 +95,59 @@ describe 'Comments on personal snippets', :js do
       expect(find('div#notes')).to have_content('This is awesome!')
     end
 
-    it 'should not have autocomplete' do
-      wait_for_requests
-      request_count_before = page.driver.network_traffic.count
-
-      find('#note_note').native.send_keys('')
+    it 'does not have autocomplete' do
       fill_in 'note[note]', with: '@'
 
       wait_for_requests
-      request_count_after = page.driver.network_traffic.count
 
       # This selector probably won't be in place even if autocomplete was enabled
       # but we want to make sure
       expect(page).not_to have_selector('.atwho-view')
-      expect(request_count_before).to eq(request_count_after)
+    end
+
+    it_behaves_like 'personal snippet with references' do
+      let(:container) { 'div#notes' }
+
+      subject do
+        fill_in 'note[note]', with: references
+        click_button 'Comment'
+
+        wait_for_requests
+      end
     end
   end
 
   context 'when editing a note' do
-    it 'changes the text' do
-      find('.js-note-edit').click
+    context 'when note is empty' do
+      before do
+        find('.js-note-edit').click
 
-      page.within('.current-note-edit-form') do
-        fill_in 'note[note]', with: 'new content'
-        find('.btn-save').click
+        page.within('.current-note-edit-form') do
+          fill_in 'note[note]', with: ''
+        end
       end
 
-      page.within("#notes-list li#note_#{snippet_notes[0].id}") do
-        edited_text = find('.edited-text')
+      it 'disables save button' do
+        expect(page).to have_button('Save comment', disabled: true)
+      end
+    end
 
-        expect(page).to have_css('.note_edited_ago')
-        expect(page).to have_content('new content')
-        expect(edited_text).to have_selector('.note_edited_ago')
+    context 'when note is not empty' do
+      it 'changes the text' do
+        find('.js-note-edit').click
+
+        page.within('.current-note-edit-form') do
+          fill_in 'note[note]', with: 'new content'
+          find('.btn-confirm').click
+        end
+
+        page.within("#notes-list li#note_#{snippet_notes[0].id}") do
+          edited_text = find('.edited-text')
+
+          expect(page).to have_css('.note_edited_ago')
+          expect(page).to have_content('new content')
+          expect(edited_text).to have_selector('.note_edited_ago')
+        end
       end
     end
   end
@@ -115,6 +159,8 @@ describe 'Comments on personal snippets', :js do
       page.within("#notes-list li#note_#{snippet_notes[0].id}") do
         click_on 'Delete comment'
       end
+
+      accept_gl_confirm(button_text: 'Delete comment')
 
       wait_for_requests
 

@@ -1,5 +1,7 @@
+# frozen_string_literal: true
+
 module Mattermost
-  ClientError = Class.new(Mattermost::Error)
+  ClientError = Class.new(::Mattermost::Error)
 
   class Client
     attr_reader :user
@@ -9,7 +11,7 @@ module Mattermost
     end
 
     def with_session(&blk)
-      Mattermost::Session.new(user).with_session(&blk)
+      ::Mattermost::Session.new(user).with_session(&blk)
     end
 
     private
@@ -47,15 +49,15 @@ module Mattermost
     end
 
     def json_response(response)
-      json_response = JSON.parse(response.body)
+      json_response = response.parsed_response
 
       unless response.success?
-        raise Mattermost::ClientError.new(json_response['message'] || 'Undefined error')
+        raise ::Mattermost::ClientError, json_response['message'] || 'Undefined error'
       end
 
       json_response
     rescue JSON::JSONError
-      raise Mattermost::ClientError.new('Cannot parse response')
+      raise ::Mattermost::ClientError, 'Cannot parse response'
     end
   end
 end

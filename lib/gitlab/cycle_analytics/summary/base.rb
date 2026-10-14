@@ -1,19 +1,19 @@
+# frozen_string_literal: true
+
 module Gitlab
   module CycleAnalytics
     module Summary
       class Base
-        def initialize(project:, from:)
+        include Gitlab::CycleAnalytics::Summary::Defaults
+
+        def initialize(project:, options:)
           @project = project
-          @from = from
+          @options = options
         end
 
-        def title
-          raise NotImplementedError.new("Expected #{self.name} to implement title")
-        end
+        private
 
-        def value
-          raise NotImplementedError.new("Expected #{self.name} to implement value")
-        end
+        attr_reader :project, :options
       end
     end
   end

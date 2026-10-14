@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module SlashCommands
     module Presenters
@@ -5,44 +7,27 @@ module Gitlab
         include Presenters::IssueBase
 
         def present
-          in_channel_response(new_issue)
+          in_channel_response(response_message)
         end
 
         private
 
-        def new_issue
+        def pretext
+          "I created an issue on #{author_profile_link}'s behalf: *#{issue_link}* in #{project_link}"
+        end
+
+        def issue_link
+          "[#{issue.to_reference}](#{issue_url})"
+        end
+
+        def response_message(custom_pretext: pretext)
           {
-            attachments: [
-              {
-                title:        "#{@resource.title} · #{@resource.to_reference}",
-                title_link:   resource_url,
-                author_name:  author.name,
-                author_icon:  author.avatar_url,
-                fallback:     "New issue #{@resource.to_reference}: #{@resource.title}",
-                pretext:      pretext,
-                color:        color(@resource),
-                fields:       fields,
-                mrkdwn_in: [
-                  :title,
-                  :pretext,
-                  :text,
-                  :fields
-                ]
-              }
-            ]
+            text: pretext
           }
         end
 
-        def pretext
-          "I created an issue on #{author_profile_link}'s behalf: **#{@resource.to_reference}** in #{project_link}"
-        end
-
-        def project_link
-          "[#{project.name_with_namespace}](#{project.web_url})"
-        end
-
-        def author_profile_link
-          "[#{author.to_reference}](#{url_for(author)})"
+        def issue_url
+          ::Gitlab::UrlBuilder.build(issue)
         end
       end
     end

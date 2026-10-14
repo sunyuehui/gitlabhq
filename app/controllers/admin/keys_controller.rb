@@ -1,8 +1,12 @@
+# frozen_string_literal: true
+
 class Admin::KeysController < Admin::ApplicationController
   before_action :user, only: [:show, :destroy]
 
+  feature_category :user_management
+
   def show
-    @key = user.keys.find(params[:id])
+    @key = user.keys.find(key_params[:id])
 
     respond_to do |format|
       format.html
@@ -11,24 +15,28 @@ class Admin::KeysController < Admin::ApplicationController
   end
 
   def destroy
-    key = user.keys.find(params[:id])
+    key = user.keys.find(key_params[:id])
 
     respond_to do |format|
       if key.destroy
-        format.html { redirect_to keys_admin_user_path(user), status: 302, notice: 'User key was successfully removed.' }
+        format.html do
+          redirect_to keys_admin_user_path(user), status: :found, notice: _('User key was successfully removed.')
+        end
       else
-        format.html { redirect_to keys_admin_user_path(user), status: 302, alert: 'Failed to remove user key.' }
+        format.html { redirect_to keys_admin_user_path(user), status: :found, alert: _('Failed to remove user key.') }
       end
     end
   end
 
   protected
 
+  # rubocop: disable CodeReuse/ActiveRecord
   def user
-    @user ||= User.find_by!(username: params[:user_id])
+    @user ||= User.find_by!(username: key_params[:user_id])
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def key_params
-    params.require(:user_id, :id)
+    params.permit(:user_id, :id)
   end
 end

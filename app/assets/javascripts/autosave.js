@@ -1,55 +1,83 @@
-/* eslint-disable func-names, space-before-function-paren, wrap-iife, no-param-reassign, quotes, prefer-template, no-var, one-var, no-unused-vars, one-var-declaration-per-line, no-void, consistent-return, no-empty, max-len */
+import { parseBoolean } from '@gitlab/frontend-utils';
 import AccessorUtilities from './lib/utils/accessor';
 
-window.Autosave = (function() {
-  function Autosave(field, key) {
+export default class Autosave {
+  // eslint-disable-next-line max-params
+  constructor(field, key, fallbackKey, lockVersion) {
     this.field = field;
-    this.isLocalStorageAvailable = AccessorUtilities.isLocalStorageAccessSafe();
-
-    if (key.join != null) {
-      key = key.join("/");
-    }
-    this.key = "autosave/" + key;
-    this.field.data("autosave", this);
+    this.type = this.field.getAttribute('type');
+    this.isLocalStorageAvailable = AccessorUtilities.canUseLocalStorage();
+    this.key = Array.isArray(key) ? `autosave/${key.join('/')}` : `autosave/${key}`;
+    this.fallbackKey = fallbackKey;
+    // eslint-disable-next-line @gitlab/no-hardcoded-urls -- autosave key identifier with a /lockVersion suffix, not a navigational URL
+    this.lockVersionKey = `${this.key}/lockVersion`;
+    this.lockVersion = lockVersion;
     this.restore();
-    this.field.on("input", (function(_this) {
-      return function() {
-        return _this.save();
-      };
-    })(this));
+    this.saveAction = this.save.bind(this);
+    // used by app/assets/javascripts/deprecated_notes.js
+    this.field.$autosave = this;
+    this.field.addEventListener('input', this.saveAction);
   }
 
-  Autosave.prototype.restore = function() {
-    var text;
-
+  restore() {
     if (!this.isLocalStorageAvailable) return;
+    const text = window.localStorage.getItem(this.key);
+    const fallbackText = window.localStorage.getItem(this.fallbackKey);
+    const newValue = text || fallbackText;
 
-    text = window.localStorage.getItem(this.key);
+    if (newValue == null) return;
 
-    if ((text != null ? text.length : void 0) > 0) {
-      this.field.val(text);
+    let originalValue = this.field.value;
+    if (this.type === 'checkbox') {
+      originalValue = this.field.checked;
+      this.field.checked = parseBoolean(newValue);
+    } else {
+      this.field.value = newValue;
     }
-    return this.field.trigger("input");
-  };
 
-  Autosave.prototype.save = function() {
-    var text;
-    text = this.field.val();
+    if (originalValue === newValue) return;
+    this.triggerInputEvents();
+  }
 
-    if (this.isLocalStorageAvailable && (text != null ? text.length : void 0) > 0) {
-      return window.localStorage.setItem(this.key, text);
+  triggerInputEvents() {
+    // trigger events so @input, @change and v-model trigger in Vue components
+    const inputEvent = new Event('input', { bubbles: true, cancelable: false });
+    const changeEvent = new Event('change', { bubbles: true, cancelable: false });
+    this.field.dispatchEvent(inputEvent);
+    this.field.dispatchEvent(changeEvent);
+  }
+
+  getSavedLockVersion() {
+    if (!this.isLocalStorageAvailable) return undefined;
+    return window.localStorage.getItem(this.lockVersionKey);
+  }
+
+  save() {
+    const value = this.type === 'checkbox' ? this.field.checked : this.field.value;
+
+    if (this.isLocalStorageAvailable && value) {
+      if (this.fallbackKey) {
+        window.localStorage.setItem(this.fallbackKey, value);
+      }
+      if (this.lockVersion !== undefined) {
+        window.localStorage.setItem(this.lockVersionKey, this.lockVersion);
+      }
+      return window.localStorage.setItem(this.key, value);
     }
 
     return this.reset();
-  };
+  }
 
-  Autosave.prototype.reset = function() {
-    if (!this.isLocalStorageAvailable) return;
+  reset() {
+    if (!this.isLocalStorageAvailable) return undefined;
 
+    window.localStorage.removeItem(this.lockVersionKey);
+    window.localStorage.removeItem(this.fallbackKey);
     return window.localStorage.removeItem(this.key);
-  };
+  }
 
-  return Autosave;
-})();
-
-export default window.Autosave;
+  dispose() {
+    delete this.field.$autosave;
+    this.field.removeEventListener('input', this.saveAction);
+  }
+}

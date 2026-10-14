@@ -1,33 +1,32 @@
-class ProjectGroupLink < ActiveRecord::Base
-  include Expirable
+# frozen_string_literal: true
 
-  GUEST     = 10
-  REPORTER  = 20
-  DEVELOPER = 30
-  MASTER    = 40
+class ProjectGroupLink < ApplicationRecord
+  include Expirable
+  include EachBatch
+  include AfterCommitQueue
 
   belongs_to :project
   belongs_to :group
 
   validates :project_id, presence: true
   validates :group, presence: true
-  validates :group_id, uniqueness: { scope: [:project_id], message: "already shared with this group" }
-  validates :group_access, presence: true
-  validates :group_access, inclusion: { in: Gitlab::Access.values }, presence: true
+  validates :project_id, uniqueness: { scope: [:group_id], message: N_("already shared with this group") }
+  validates :group_access, inclusion: { in: Gitlab::Access.all_values }, presence: true
   validate :different_group
 
-  after_commit :refresh_group_members_authorized_projects
+  scope :non_guests, -> { where('project_group_links.group_access > ?', Gitlab::Access::GUEST) }
+  scope :in_group, ->(group_ids) { where(group_id: group_ids) }
+  scope :for_projects, ->(project_ids) { where(project_id: project_ids) }
 
-  def self.access_options
-    Gitlab::Access.options
-  end
+  alias_method :shared_with_group, :group
+  alias_method :shared_from, :project
 
-  def self.default_access
-    DEVELOPER
+  def self.search(query)
+    joins(:group).merge(Group.search(query))
   end
 
   def human_access
-    self.class.access_options.key(self.group_access)
+    Gitlab::Access.human_access(self.group_access)
   end
 
   private
@@ -41,11 +40,9 @@ class ProjectGroupLink < ActiveRecord::Base
     group_ids = project_group.ancestors.map(&:id).push(project_group.id)
 
     if group_ids.include?(self.group.id)
-      errors.add(:base, "Project cannot be shared with the group it is in or one of its ancestors.")
+      errors.add(:base, _("Project cannot be shared with the group it is in or one of its ancestors."))
     end
   end
-
-  def refresh_group_members_authorized_projects
-    group.refresh_members_authorized_projects
-  end
 end
+
+ProjectGroupLink.prepend_mod_with('ProjectGroupLink')

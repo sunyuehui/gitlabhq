@@ -1,10 +1,10 @@
+# frozen_string_literal: true
+
 class NamespacePolicy < BasePolicy
-  rule { anonymous }.prevent_all
-
-  condition(:owner) { @subject.owner == @user }
-
-  rule { owner | admin }.policy do
-    enable :create_projects
-    enable :admin_namespace
-  end
+  # NamespacePolicy has been traditionally for user namespaces.
+  # So these policies have been moved into Namespaces::UserNamespacePolicy.
+  # Once the user namespace conversion is complete, we can look at
+  # either removing this file or locating common namespace policy items
+  # here.
+  # See https://gitlab.com/groups/gitlab-org/-/epics/6689 for details
 end

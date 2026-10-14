@@ -1,48 +1,60 @@
+# frozen_string_literal: true
+
 module Projects
   class ParticipantsService < BaseService
-    attr_reader :noteable
+    include Gitlab::Utils::StrongMemoize
+    include Users::ParticipableService
 
     def execute(noteable)
       @noteable = noteable
 
-      project_members = sorted(project.team.members)
-      participants = noteable_owner + participants_in_noteable + all_members + groups + project_members
-      participants.uniq
+      participants =
+        noteable_owner +
+        participants_in_noteable +
+        project_members +
+        mentioned_users(project_members_relation)
+
+      participants += groups(organization: organization) unless relation_at_search_limit?(project_members)
+      participants = organization_user_details_for_participants(participants.uniq)
+
+      render_participants_as_hash(participants)
     end
 
-    def noteable_owner
-      return [] unless noteable && noteable.author.present?
+    def project_members
+      filter_and_sort_users(project_members_relation)
+    end
+    strong_memoize_attr :project_members
 
-      [{
-        name: noteable.author.name,
-        username: noteable.author.username,
-        avatar_url: noteable.author.avatar_url
-      }]
+    def project_members_relation
+      project.authorized_users.with_organization_user_details
     end
 
-    def participants_in_noteable
-      return [] unless noteable
+    private
 
-      users = noteable.participants(current_user)
-      sorted(users)
+    def participation_object
+      project
     end
 
-    def sorted(users)
-      users.uniq.to_a.compact.sort_by(&:username).map do |user|
-        { username: user.username, name: user.name, avatar_url: user.avatar_url }
+    def organization
+      project.organization
+    end
+    strong_memoize_attr :organization
+
+    # for users that have an OrganizationUserDetail for the current organization, use this instead
+    # of the User model for rendering username, display_name, and other details
+    # details should be pre-loaded to avoid N+1 queries
+    def organization_user_details_for_participants(participants)
+      participants.map do |participant|
+        next participant unless participant.is_a?(User)
+
+        detail = participant.organization_user_details.to_a.find do |det|
+          det.organization == organization
+        end
+
+        detail.presence || participant
       end
-    end
-
-    def groups
-      current_user.authorized_groups.sort_by(&:path).map do |group|
-        count = group.users.count
-        { username: group.full_path, name: group.full_name, count: count, avatar_url: group.avatar_url }
-      end
-    end
-
-    def all_members
-      count = project.team.members.flatten.count
-      [{ username: "all", name: "All Project and Group Members", count: count }]
     end
   end
 end
+
+Projects::ParticipantsService.prepend_mod_with('Projects::ParticipantsService')

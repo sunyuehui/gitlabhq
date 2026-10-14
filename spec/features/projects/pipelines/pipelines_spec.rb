@@ -1,18 +1,27 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'Pipelines', :js do
+RSpec.describe 'Pipelines', :js, :clean_gitlab_redis_cache, feature_category: :continuous_integration do
+  include ListboxHelpers
+  include ProjectForksHelper
+  include Spec::Support::Helpers::ModalHelpers
+
   let(:project) { create(:project) }
+  let(:expected_detached_mr_tag) { 'merge request' }
 
   context 'when user is logged in' do
     let(:user) { create(:user) }
 
     before do
       sign_in(user)
-      project.team << [user, :developer]
+
+      project.add_developer(user)
+      project.update!(auto_devops_attributes: { enabled: false })
     end
 
-    describe 'GET /:project/pipelines' do
-      let(:project) { create(:project, :repository) }
+    describe 'GET /:project/-/pipelines' do
+      let_it_be_with_reload(:project) { create(:project, :repository) }
 
       let!(:pipeline) do
         create(
@@ -34,91 +43,124 @@ describe 'Pipelines', :js do
 
         [:all, :running, :pending, :finished, :branches].each do |scope|
           context "when displaying #{scope}" do
-            before do
-              visit_project_pipelines(scope: scope)
-            end
+            it 'contains pipeline commit' do
+              visit project_pipelines_path(project, scope: scope)
 
-            it 'contains pipeline commit short SHA' do
               expect(page).to have_content(pipeline.short_sha)
-            end
-
-            it 'contains branch name' do
               expect(page).to have_content(pipeline.ref)
             end
           end
         end
       end
 
-      context 'header tabs' do
+      context 'header' do
         before do
-          visit project_pipelines_path(project)
-          wait_for_requests
+          visit_project_pipelines
         end
 
-        it 'shows a tab for All pipelines and count' do
-          expect(page.find('.js-pipelines-tab-all a').text).to include('All')
-          expect(page.find('.js-pipelines-tab-all .badge').text).to include('1')
+        it 'shows pipeline tabs', :aggregate_failures do
+          expect(page).to have_testid('pipelines-tab-all', text: 'All 1', exact_text: true)
+          expect(page).to have_testid('pipelines-tab-finished', text: 'Finished')
+          expect(page).to have_testid('pipelines-tab-branches', text: 'Branches')
+          expect(page).to have_testid('pipelines-tab-tags', text: 'Tags')
         end
 
-        it 'shows a tab for Pending pipelines and count' do
-          expect(page.find('.js-pipelines-tab-pending a').text).to include('Pending')
-          expect(page.find('.js-pipelines-tab-pending .badge').text).to include('0')
+        it 'updates content when tab is clicked' do
+          click_on 'Finished'
+
+          expect(page).to have_content('There are currently no finished pipelines.')
         end
 
-        it 'shows a tab for Running pipelines and count' do
-          expect(page.find('.js-pipelines-tab-running a').text).to include('Running')
-          expect(page.find('.js-pipelines-tab-running .badge').text).to include('1')
-        end
-
-        it 'shows a tab for Finished pipelines and count' do
-          expect(page.find('.js-pipelines-tab-finished a').text).to include('Finished')
-          expect(page.find('.js-pipelines-tab-finished .badge').text).to include('0')
-        end
-
-        it 'shows a tab for Branches' do
-          expect(page.find('.js-pipelines-tab-branches a').text).to include('Branches')
-        end
-
-        it 'shows a tab for Tags' do
-          expect(page.find('.js-pipelines-tab-tags a').text).to include('Tags')
+        it 'renders "New pipeline" link' do
+          expect(page).to have_link('New pipeline')
         end
       end
 
       context 'when pipeline is cancelable' do
-        let!(:build) do
-          create(:ci_build, pipeline: pipeline,
-                            stage: 'test',
-                            commands: 'test')
+        let!(:job) do
+          create(:ci_build, pipeline: pipeline, stage: 'test')
         end
 
         before do
-          build.run
+          stub_const("::Projects::PipelinesController::POLLING_INTERVAL", 1)
+          job.run
           visit_project_pipelines
         end
 
-        it 'indicates that pipeline can be canceled' do
-          expect(page).to have_selector('.js-pipelines-cancel-button')
-          expect(page).to have_selector('.ci-running')
-        end
-
-        context 'when canceling' do
-          before do
-            find('.js-pipelines-cancel-button').click
-            wait_for_requests
+        context 'when canceling support is disabled' do
+          it 'indicates that pipeline can be canceled', quarantine: 'https://gitlab.com/gitlab-org/quality/test-failure-issues/-/issues/9508' do
+            expect(page).to have_selector('.js-pipelines-cancel-button')
+            expect(page).to have_selector('[data-testid="ci-icon"]', text: 'Running')
           end
 
-          it 'indicated that pipelines was canceled' do
-            expect(page).not_to have_selector('.js-pipelines-cancel-button')
-            expect(page).to have_selector('.ci-canceled')
+          context 'when canceling' do
+            it 'indicates that pipeline was canceled', :sidekiq_inline, quarantine: 'https://gitlab.com/gitlab-org/quality/test-failure-issues/-/issues/9504' do
+              find('.js-pipelines-cancel-button').click
+              click_button 'Stop pipeline'
+
+              wait_for_requests
+
+              expect(page).to have_selector('[data-testid="ci-icon"]', text: 'Canceled')
+              expect(page).not_to have_selector('.js-pipelines-cancel-button')
+            end
+
+            it 'targets the pipeline the cancel action was invoked on', quarantine: 'https://gitlab.com/gitlab-org/quality/test-failure-issues/-/issues/9455' do
+              allow_next_instance_of(Gitlab::EtagCaching::Store) do |instance|
+                allow(instance).to receive(:get).and_return(nil)
+              end
+
+              expect(page).to have_selector('[data-testid="pipeline-table-row"]', count: 1)
+
+              find('.js-pipelines-cancel-button').click
+
+              within_testid 'pipeline-stop-modal' do
+                expect(page).to have_content("Stop pipeline ##{pipeline.id}?")
+              end
+
+              create(
+                :ci_pipeline,
+                :running,
+                project: project,
+                source: Enums::Ci::Pipeline.sources[:push],
+                ref: 'master',
+                sha: 'sha'
+              )
+
+              expect(page).to have_selector('[data-testid="pipeline-table-row"]', count: 2)
+
+              within_testid 'pipeline-stop-modal' do
+                expect(page).to have_content("Stop pipeline ##{pipeline.id}?")
+              end
+            end
+          end
+        end
+
+        context 'when canceling support is enabled' do
+          include_context 'when canceling support'
+
+          it 'indicates that pipeline can be canceled', quarantine: 'https://gitlab.com/gitlab-org/quality/test-failure-issues/-/issues/9461' do
+            expect(page).to have_selector('.js-pipelines-cancel-button')
+            expect(page).to have_selector('[data-testid="ci-icon"]', text: 'Running')
+          end
+
+          context 'when canceling' do
+            before do
+              find('.js-pipelines-cancel-button').click
+              click_button 'Stop pipeline'
+              wait_for_requests
+            end
+
+            it 'indicates that pipeline is canceling', :sidekiq_inline do
+              expect(page).to have_selector('[data-testid="ci-icon"]', text: 'Canceling')
+              expect(page).not_to have_selector('.js-pipelines-cancel-button')
+            end
           end
         end
       end
 
-      context 'when pipeline is retryable' do
+      context 'when pipeline is retryable', :sidekiq_might_not_need_inline do
         let!(:build) do
-          create(:ci_build, pipeline: pipeline,
-                            stage: 'test',
-                            commands: 'test')
+          create(:ci_build, pipeline: pipeline, stage: 'test')
         end
 
         before do
@@ -128,7 +170,7 @@ describe 'Pipelines', :js do
 
         it 'indicates that pipeline can be retried' do
           expect(page).to have_selector('.js-pipelines-retry-button')
-          expect(page).to have_selector('.ci-failed')
+          expect(page).to have_selector('[data-testid="ci-icon"]', text: 'Failed')
         end
 
         context 'when retrying' do
@@ -139,7 +181,108 @@ describe 'Pipelines', :js do
 
           it 'shows running pipeline that is not retryable' do
             expect(page).not_to have_selector('.js-pipelines-retry-button')
-            expect(page).to have_selector('.ci-running')
+            expect(page).to have_selector('[data-testid="ci-icon"]', text: 'Running')
+          end
+        end
+      end
+
+      context 'when pipeline is detached merge request pipeline' do
+        let(:merge_request) do
+          create(
+            :merge_request,
+            :with_detached_merge_request_pipeline,
+            source_project: source_project,
+            target_project: target_project
+          )
+        end
+
+        let!(:pipeline) { merge_request.all_pipelines.first }
+        let(:source_project) { project }
+        let(:target_project) { project }
+
+        before do
+          visit project_pipelines_path(source_project)
+        end
+
+        shared_examples_for 'detached merge request pipeline' do
+          it 'shows pipeline information without pipeline ref' do
+            within_testid('pipeline-url-table-cell') do
+              expect(page).to have_content(expected_detached_mr_tag)
+
+              expect(page).to have_link(merge_request.iid.to_s, href: project_merge_request_path(project, merge_request))
+
+              expect(page).not_to have_link(pipeline.ref)
+            end
+          end
+        end
+
+        it_behaves_like 'detached merge request pipeline'
+
+        context 'when source project is a forked project' do
+          let(:project) { create(:project, :repository) }
+          let(:source_project) { fork_project(project, user, repository: true) }
+
+          it_behaves_like 'detached merge request pipeline'
+        end
+      end
+
+      context 'when pipeline is merge request pipeline' do
+        let(:merge_request) do
+          create(
+            :merge_request,
+            :with_merge_request_pipeline,
+            source_project: source_project,
+            target_project: target_project,
+            merge_sha: target_project.commit.sha
+          )
+        end
+
+        let!(:pipeline) { merge_request.all_pipelines.first }
+        let(:source_project) { project }
+        let(:target_project) { project }
+
+        before do
+          visit project_pipelines_path(source_project)
+        end
+
+        shared_examples_for 'Correct merge request pipeline information' do
+          it 'does not show detached tag for the pipeline, and shows the link of the merge request, and does not show the ref of the pipeline' do
+            within_testid('pipeline-url-table-cell') do
+              expect(page).not_to have_content(expected_detached_mr_tag)
+
+              expect(page).to have_link(merge_request.iid.to_s, href: project_merge_request_path(project, merge_request))
+
+              expect(page).not_to have_link(pipeline.ref)
+            end
+          end
+        end
+
+        it_behaves_like 'Correct merge request pipeline information'
+
+        context 'when source project is a forked project' do
+          let(:project) { create(:project, :repository) }
+          let(:source_project) { fork_project(project, user, repository: true) }
+
+          it_behaves_like 'Correct merge request pipeline information'
+        end
+      end
+
+      context 'when pipeline is a scheduled pipeline' do
+        let_it_be_with_reload(:project) { create(:project, :repository, public_builds: false) }
+        let(:schedule) { create(:ci_pipeline_schedule, project: project, owner: user) }
+        let!(:pipeline) { create(:ci_pipeline, project: project, pipeline_schedule: schedule) }
+
+        before do
+          visit_project_pipelines
+          wait_for_requests
+        end
+
+        it 'contains pipeline schedule secondary link' do
+          within_testid('pipeline-url-table-cell') do
+            expect(page).to have_link(
+              'pipeline schedule',
+              href: edit_project_pipeline_schedule_path(project, schedule)
+            )
           end
         end
       end
@@ -149,18 +292,21 @@ describe 'Pipelines', :js do
           create(:ci_pipeline, :invalid, project: project)
         end
 
+        let(:pipeline_url_button) { find_by_testid('pipeline-url-yaml') }
+
         before do
           visit_project_pipelines
         end
 
-        it 'contains badge that indicates errors' do
+        it 'contains badge which contains errors', :aggregate_failures do
           expect(page).to have_content 'yaml invalid'
-        end
+          expect(page).to have_content 'error'
 
-        it 'contains badge with tooltip which contains error' do
-          expect(pipeline).to have_yaml_errors
-          expect(page).to have_selector(
-            %Q{span[data-original-title="#{pipeline.yaml_errors}"]})
+          expect(pipeline_url_button[:title]).to eq(
+            'Pipeline could not be created due to CI/CD configuration problems. ' \
+              'Validate the configuration on pipeline editor page for the full list of issues.'
+          )
+          expect(page).to have_selector(%(button[title="#{pipeline.present.failure_reason}"]))
         end
       end
 
@@ -169,37 +315,115 @@ describe 'Pipelines', :js do
           create(:ci_build, :manual,
             pipeline: pipeline,
             name: 'manual build',
-            stage: 'test',
-            commands: 'test')
+            stage: 'test')
         end
 
         before do
           visit_project_pipelines
         end
 
-        it 'has a dropdown with play button' do
-          expect(page).to have_selector('.dropdown-new.btn.btn-default .icon-play')
+        it 'has a dropdown with play button that runs manual job' do
+          expect(page).to have_selector('[data-testid="pipelines-manual-actions-dropdown"] [data-testid="play-icon"]')
+
+          find_by_testid('pipelines-manual-actions-dropdown').click
+
+          wait_for_requests
+
+          click_button('manual build')
+
+          wait_for_all_requests
+
+          expect(manual.reload).to be_pending
+        end
+      end
+
+      context 'when there is a delayed job' do
+        let!(:delayed_job) do
+          create(:ci_build, :scheduled,
+            pipeline: pipeline,
+            name: 'delayed job 1',
+            stage: 'test',
+            scheduled_at: 2.hours.since + 2.minutes)
         end
 
-        it 'has link to the manual action' do
-          find('.js-pipeline-dropdown-manual-actions').click
-
-          expect(page).to have_button('manual build')
+        before do
+          visit_project_pipelines
         end
 
-        context 'when manual action was played' do
-          before do
-            find('.js-pipeline-dropdown-manual-actions').click
-            click_button('manual build')
+        it "has a dropdown for actionable that has link to the delayed job's action" do
+          find_by_testid('pipelines-manual-actions-dropdown').click
+
+          wait_for_requests
+
+          expect(page).to have_button('delayed job 1')
+
+          time_diff = [0, delayed_job.scheduled_at - Time.zone.now].max
+          expect(page).to have_content(Time.at(time_diff).utc.strftime("%H:%M"))
+        end
+
+        context 'when delayed job is expired already' do
+          let!(:delayed_job) do
+            create(:ci_build, :expired_scheduled,
+              pipeline: pipeline,
+              name: 'delayed job 1',
+              stage: 'test')
           end
 
-          it 'enqueues manual action job' do
-            expect(page).to have_selector('.js-pipeline-dropdown-manual-actions:disabled')
+          it "shows 00:00:00 as the remaining time" do
+            find_by_testid('pipelines-manual-actions-dropdown').click
+
+            wait_for_requests
+
+            expect(page).to have_content("00:00:00")
+          end
+        end
+
+        context 'when user played a delayed job immediately' do
+          let(:manual_action_selector) { '[data-testid="pipelines-manual-actions-dropdown"] button' }
+          let(:manual_action_dropdown) { '[data-testid="pipelines-manual-actions-dropdown"]' }
+
+          before do
+            find(manual_action_selector).click
+            accept_gl_confirm do
+              click_button 'delayed job 1'
+            end
+
+            # Click on the manual action dropdown and check if a request has been made
+            find(manual_action_selector).click
+            within(manual_action_dropdown) { find('.gl-spinner') }
+            within(manual_action_dropdown) { find_by_testid('play-icon') }
+
+            wait_for_requests
+          end
+
+          it 'enqueues the delayed job' do
+            expect(delayed_job.reload).to be_pending
           end
         end
       end
 
       context 'for generic statuses' do
+        context 'when preparing' do
+          let!(:pipeline) do
+            create(:ci_empty_pipeline,
+              status: 'preparing', project: project)
+          end
+
+          let!(:status) do
+            create(:generic_commit_status,
+              :preparing, pipeline: pipeline)
+          end
+
+          before do
+            visit_project_pipelines
+          end
+
+          it 'is cancelable and preparing' do
+            expect(page).to have_selector('.js-pipelines-cancel-button')
+            expect(page).to have_selector('[data-testid="ci-icon"]', text: 'Preparing')
+          end
+        end
+
         context 'when running' do
           let!(:running) do
             create(:generic_commit_status,
@@ -212,22 +436,20 @@ describe 'Pipelines', :js do
             visit_project_pipelines
           end
 
-          it 'is cancelable' do
+          it 'is running and cancelable', :aggregate_failures do
             expect(page).to have_selector('.js-pipelines-cancel-button')
-          end
-
-          it 'has pipeline running' do
-            expect(page).to have_selector('.ci-running')
+            expect(page).to have_selector('[data-testid="ci-icon"]', text: 'Running')
           end
 
           context 'when canceling' do
             before do
-              find('.js-pipelines-cancel-button').trigger('click')
+              find('.js-pipelines-cancel-button').click
+              click_button 'Stop pipeline'
             end
 
-            it 'indicates that pipeline was canceled' do
+            it 'indicates that pipeline was canceled', :sidekiq_might_not_need_inline do
               expect(page).not_to have_selector('.js-pipelines-cancel-button')
-              expect(page).to have_selector('.ci-canceled')
+              expect(page).to have_selector('[data-testid="ci-icon"]', text: 'Canceled')
             end
           end
         end
@@ -244,12 +466,9 @@ describe 'Pipelines', :js do
             visit_project_pipelines
           end
 
-          it 'is not retryable' do
+          it 'is not retryable and has a failed pipeline', :aggregate_failures, :sidekiq_inline do
             expect(page).not_to have_selector('.js-pipelines-retry-button')
-          end
-
-          it 'has failed pipeline' do
-            expect(page).to have_selector('.ci-failed')
+            expect(page).to have_selector('[data-testid="ci-icon"]', text: 'Failed')
           end
         end
       end
@@ -257,38 +476,32 @@ describe 'Pipelines', :js do
       context 'downloadable pipelines' do
         context 'with artifacts' do
           let!(:with_artifacts) do
-            create(:ci_build, :artifacts, :success,
+            build = create(:ci_build, :success,
               pipeline: pipeline,
               name: 'rspec tests',
               stage: 'test')
+
+            create(:ci_job_artifact, :codequality, job: build)
+            create(:ci_job_artifact, :archive, job: build)
           end
 
           before do
             visit_project_pipelines
           end
 
-          it 'has artifats' do
-            expect(page).to have_selector('.build-artifacts')
-          end
+          it 'lists the downloadable artifacts in the dropdown', :aggregate_failures do
+            find('[data-testid="pipeline-multi-actions-dropdown"] button').click
 
-          it 'has artifacts download dropdown' do
-            find('.js-pipeline-dropdown-download').click
-
-            expect(page).to have_link(with_artifacts.name)
-          end
-
-          it 'has download attribute on download links' do
-            find('.js-pipeline-dropdown-download').click
-            expect(page).to have_selector('a', text: 'Download')
-            page.all('.build-artifacts a', text: 'Download').each do |link|
-              expect(link[:download]).to eq ''
+            within_testid('pipeline-multi-actions-dropdown') do
+              expect(page).to have_link('rspec tests:archive')
+              expect(page).to have_link('rspec tests:codequality')
             end
           end
         end
 
         context 'with artifacts expired' do
           let!(:with_artifacts_expired) do
-            create(:ci_build, :artifacts_expired, :success,
+            create(:ci_build, :expired, :success,
               pipeline: pipeline,
               name: 'rspec',
               stage: 'test')
@@ -298,158 +511,160 @@ describe 'Pipelines', :js do
             visit_project_pipelines
           end
 
-          it { expect(page).not_to have_selector('.build-artifacts') }
+          it { expect(page).not_to have_selector('[data-testid="artifact-item"]') }
         end
 
-        context 'without artifacts' do
-          let!(:without_artifacts) do
-            create(:ci_build, :success,
-              pipeline: pipeline,
-              name: 'rspec',
-              stage: 'test')
-          end
-
+        context 'with trace artifact' do
           before do
+            create(:ci_build, :success, :trace_artifact, pipeline: pipeline)
+
             visit_project_pipelines
           end
 
-          it { expect(page).not_to have_selector('.build-artifacts') }
+          it 'does not show trace artifact as artifacts' do
+            expect(page).not_to have_selector('[data-testid="artifact-item"]')
+          end
         end
       end
 
       context 'mini pipeline graph' do
         let!(:build) do
-          create(:ci_build, :pending, pipeline: pipeline,
-                                      stage: 'build',
-                                      name: 'build')
+          create(:ci_build, :pending, pipeline: pipeline, stage: 'build', name: 'build')
         end
 
         before do
           visit_project_pipelines
         end
 
-        it 'should render a mini pipeline graph' do
-          expect(page).to have_selector('.js-mini-pipeline-graph')
-          expect(page).to have_selector('.js-builds-dropdown-button')
+        it 'renders a mini pipeline graph' do
+          expect(page).to have_selector('[data-testid="pipeline-mini-graph"]')
+          expect(page).to have_selector('[data-testid="pipeline-mini-graph-dropdown"]')
         end
 
         context 'when clicking a stage badge' do
-          it 'should open a dropdown' do
-            find('.js-builds-dropdown-button').trigger('click')
+          it 'opens a dropdown' do
+            find_by_testid('pipeline-mini-graph-dropdown-toggle').click
+
+            wait_for_requests
 
             expect(page).to have_link build.name
           end
 
-          it 'should be possible to cancel pending build' do
-            find('.js-builds-dropdown-button').trigger('click')
-            find('a.js-ci-action-icon').trigger('click')
+          it 'is possible to cancel pending build' do
+            find_by_testid('pipeline-mini-graph-dropdown-toggle').click
 
-            expect(page).to have_content('canceled')
+            wait_for_requests
+
+            find_by_testid('ci-action-button').click
+            wait_for_requests
+
             expect(build.reload).to be_canceled
+          end
+
+          context 'manual job' do
+            let!(:build) do
+              create(:ci_build, :manual, pipeline: pipeline, stage: 'build', name: 'manual-build')
+            end
+
+            it 'is possible to play manual build' do
+              find_by_testid('pipeline-mini-graph-dropdown-toggle').click
+
+              wait_for_requests
+
+              within first('[data-testid="ci-job-item"]') do
+                expect(find_by_testid('play-icon')).to be_visible
+              end
+
+              find_by_testid('ci-action-button').click
+              wait_for_requests
+
+              element = find_by_testid('pipeline-mini-graph-dropdown-toggle')
+              expect(element['aria-expanded']).to eq "true"
+              expect(element).to be_visible
+            end
           end
         end
 
-        context 'dropdown jobs list' do
-          it 'should keep the dropdown open when the user ctr/cmd + clicks in the job name' do
-            find('.js-builds-dropdown-button').trigger('click')
+        context 'for a failed pipeline' do
+          let!(:build) do
+            create(:ci_build, :failed, pipeline: pipeline, stage: 'build', name: 'build')
+          end
 
-            execute_script('var e = $.Event("keydown", { keyCode: 64 }); $("body").trigger(e);')
+          it 'displays the failure reason' do
+            find_by_testid('pipeline-mini-graph-dropdown-toggle').click
 
-            find('.mini-pipeline-graph-dropdown-item').trigger('click')
+            wait_for_requests
 
-            expect(page).to have_selector('.js-ci-action-icon')
+            within_testid('pipeline-mini-graph-dropdown') do
+              build_element = page.find('.ci-job-component [data-testid="job-name"]')
+              expect(build_element['title']).to eq('Failed - (unknown failure)')
+            end
           end
         end
       end
 
       context 'with pagination' do
-        before do
-          allow(Ci::Pipeline).to receive(:default_per_page).and_return(1)
-          create(:ci_empty_pipeline,  project: project)
-        end
+        # rubocop:disable FactoryBot/ExcessiveCreateList -- need >15 items to test pagination
+        let!(:pipelines) { create_list(:ci_pipeline, 16, project: project) }
+        # rubocop:enable FactoryBot/ExcessiveCreateList
 
-        it 'should render pagination' do
-          visit project_pipelines_path(project)
+        it 'renders pagination' do
+          visit_project_pipelines
           wait_for_requests
 
           expect(page).to have_selector('.gl-pagination')
         end
 
-        it 'should render second page of pipelines' do
-          visit project_pipelines_path(project, page: '2')
+        it 'shows updated page content' do
+          visit project_pipelines_path(project)
+
           wait_for_requests
 
-          expect(page).to have_selector('.gl-pagination .page', count: 2)
+          expect(page).to have_selector('[data-testid="pipeline-table-row"]', count: 15)
+
+          find_by_testid('nextButton').click
+
+          wait_for_requests
+
+          expect(page).to have_selector('[data-testid="pipeline-table-row"]', count: 2)
+        end
+      end
+
+      context 'with pipeline key selection' do
+        before do
+          visit_project_pipelines
+          wait_for_requests
+        end
+
+        it 'changes the Pipeline ID column link to Pipeline IID and persists', :aggregate_failures do
+          expect(page).to have_link(text: "##{pipeline.id}")
+
+          select_from_listbox('Show Pipeline IID', from: 'Show Pipeline ID')
+
+          expect(page).to have_link(text: "##{pipeline.iid}")
+
+          visit_project_pipelines
+          wait_for_requests
+
+          expect(page).to have_link(text: "##{pipeline.iid}")
         end
       end
     end
 
-    describe 'GET /:project/pipelines/show' do
-      let(:project) { create(:project, :repository) }
-
-      let(:pipeline) do
-        create(:ci_empty_pipeline,
-              project: project,
-              sha: project.commit.id,
-              user: user)
-      end
-
-      before do
-        create_build('build', 0, 'build', :success)
-        create_build('test', 1, 'rspec 0:2', :pending)
-        create_build('test', 1, 'rspec 1:2', :running)
-        create_build('test', 1, 'spinach 0:2', :created)
-        create_build('test', 1, 'spinach 1:2', :created)
-        create_build('test', 1, 'audit', :created)
-        create_build('deploy', 2, 'production', :created)
-
-        create(:generic_commit_status, pipeline: pipeline, stage: 'external', name: 'jenkins', stage_idx: 3)
-
-        visit project_pipeline_path(project, pipeline)
-        wait_for_requests
-      end
-
-      it 'shows a graph with grouped stages' do
-        expect(page).to have_css('.js-pipeline-graph')
-
-        # header
-        expect(page).to have_text("##{pipeline.id}")
-        expect(page).to have_selector(%Q(img[alt$="#{pipeline.user.name}'s avatar"]))
-        expect(page).to have_link(pipeline.user.name, href: user_path(pipeline.user))
-
-        # stages
-        expect(page).to have_text('Build')
-        expect(page).to have_text('Test')
-        expect(page).to have_text('Deploy')
-        expect(page).to have_text('External')
-
-        # builds
-        expect(page).to have_text('rspec')
-        expect(page).to have_text('spinach')
-        expect(page).to have_text('rspec')
-        expect(page).to have_text('production')
-        expect(page).to have_text('jenkins')
-      end
-
-      def create_build(stage, stage_idx, name, status)
-        create(:ci_build, pipeline: pipeline, stage: stage, stage_idx: stage_idx, name: name, status: status)
-      end
-    end
-
-    describe 'POST /:project/pipelines' do
-      let(:project) { create(:project, :repository) }
+    describe 'POST /:project/-/pipelines' do
+      let_it_be_with_reload(:project) { create(:project, :repository) }
 
       before do
         visit new_project_pipeline_path(project)
       end
 
-      context 'for valid commit', js: true do
+      context 'for valid commit' do
         before do
           click_button project.default_branch
+          wait_for_requests
 
-          page.within '.dropdown-menu' do
-            click_link 'master'
-          end
+          select_listbox_item('spooky-stuff')
+          wait_for_requests
         end
 
         context 'with gitlab-ci.yml' do
@@ -457,26 +672,100 @@ describe 'Pipelines', :js do
             stub_ci_pipeline_to_return_yaml_file
           end
 
+          subject(:run_pipeline) do
+            click_button 'New pipeline'
+
+            wait_for_requests
+          end
+
           it 'creates a new pipeline' do
-            expect { click_on 'Create pipeline' }
-              .to change { Ci::Pipeline.count }.by(1)
+            expect { run_pipeline }.to change { Ci::Pipeline.count }.by(1)
 
             expect(Ci::Pipeline.last).to be_web
+          end
+
+          context 'when variables are specified' do
+            before do
+              project.update!(ci_pipeline_variables_minimum_override_role: :developer)
+            end
+
+            it 'creates a new pipeline with variables' do
+              within_testid('ci-variable-row-container') do
+                find_by_testid('pipeline-form-ci-variable-key-field').set('key_name')
+                find_by_testid('pipeline-form-ci-variable-value-field').set('value')
+              end
+
+              expect do
+                click_button 'New pipeline'
+                wait_for_requests
+              end
+                .to change { Ci::Pipeline.count }.by(1)
+
+              expect(Ci::Pipeline.last.variables.map { |var| var.slice(:key, :value) })
+                .to eq [{ key: "key_name", value: "value" }.with_indifferent_access]
+            end
           end
         end
 
         context 'without gitlab-ci.yml' do
           before do
-            click_on 'Create pipeline'
+            click_button 'New pipeline'
+            wait_for_requests
           end
 
-          it { expect(page).to have_content('Missing .gitlab-ci.yml file') }
+          it { expect(page).to have_content('Missing CI config file') }
+
+          it 'creates a pipeline after first request failed and a valid gitlab-ci.yml file is available when trying again' do
+            stub_ci_pipeline_to_return_yaml_file
+
+            expect do
+              click_button 'New pipeline'
+              wait_for_requests
+            end
+              .to change { Ci::Pipeline.count }.by(1)
+          end
         end
       end
     end
 
-    describe 'Create pipelines' do
-      let(:project) { create(:project, :repository) }
+    describe 'Reset runner caches' do
+      let_it_be_with_reload(:project) { create(:project, :repository) }
+
+      before do
+        create(:ci_empty_pipeline, status: 'success', project: project, sha: project.commit.id, ref: 'master')
+        project.add_maintainer(user) # rubocop:disable RSpec/BeforeAllRoleAssignment -- user is a per-example let from outer context, so before_all cannot access it
+        visit_project_pipelines
+      end
+
+      it 'has a clear caches button' do
+        expect(page).to have_button 'Clear runner caches'
+      end
+
+      describe 'user clicks the button' do
+        context 'when project already has jobs_cache_index' do
+          before do
+            project.update!(jobs_cache_index: 1)
+          end
+
+          it 'increments jobs_cache_index' do
+            click_button 'Clear runner caches'
+            wait_for_requests
+            expect(find_by_testid('alert-info')).to have_content 'Project cache successfully reset.'
+          end
+        end
+
+        context 'when project does not have jobs_cache_index' do
+          it 'sets jobs_cache_index to 1' do
+            click_button 'Clear runner caches'
+            wait_for_requests
+            expect(find_by_testid('alert-info')).to have_content 'Project cache successfully reset.'
+          end
+        end
+      end
+    end
+
+    describe 'Run Pipelines' do
+      let_it_be_with_reload(:project) { create(:project, :repository) }
 
       before do
         visit new_project_pipeline_path(project)
@@ -484,49 +773,116 @@ describe 'Pipelines', :js do
 
       describe 'new pipeline page' do
         it 'has field to add a new pipeline' do
-          expect(page).to have_selector('.js-branch-select')
-          expect(find('.js-branch-select')).to have_content project.default_branch
-          expect(page).to have_content('Create for')
+          expect(page).to have_button project.default_branch
+          expect(page).to have_content('Run for')
         end
       end
 
       describe 'find pipelines' do
-        it 'shows filtered pipelines', js: true do
+        it 'shows filtered pipelines' do
           click_button project.default_branch
+          expect_listbox_item(project.default_branch)
 
-          page.within '.dropdown-menu' do
-            find('.dropdown-input-field').native.send_keys('fix')
+          send_keys('2-mb-file')
 
-            page.within '.dropdown-content' do
-              expect(page).to have_content('fix')
-            end
-          end
+          expect_listbox_item('2-mb-file')
         end
+      end
+    end
+
+    describe 'Empty State' do
+      let_it_be_with_reload(:project) { create(:project, :repository) }
+
+      before do
+        visit_project_pipelines
+
+        wait_for_requests
+      end
+
+      it 'renders empty state' do
+        expect(page).to have_content 'Try test template'
+      end
+
+      it 'does not show Jenkins Migration Prompt' do
+        expect(page).not_to have_content 'Migrate to GitLab CI/CD from Jenkins'
+      end
+    end
+
+    describe 'Jenkins migration prompt' do
+      let_it_be_with_reload(:project) { create(:project, :repository) }
+
+      before do
+        allow_next_instance_of(Repository) do |instance|
+          allow(instance).to receive(:jenkinsfile?).and_return(true)
+        end
+      end
+
+      context 'when jenkinsfile is present' do
+        it 'shows Jenkins Migration Prompt' do
+          visit_project_pipelines
+
+          wait_for_requests
+
+          expect(page).to have_content 'Migrate to GitLab CI/CD from Jenkins'
+          expect(page).to have_content 'Start with a migration plan'
+        end
+      end
+
+      context 'when gitlab ci file is present' do
+        let_it_be(:project, freeze: false) { create(:project, :small_repo, files: { '.gitlab-ci.yml' => 'test' }) }
+
+        it 'does not show migration prompt' do
+          expect_not_to_show_prompt
+        end
+      end
+
+      context 'when AutoDevops is enabled' do
+        before do
+          project.update!(auto_devops_attributes: { enabled: true })
+        end
+
+        it 'does not show migration prompt' do
+          expect_not_to_show_prompt
+        end
+      end
+
+      def expect_not_to_show_prompt
+        visit_project_pipelines
+
+        wait_for_requests
+
+        expect(page).not_to have_content 'Migrate to GitLab CI/CD from Jenkins'
+        expect(page).not_to have_content 'Start with a migration plan'
       end
     end
   end
 
   context 'when user is not logged in' do
     before do
-      visit project_pipelines_path(project)
+      project.update!(auto_devops_attributes: { enabled: false })
+
+      visit_project_pipelines
     end
 
     context 'when project is public' do
-      let(:project) { create(:project, :public, :repository) }
+      let_it_be_with_reload(:project) { create(:project, :public, :repository) }
 
-      it { expect(page).to have_content 'Build with confidence' }
-      it { expect(page).to have_http_status(:success) }
+      context 'without pipelines' do
+        it { expect(page).to have_content 'This project is not currently set up to run pipelines.' }
+      end
     end
 
     context 'when project is private' do
-      let(:project) { create(:project, :private, :repository) }
+      let_it_be_with_reload(:project) { create(:project, :private, :repository) }
 
-      it { expect(page).to have_content 'You need to sign in' }
+      it 'redirects the user to sign_in and displays the flash alert' do
+        expect(page).to have_content 'Sign in or sign up before continuing'
+        expect(page).to have_current_path("/users/sign_in")
+      end
     end
   end
 
   def visit_project_pipelines(**query)
     visit project_pipelines_path(project, query)
-    wait_for_requests
   end
 end

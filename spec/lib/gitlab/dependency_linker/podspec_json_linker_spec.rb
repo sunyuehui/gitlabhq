@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::PodspecJsonLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::PodspecJsonLinker do
   describe '.support?' do
     it 'supports *.podspec.json' do
       expect(described_class.support?('Reachability.podspec.json')).to be_truthy
@@ -64,7 +66,7 @@ describe Gitlab::DependencyLinker::PodspecJsonLinker do
     subject { Gitlab::Highlight.highlight(file_name, file_content) }
 
     def link(name, url)
-      %{<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>}
+      %(<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>)
     end
 
     it 'links the gem name' do

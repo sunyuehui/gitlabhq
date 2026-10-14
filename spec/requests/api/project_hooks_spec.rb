@@ -1,216 +1,163 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe API::ProjectHooks, 'ProjectHooks' do
-  let(:user) { create(:user) }
-  let(:user3) { create(:user) }
-  let!(:project) { create(:project, creator_id: user.id, namespace: user.namespace) }
-  let!(:hook) do
-    create(:project_hook,
-           :all_events_enabled,
-           project: project,
-           url: 'http://example.com',
-           enable_ssl_verification: true)
+RSpec.describe API::ProjectHooks, 'ProjectHooks', feature_category: :webhooks do
+  let_it_be(:user) { create(:user) }
+  let_it_be(:user2) { create(:user) }
+  let_it_be_with_reload(:project) do
+    create(:project, :repository, creator_id: user.id, namespace: user.namespace, maintainers: user, developers: user2)
   end
 
-  before do
-    project.team << [user, :master]
-    project.team << [user3, :developer]
+  let_it_be_with_refind(:hook) do
+    create(
+      :project_hook,
+      :all_events_enabled,
+      project: project,
+      url: 'http://example.com',
+      enable_ssl_verification: true,
+      push_events_branch_filter: 'master'
+    )
   end
 
-  describe "GET /projects/:id/hooks" do
-    context "authorized user" do
-      it "returns project hooks" do
-        get api("/projects/#{project.id}/hooks", user)
+  it_behaves_like 'web-hook API endpoints', '/projects/:id' do
+    let(:resource) { project }
+    let(:unauthorized_user) { user2 }
 
-        expect(response).to have_http_status(200)
-        expect(json_response).to be_an Array
-        expect(response).to include_pagination_headers
-        expect(json_response.count).to eq(1)
-        expect(json_response.first['url']).to eq("http://example.com")
-        expect(json_response.first['issues_events']).to eq(true)
-        expect(json_response.first['push_events']).to eq(true)
-        expect(json_response.first['merge_requests_events']).to eq(true)
-        expect(json_response.first['tag_push_events']).to eq(true)
-        expect(json_response.first['note_events']).to eq(true)
-        expect(json_response.first['job_events']).to eq(true)
-        expect(json_response.first['pipeline_events']).to eq(true)
-        expect(json_response.first['wiki_page_events']).to eq(true)
-        expect(json_response.first['enable_ssl_verification']).to eq(true)
+    def scope
+      project.hooks
+    end
+
+    def collection_uri
+      "/projects/#{project.id}/hooks"
+    end
+
+    def match_collection_schema
+      match_response_schema('public_api/v4/project_hooks')
+    end
+
+    def hook_uri(hook_id = hook.id)
+      "/projects/#{project.id}/hooks/#{hook_id}"
+    end
+
+    def match_hook_schema
+      match_response_schema('public_api/v4/project_hook')
+    end
+
+    def event_names
+      %i[
+        push_events
+        tag_push_events
+        merge_requests_events
+        issues_events
+        confidential_issues_events
+        note_events
+        confidential_note_events
+        pipeline_events
+        wiki_page_events
+        job_events
+        deployment_events
+        feature_flag_events
+        releases_events
+        milestone_events
+        emoji_events
+        resource_access_token_events
+        resource_deploy_token_events
+      ]
+    end
+
+    let(:default_values) do
+      { push_events: true, confidential_note_events: nil }
+    end
+
+    it_behaves_like 'test web-hook endpoint'
+    it_behaves_like 'POST webhook API endpoints with a branch filter', '/projects/:id'
+    it_behaves_like 'PUT webhook API endpoints with a branch filter', '/projects/:id'
+    it_behaves_like 'resend web-hook event endpoint' do
+      let(:unauthorized_user) { user2 }
+    end
+
+    it_behaves_like 'get web-hook event endpoint' do
+      let(:unauthorized_user) { user2 }
+    end
+  end
+
+  describe 'duo_flow_callback_enabled' do
+    before do
+      stub_feature_flags(duo_flow_callback_hooks: project.root_ancestor)
+    end
+
+    context 'when on FOSS', unless: Gitlab.ee? do
+      it 'rejects the attribute even though the flag is enabled' do
+        post api("/projects/#{project.id}/hooks", user), params: {
+          url: 'https://example.com/callback',
+          duo_flow_callback_enabled: true
+        }
+
+        expect(response).to have_gitlab_http_status(:bad_request)
       end
     end
 
-    context "unauthorized user" do
-      it "does not access project hooks" do
-        get api("/projects/#{project.id}/hooks", user3)
+    it 'is returned in the hook response' do
+      hook.update!(duo_flow_callback_enabled: true)
 
-        expect(response).to have_http_status(403)
-      end
+      get api("/projects/#{project.id}/hooks/#{hook.id}", user)
+
+      expect(response).to have_gitlab_http_status(:ok)
+      expect(response).to match_response_schema('public_api/v4/project_hook')
+      expect(json_response['duo_flow_callback_enabled']).to be(true)
     end
-  end
 
-  describe "GET /projects/:id/hooks/:hook_id" do
-    context "authorized user" do
-      it "returns a project hook" do
-        get api("/projects/#{project.id}/hooks/#{hook.id}", user)
-
-        expect(response).to have_http_status(200)
-        expect(json_response['url']).to eq(hook.url)
-        expect(json_response['issues_events']).to eq(hook.issues_events)
-        expect(json_response['push_events']).to eq(hook.push_events)
-        expect(json_response['merge_requests_events']).to eq(hook.merge_requests_events)
-        expect(json_response['tag_push_events']).to eq(hook.tag_push_events)
-        expect(json_response['note_events']).to eq(hook.note_events)
-        expect(json_response['job_events']).to eq(hook.job_events)
-        expect(json_response['pipeline_events']).to eq(hook.pipeline_events)
-        expect(json_response['wiki_page_events']).to eq(hook.wiki_page_events)
-        expect(json_response['enable_ssl_verification']).to eq(hook.enable_ssl_verification)
+    context 'when the feature flag is disabled' do
+      before do
+        stub_feature_flags(duo_flow_callback_hooks: false)
       end
 
-      it "returns a 404 error if hook id is not available" do
-        get api("/projects/#{project.id}/hooks/1234", user)
+      it 'rejects the attribute on create rather than dropping it' do
+        post api("/projects/#{project.id}/hooks", user), params: {
+          url: 'https://example.com/callback',
+          duo_flow_callback_enabled: true
+        }
 
-        expect(response).to have_http_status(404)
+        expect(response).to have_gitlab_http_status(:bad_request)
       end
-    end
 
-    context "unauthorized user" do
-      it "does not access an existing hook" do
-        get api("/projects/#{project.id}/hooks/#{hook.id}", user3)
-        expect(response).to have_http_status(403)
+      it 'rejects the attribute on update rather than dropping it' do
+        put api("/projects/#{project.id}/hooks/#{hook.id}", user), params: {
+          duo_flow_callback_enabled: true
+        }
+
+        expect(response).to have_gitlab_http_status(:bad_request)
       end
-    end
 
-    it "returns a 404 error if hook id is not available" do
-      get api("/projects/#{project.id}/hooks/1234", user)
-      expect(response).to have_http_status(404)
-    end
-  end
+      it 'still accepts a request that does not mention the attribute' do
+        put api("/projects/#{project.id}/hooks/#{hook.id}", user), params: { push_events: false }
 
-  describe "POST /projects/:id/hooks" do
-    it "adds hook to project" do
-      expect do
-        post api("/projects/#{project.id}/hooks", user),
-          url: "http://example.com", issues_events: true, wiki_page_events: true,
-          job_events: true
-      end.to change {project.hooks.count}.by(1)
+        expect(response).to have_gitlab_http_status(:ok)
+      end
 
-      expect(response).to have_http_status(201)
-      expect(json_response['url']).to eq('http://example.com')
-      expect(json_response['issues_events']).to eq(true)
-      expect(json_response['push_events']).to eq(true)
-      expect(json_response['merge_requests_events']).to eq(false)
-      expect(json_response['tag_push_events']).to eq(false)
-      expect(json_response['note_events']).to eq(false)
-      expect(json_response['job_events']).to eq(true)
-      expect(json_response['pipeline_events']).to eq(false)
-      expect(json_response['wiki_page_events']).to eq(true)
-      expect(json_response['enable_ssl_verification']).to eq(true)
-      expect(json_response).not_to include('token')
-    end
+      # Reads expose the attribute whatever the flag state, so a client that GETs a hook
+      # and PUTs the payload back must not be rejected over a value it never changed.
+      it 'still accepts a request that disables the attribute' do
+        put api("/projects/#{project.id}/hooks/#{hook.id}", user), params: {
+          duo_flow_callback_enabled: false
+        }
 
-    it "adds the token without including it in the response" do
-      token = "secret token"
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(json_response['duo_flow_callback_enabled']).to be(false)
+      end
 
-      expect do
-        post api("/projects/#{project.id}/hooks", user), url: "http://example.com", token: token
-      end.to change {project.hooks.count}.by(1)
+      it 'still accepts a request that re-asserts a stored true' do
+        hook.update!(duo_flow_callback_enabled: true)
 
-      expect(response).to have_http_status(201)
-      expect(json_response["url"]).to eq("http://example.com")
-      expect(json_response).not_to include("token")
+        put api("/projects/#{project.id}/hooks/#{hook.id}", user), params: {
+          url: hook.url,
+          duo_flow_callback_enabled: true
+        }
 
-      hook = project.hooks.find(json_response["id"])
-
-      expect(hook.url).to eq("http://example.com")
-      expect(hook.token).to eq(token)
-    end
-
-    it "returns a 400 error if url not given" do
-      post api("/projects/#{project.id}/hooks", user)
-      expect(response).to have_http_status(400)
-    end
-
-    it "returns a 422 error if url not valid" do
-      post api("/projects/#{project.id}/hooks", user), "url" => "ftp://example.com"
-      expect(response).to have_http_status(422)
-    end
-  end
-
-  describe "PUT /projects/:id/hooks/:hook_id" do
-    it "updates an existing project hook" do
-      put api("/projects/#{project.id}/hooks/#{hook.id}", user),
-        url: 'http://example.org', push_events: false, job_events: true
-
-      expect(response).to have_http_status(200)
-      expect(json_response['url']).to eq('http://example.org')
-      expect(json_response['issues_events']).to eq(hook.issues_events)
-      expect(json_response['push_events']).to eq(false)
-      expect(json_response['merge_requests_events']).to eq(hook.merge_requests_events)
-      expect(json_response['tag_push_events']).to eq(hook.tag_push_events)
-      expect(json_response['note_events']).to eq(hook.note_events)
-      expect(json_response['job_events']).to eq(hook.job_events)
-      expect(json_response['pipeline_events']).to eq(hook.pipeline_events)
-      expect(json_response['wiki_page_events']).to eq(hook.wiki_page_events)
-      expect(json_response['enable_ssl_verification']).to eq(hook.enable_ssl_verification)
-    end
-
-    it "adds the token without including it in the response" do
-      token = "secret token"
-
-      put api("/projects/#{project.id}/hooks/#{hook.id}", user), url: "http://example.org", token: token
-
-      expect(response).to have_http_status(200)
-      expect(json_response["url"]).to eq("http://example.org")
-      expect(json_response).not_to include("token")
-
-      expect(hook.reload.url).to eq("http://example.org")
-      expect(hook.reload.token).to eq(token)
-    end
-
-    it "returns 404 error if hook id not found" do
-      put api("/projects/#{project.id}/hooks/1234", user), url: 'http://example.org'
-      expect(response).to have_http_status(404)
-    end
-
-    it "returns 400 error if url is not given" do
-      put api("/projects/#{project.id}/hooks/#{hook.id}", user)
-      expect(response).to have_http_status(400)
-    end
-
-    it "returns a 422 error if url is not valid" do
-      put api("/projects/#{project.id}/hooks/#{hook.id}", user), url: 'ftp://example.com'
-      expect(response).to have_http_status(422)
-    end
-  end
-
-  describe "DELETE /projects/:id/hooks/:hook_id" do
-    it "deletes hook from project" do
-      expect do
-        delete api("/projects/#{project.id}/hooks/#{hook.id}", user)
-
-        expect(response).to have_http_status(204)
-      end.to change {project.hooks.count}.by(-1)
-    end
-
-    it "returns a 404 error when deleting non existent hook" do
-      delete api("/projects/#{project.id}/hooks/42", user)
-      expect(response).to have_http_status(404)
-    end
-
-    it "returns a 404 error if hook id not given" do
-      delete api("/projects/#{project.id}/hooks", user)
-
-      expect(response).to have_http_status(404)
-    end
-
-    it "returns a 404 if a user attempts to delete project hooks he/she does not own" do
-      test_user = create(:user)
-      other_project = create(:project)
-      other_project.team << [test_user, :master]
-
-      delete api("/projects/#{other_project.id}/hooks/#{hook.id}", test_user)
-      expect(response).to have_http_status(404)
-      expect(WebHook.exists?(hook.id)).to be_truthy
+        expect(response).to have_gitlab_http_status(:ok)
+        expect(json_response['duo_flow_callback_enabled']).to be(true)
+      end
     end
   end
 end

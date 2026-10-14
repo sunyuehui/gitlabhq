@@ -1,34 +1,79 @@
+# frozen_string_literal: true
+
 class Projects::DiscussionsController < Projects::ApplicationController
-  before_action :check_merge_requests_available!
-  before_action :merge_request
-  before_action :discussion
-  before_action :authorize_resolve_discussion!
+  include NotesHelper
+  include RendersNotes
+
+  before_action :check_noteable_supports_resolvable_notes!
+  before_action :noteable
+  before_action :discussion, only: [:resolve, :unresolve]
+  before_action :authorize_resolve_discussion!, only: [:resolve, :unresolve]
+
+  feature_category :team_planning
+  urgency :low
 
   def resolve
-    Discussions::ResolveService.new(project, current_user, merge_request: merge_request).execute(discussion)
+    Discussions::ResolveService.new(project, current_user, one_or_more_discussions: discussion).execute
 
-    render json: {
-      resolved_by: discussion.resolved_by.try(:name),
-      discussion_headline_html: view_to_html_string('discussions/_headline', discussion: discussion)
-    }
+    render_discussion
   end
 
   def unresolve
-    discussion.unresolve!
+    Discussions::UnresolveService.new(discussion, current_user).execute
 
+    render_discussion
+  end
+
+  def show
     render json: {
-      discussion_headline_html: view_to_html_string('discussions/_headline', discussion: discussion)
+      truncated_diff_lines: discussion.try(:truncated_diff_lines)
     }
   end
 
   private
 
-  def merge_request
-    @merge_request ||= MergeRequestsFinder.new(current_user, project_id: @project.id).find_by!(iid: params[:merge_request_id])
+  def permitted_params
+    params.permit(:id, :noteable_id, :noteable_type)
+  end
+
+  def render_discussion
+    prepare_notes_for_rendering(discussion.notes)
+    render_json_with_discussions_serializer
+  end
+
+  def render_json_with_discussions_serializer
+    render json:
+      DiscussionSerializer.new(
+        project: project,
+        noteable: discussion.noteable,
+        current_user: current_user,
+        note_entity: ProjectNoteEntity
+      )
+      .represent(discussion, context: self, render_truncated_diff_lines: true)
+  end
+
+  # rubocop: disable CodeReuse/ActiveRecord
+  def noteable
+    @noteable ||= noteable_finder_class.new(current_user, project_id: @project.id)
+                    .find_by!(iid: permitted_params[:noteable_id])
+  end
+  # rubocop: enable CodeReuse/ActiveRecord
+
+  def noteable_finder_class
+    case permitted_params[:noteable_type]
+    when 'issues'
+      IssuesFinder
+    when 'merge_requests'
+      MergeRequestsFinder
+    end
+  end
+
+  def check_noteable_supports_resolvable_notes!
+    render_404 unless noteable_finder_class && noteable&.supports_resolvable_notes?
   end
 
   def discussion
-    @discussion ||= @merge_request.find_discussion(params[:id]) || render_404
+    @discussion ||= @noteable.find_discussion(permitted_params[:id]) || render_404
   end
 
   def authorize_resolve_discussion!

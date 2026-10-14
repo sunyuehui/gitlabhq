@@ -1,22 +1,21 @@
-- project = project || @project
-
-.git-clone-holder.input-group
-  .input-group-btn
+.js-git-clone-holder.input-group.btn-group
+  .input-group-prepend
     - if allowed_protocols_present?
-      .clone-dropdown-btn.btn.btn-static
-        %span
-          = enabled_project_button(project, enabled_protocol)
+      .input-group-text.btn
+        %span.js-clone-dropdown-label
+          = enabled_protocol_button(container, enabled_protocol)
     - else
-      %a#clone-dropdown.clone-dropdown-btn.btn{ href: '#', data: { toggle: 'dropdown' } }
-        %span
+      = render Pajamas::ButtonComponent.new(href: '#', button_options: { id: 'clone-dropdown', class: 'input-group-text btn-icon hover:gl-no-underline', data: { toggle: 'dropdown', testid: 'clone-dropdown' } }) do
+        %span.js-clone-dropdown-label
           = default_clone_protocol.upcase
-        = icon('caret-down')
-      %ul.dropdown-menu.dropdown-menu-selectable.dropdown-menu-right.clone-options-dropdown
-        %li
-          = ssh_clone_button(project)
-        %li
-          = http_clone_button(project)
+        = sprite_icon('chevron-down', css_class: 'gl-icon')
+      %ul.dropdown-menu.dropdown-menu-selectable.clone-options-dropdown{ data: { testid: 'clone-dropdown-content' } }
+        %li.js-clone-links
+          = ssh_clone_button(container)
+        %li.js-clone-links
+          = http_clone_button(container)
+        = render_if_exists 'shared/kerberos_clone_button', container: container
 
-  = text_field_tag :project_clone, default_url_to_repo(project), class: "js-select-on-focus form-control", readonly: true, aria: { label: 'Project clone URL' }
-  .input-group-btn
-    = clipboard_button(target: '#project_clone', title: _("Copy URL to clipboard"), class: "btn-default btn-clipboard")
+  = text_field_tag :clone_url, default_url_to_repo(container), class: "js-select-on-focus gl-form-input form-control", readonly: true, aria: { label: _('Repository clone URL') }, data: { testid: 'clone-url-content' }
+  .input-group-append
+    = clipboard_button(target: '#clone_url', title: _("Copy URL"), variant: :default, category: :primary, size: :medium)

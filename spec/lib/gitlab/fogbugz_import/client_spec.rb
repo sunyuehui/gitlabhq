@@ -1,6 +1,8 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
-describe Gitlab::FogbugzImport::Client do
+require 'fast_spec_helper'
+
+RSpec.describe Gitlab::FogbugzImport::Client, feature_category: :importers do
   let(:client) { described_class.new(uri: '', token: '') }
   let(:one_user) { { 'people' => { 'person' => { "ixPerson" => "2", "sFullName" => "James" } } } }
   let(:two_users) { { 'people' => { 'person' => [one_user, { "ixPerson" => "3" }] } } }
@@ -18,6 +20,8 @@ describe Gitlab::FogbugzImport::Client do
   end
 
   def stub_api(users)
-    allow_any_instance_of(::Fogbugz::Interface).to receive(:command).with(:listPeople).and_return(users)
+    allow_next_instance_of(::Gitlab::FogbugzImport::Interface) do |instance|
+      allow(instance).to receive(:command).with(:listPeople).and_return(users)
+    end
   end
 end

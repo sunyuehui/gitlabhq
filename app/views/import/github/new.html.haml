@@ -1,43 +1,54 @@
-- page_title "GitHub Import"
-- header_title "Projects", root_path
+- title = _('Authenticate with GitHub')
+- page_title title
+- header_title _("New project"), new_project_path
+- add_to_breadcrumbs s_('ProjectsNew|Import project'), new_project_path(anchor: 'import_project')
 
-%h3.page-title
-  = icon 'github', text: 'Import Projects from GitHub'
+= render ::Layouts::PageHeadingComponent.new('') do |c|
+  - c.with_heading do
+    .gl-flex.gl-gap-3.gl-items-center
+      = sprite_icon('github', size: 32)
+      = title
+  - c.with_description do
+    = import_github_authorize_message
+    - if !has_ci_cd_only_params?
+      .gl-mt-5
+        - if github_import_configured?
+          = render Pajamas::ButtonComponent.new(variant: :confirm,
+            href: status_import_github_path(namespace_id: params[:namespace_id]),
+            icon: 'github') do
+            = title
+        - else
+          = render Pajamas::AlertComponent.new(variant: :info, dismissible: false) do |c|
+            - c.with_body do
+              = import_configure_github_admin_message
 
-- if github_import_configured?
-  %p
-    To import a GitHub project, you first need to authorize GitLab to access
-    the list of your GitHub repositories:
+= form_tag personal_access_token_import_github_path, method: :post, class: 'gl-mt-3' do
+  .form-group.gl-form-group
+    %label.col-form-label{ for: 'personal_access_token' }= _('Personal access token')
+    = hidden_field_tag(:namespace_id, params[:namespace_id])
+    = password_field_tag :personal_access_token, '', class: 'form-control gl-form-input js-import-github-pat-field', placeholder: _('e.g. %{token}') % { token: '8d3f016698e...' }, data: { testid: 'personal-access-token-field' }
+    - if has_ci_cd_only_params?
+      = hidden_field_tag(:ci_cd_only, 'true')
+    %p.invalid-feedback.js-import-github-pat-validation
+      = _('Personal access token is required.')
+    %span.form-text.gl-text-subtle
+      - code_pair = tag_pair(tag.code, :code_start, :code_end)
+      - github_link_tag_pair = tag_pair(link_to('', 'https://github.com/settings/tokens', target: '_blank', rel: 'noopener noreferrer'), :link_start, :link_end)
+      = safe_format(s_('GithubImport|Create and provide your GitHub %{link_start}personal access token%{link_end}.'), github_link_tag_pair)
+      %br
+      = safe_format(s_('GithubImport|Use a classic GitHub personal access token with the following scopes:'))
+      %ul
+        - if has_ci_cd_only_params?
+          %li= safe_format(s_('GithubImporter|%{code_start}repo%{code_end}: Used to display a list of your public and private repositories that are available to connect to.'), code_pair)
+        - else
+          %li= safe_format(s_('GithubImporter|%{code_start}repo%{code_end}: Used to display a list of your public and private repositories that are available to import from.'), code_pair)
+          %li= safe_format(s_('GithubImporter|%{code_start}read:org%{code_end} (optional): Used to import collaborators from GitHub repositories, or if your project has Git LFS files.'), code_pair)
+      - docs_link = link_to('', help_page_path('user/project/import/github.md', anchor: 'use-a-github-personal-access-token'), target: '_blank', rel: 'noopener noreferrer')
+      - docs_link_tag_pair = tag_pair(docs_link, :link_start, :link_end)
+      = safe_format(s_('GithubImport|%{link_start}Learn more%{link_end}.'), docs_link_tag_pair)
 
-  = link_to 'List your GitHub repositories', status_import_github_path, class: 'btn btn-success'
-
-  %hr
-
-%p
-  - if github_import_configured?
-    Alternatively,
-  - else
-    To import a GitHub project,
-  you can use a
-  = succeed '.' do
-    = link_to 'Personal Access Token', 'https://github.com/settings/tokens'
-  When you create your Personal Access Token,
-  you will need to select the <code>repo</code> scope, so we can display a
-  list of your public and private repositories which are available for import.
-
-= form_tag personal_access_token_import_github_path, method: :post, class: 'form-inline' do
-  .form-group
-    = text_field_tag :personal_access_token, '', class: 'form-control', placeholder: "Personal Access Token", size: 40
-    = submit_tag 'List your GitHub repositories', class: 'btn btn-success'
-
-- unless github_import_configured?
-  %hr
-  %p
-    Note:
-    - if current_user.admin?
-      As an administrator you may like to configure
-    - else
-      Consider asking your GitLab administrator to configure
-    = link_to 'GitHub integration', help_page_path("integration/github")
-    which will allow login via GitHub and allow importing projects without
-    generating a Personal Access Token.
+  .gl-mt-5.gl-flex.gl-gap-3
+    = render Pajamas::ButtonComponent.new(variant: :confirm, type: :submit, button_options: { class: 'js-import-github-pat-authenticate', data: { testid: 'authenticate-button' } }) do
+      = _('Authenticate')
+    = render Pajamas::ButtonComponent.new(href: new_project_path) do
+      = _('Cancel')

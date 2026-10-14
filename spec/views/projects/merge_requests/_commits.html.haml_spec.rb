@@ -1,32 +1,68 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'projects/merge_requests/_commits.html.haml' do
+RSpec.describe 'projects/merge_requests/_commits.html.haml', :sidekiq_might_not_need_inline,
+  feature_category: :source_code_management do
   include Devise::Test::ControllerHelpers
-
-  let(:user) { create(:user) }
-  let(:target_project) { create(:project, :repository) }
-  let(:source_project) { create(:project, :repository, forked_from_project: target_project) }
-
-  let(:merge_request) do
-    create(:merge_request, :simple,
-      source_project: source_project,
-      target_project: target_project,
-      author: user)
-  end
+  include ProjectForksHelper
 
   before do
     controller.prepend_view_path('app/views/projects')
 
     assign(:merge_request, merge_request)
-    assign(:commits, merge_request.commits)
+    assign(:commits, merge_request.commits(load_from_gitaly: true))
+    assign(:hidden_commit_count, 0)
   end
 
-  it 'shows commits from source project' do
-    render
+  context 'when MR has commits' do
+    let_it_be(:user) { create(:user) }
+    let_it_be(:target_project) { create(:project, :public, :repository) }
+    let_it_be(:source_project) { fork_project(target_project, user, repository: true) }
 
-    commit = source_project.commit(merge_request.source_branch)
-    href = project_commit_path(source_project, commit)
+    let_it_be(:merge_request) do
+      create(:merge_request, :simple,
+        source_project: source_project,
+        target_project: target_project,
+        author: user)
+    end
 
-    expect(rendered).to have_link(Commit.truncate_sha(commit.sha), href: href)
+    it 'shows commits from source project' do
+      render
+
+      commit = merge_request.commits.first # HEAD
+      href = diffs_project_merge_request_path(target_project,
+        merge_request, commit_id: commit)
+
+      expect(rendered).to have_link(href: href)
+    end
+
+    it 'shows signature verification badge' do
+      render
+
+      expect(rendered).to have_css('.js-loading-signature-badge')
+    end
+  end
+
+  context 'when MR has no commits' do
+    let_it_be(:merge_request) do
+      create(:merge_request, source_project: create(:project, :custom_repo))
+    end
+
+    it 'renders empty state' do
+      assign(:context_commits, [])
+
+      render
+
+      expect(rendered).to have_css('.gl-empty-state')
+    end
+
+    it 'renders the svg' do
+      assign(:context_commits, [])
+
+      render
+
+      expect(rendered).to include('empty-commit-md')
+    end
   end
 end

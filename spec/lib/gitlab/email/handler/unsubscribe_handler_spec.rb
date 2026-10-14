@@ -1,24 +1,47 @@
-require 'spec_helper'
-require_relative '../email_shared_blocks'
+# frozen_string_literal: true
 
-describe Gitlab::Email::Handler::UnsubscribeHandler do
-  include_context :email_shared_context
+require 'spec_helper'
+
+RSpec.describe Gitlab::Email::Handler::UnsubscribeHandler do
+  include_context 'email shared context'
 
   before do
     stub_incoming_email_setting(enabled: true, address: 'reply+%{key}@appmail.adventuretime.ooo')
     stub_config_setting(host: 'localhost')
   end
 
-  let(:email_raw) { fixture_file('emails/valid_reply.eml').gsub(mail_key, "#{mail_key}+unsubscribe") }
-  let(:project) { create(:project, :public) }
-  let(:user) { create(:user) }
+  let_it_be(:project) { create(:project, :public, :repository) }
+  let_it_be(:user) { create(:user) }
+  let(:email_raw) { fixture_file('emails/valid_reply.eml').gsub(mail_key, "#{mail_key}#{Gitlab::Email::Common::UNSUBSCRIBE_SUFFIX}") }
   let(:noteable) { create(:issue, project: project) }
 
-  let!(:sent_notification) { SentNotification.record(noteable, user.id, mail_key) }
+  let!(:sent_notification) { SentNotification.record(noteable, user.id, { reply_key: mail_key }) }
+
+  context "when email key" do
+    let(:mail) { Mail::Message.new(email_raw) }
+
+    it "matches the new format" do
+      handler = described_class.new(mail, "#{mail_key}#{Gitlab::Email::Common::UNSUBSCRIBE_SUFFIX}")
+
+      expect(handler.can_handle?).to be_truthy
+    end
+
+    it "matches the legacy format" do
+      handler = described_class.new(mail, "#{mail_key}#{Gitlab::Email::Common::UNSUBSCRIBE_SUFFIX_LEGACY}")
+
+      expect(handler.can_handle?).to be_truthy
+    end
+
+    it "doesn't match either format" do
+      handler = described_class.new(mail, "+#{mail_key}#{Gitlab::Email::Common::UNSUBSCRIBE_SUFFIX}")
+
+      expect(handler.can_handle?).to be_falsey
+    end
+  end
 
   context 'when notification concerns a commit' do
     let(:commit) { create(:commit, project: project) }
-    let!(:sent_notification) { SentNotification.record(commit, user.id, mail_key) }
+    let!(:sent_notification) { SentNotification.record(commit, user.id, { reply_key: mail_key }) }
 
     it 'handler does not raise an error' do
       expect { receiver.execute }.not_to raise_error
@@ -27,23 +50,46 @@ describe Gitlab::Email::Handler::UnsubscribeHandler do
 
   context 'user is unsubscribed' do
     it 'leaves user unsubscribed' do
-      expect { receiver.execute }.not_to change { noteable.subscribed?(user) }.from(false)
+      expect { receiver.execute }.not_to change { noteable.subscribed?(user, noteable.project) }.from(false)
     end
   end
 
   context 'user is subscribed' do
     before do
-      noteable.subscribe(user)
+      noteable.subscribe(user, noteable.project)
     end
 
     it 'unsubscribes user from notable' do
-      expect { receiver.execute }.to change { noteable.subscribed?(user) }.from(true).to(false)
+      expect { receiver.execute }.to change { noteable.subscribed?(user, noteable.project) }.from(true).to(false)
+    end
+
+    it_behaves_like 'an incoming email handler that logs its execution' do
+      let(:expected_log_namespace) { sent_notification.namespace }
+      let(:expected_additional_log_data) { { Labkit::Fields::GL_SENT_NOTIFICATION_ID => sent_notification.id } }
+    end
+
+    context 'when using old style unsubscribe link' do
+      let(:email_raw) { fixture_file('emails/valid_reply.eml').gsub(mail_key, "#{mail_key}#{Gitlab::Email::Common::UNSUBSCRIBE_SUFFIX_LEGACY}") }
+
+      it 'unsubscribes user from notable' do
+        expect { receiver.execute }.to change { noteable.subscribed?(user, noteable.project) }.from(true).to(false)
+      end
+    end
+
+    context 'when using the partitioned reply key format' do
+      let!(:sent_notification) { SentNotification.record(noteable, user.id) }
+      let(:partitioned_key) { sent_notification.partitioned_reply_key }
+      let(:email_raw) { fixture_file('emails/valid_reply.eml').gsub(mail_key, "#{partitioned_key}#{Gitlab::Email::Common::UNSUBSCRIBE_SUFFIX}") }
+
+      it 'unsubscribes user from notable' do
+        expect { receiver.execute }.to change { noteable.subscribed?(user, noteable.project) }.from(true).to(false)
+      end
     end
   end
 
   context 'when the noteable could not be found' do
     before do
-      noteable.destroy
+      noteable.destroy!
     end
 
     it 'raises a NoteableNotFoundError' do
@@ -51,8 +97,17 @@ describe Gitlab::Email::Handler::UnsubscribeHandler do
     end
   end
 
-  context 'when no sent notification for the mail key could be found' do
+  context 'when mail key has the wrong format' do
     let(:email_raw) { fixture_file('emails/wrong_mail_key.eml') }
+
+    it 'raises a UnknownIncomingEmail' do
+      expect { receiver.execute }.to raise_error(Gitlab::Email::UnknownIncomingEmail)
+    end
+  end
+
+  context 'when no sent notification for the mail key could be found' do
+    let(:email_raw) { fixture_file('emails/valid_reply.eml') }
+    let(:sent_notification) { nil }
 
     it 'raises a SentNotificationNotFoundError' do
       expect { receiver.execute }.to raise_error(Gitlab::Email::SentNotificationNotFoundError)

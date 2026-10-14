@@ -1,202 +1,461 @@
-# Check a user's access to perform a git action. All public methods in this
-# class return an instance of `GitlabAccessStatus`
+# frozen_string_literal: true
+
+# Checks a user's access to perform a git action.
+# All public methods in this class return an instance of `GitlabAccessStatus`
+
 module Gitlab
   class GitAccess
-    UnauthorizedError = Class.new(StandardError)
+    include Gitlab::Utils::StrongMemoize
+
+    ForbiddenError = Class.new(StandardError)
     NotFoundError = Class.new(StandardError)
+    TimeoutError = Class.new(StandardError)
+
+    # Use the magic string '_any' to indicate we do not know what the
+    # changes are. This is also what gitlab-shell does.
+    ANY = '_any'
 
     ERROR_MESSAGES = {
       upload: 'You are not allowed to upload code for this project.',
       download: 'You are not allowed to download code from this project.',
-      deploy_key_upload:
-        'This deploy key does not have write access to this project.',
+      auth_upload: 'You are not allowed to upload code.',
+      auth_download: 'You are not allowed to download code.',
+      deploy_key_upload: 'This deploy key does not have write access to this project.',
       no_repo: 'A repository for this project does not exist yet.',
-      project_not_found: 'The project you were looking for could not be found.',
-      account_blocked: 'Your account has been blocked.',
+      project_not_found: "The project you were looking for could not be found or you don't have permission to view it.",
+      auth_by_job_token_forbidden: 'Insufficient permissions to pull from the repository of project #%{target_project_id}.',
+      auth_by_job_token_project_not_in_allowlist: 'Authentication by CI/CD job token not allowed from %{source_project_path} to project #%{target_project_id}.',
       command_not_allowed: "The command you're trying to execute is not allowed.",
       upload_pack_disabled_over_http: 'Pulling over HTTP is not allowed.',
-      receive_pack_disabled_over_http: 'Pushing over HTTP is not allowed.'
+      receive_pack_disabled_over_http: 'Pushing over HTTP is not allowed.',
+      read_only: 'The repository is temporarily read-only. Please try again later.',
+      archived: "You can't push code to an archived project.",
+      cannot_push_to_read_only: "You can't push code to a read-only GitLab instance.",
+      push_code: 'You are not allowed to push code to this project.'
     }.freeze
 
-    DOWNLOAD_COMMANDS = %w{ git-upload-pack git-upload-archive }.freeze
-    PUSH_COMMANDS = %w{ git-receive-pack }.freeze
+    INTERNAL_TIMEOUT = 50.seconds.freeze
+    LOG_HEADER = <<~MESSAGE
+      Push operation timed out
+
+      Timing information for debugging purposes:
+    MESSAGE
+
+    DOWNLOAD_COMMANDS = %w[git-upload-pack git-upload-archive].freeze
+    PUSH_COMMANDS = %w[git-receive-pack].freeze
     ALL_COMMANDS = DOWNLOAD_COMMANDS + PUSH_COMMANDS
 
-    attr_reader :actor, :project, :protocol, :authentication_abilities, :redirected_path
+    attr_reader :actor, :protocol, :authentication_abilities,
+      :repository_path, :redirected_path, :auth_result_type,
+      :cmd, :changes, :push_options, :gitaly_context, :personal_access_token, :oauth_access_token
+    attr_accessor :container
 
-    def initialize(actor, project, protocol, authentication_abilities:, redirected_path: nil)
-      @actor    = actor
-      @project  = project
-      @protocol = protocol
+    def self.error_message(key)
+      self.ancestors.each do |cls|
+        return cls.const_get(:ERROR_MESSAGES, false).fetch(key)
+      rescue NameError, KeyError
+        next
+      end
+
+      raise ArgumentError, "No error message defined for #{key}"
+    end
+
+    def initialize(actor, container, protocol, authentication_abilities:, repository_path: nil, redirected_path: nil, auth_result_type: nil, push_options: nil, gitaly_context: nil, personal_access_token: nil, oauth_access_token: nil) # rubocop:disable Metrics/ParameterLists -- it needs a refactoring to resolve
+      @actor     = actor
+      @container = container
+      @protocol  = protocol
+      @authentication_abilities = Array(authentication_abilities)
+      @repository_path = repository_path
       @redirected_path = redirected_path
-      @authentication_abilities = authentication_abilities
+      @auth_result_type = auth_result_type
+      @push_options = Gitlab::PushOptions.new(push_options)
+      @gitaly_context = gitaly_context
+      @personal_access_token = personal_access_token
+      @oauth_access_token = oauth_access_token
     end
 
     def check(cmd, changes)
+      @changes = changes
+      @cmd = cmd
+
       check_protocol!
+      check_valid_actor!
       check_active_user!
-      check_project_accessibility!
-      check_project_moved!
-      check_command_disabled!(cmd)
-      check_command_existence!(cmd)
+      check_authentication_abilities!
+      check_command_disabled!
+      check_command_existence!
+
+      check_custom_ssh_action!
+
+      check_db_accessibility!
+      check_container!
       check_repository_existence!
 
       case cmd
       when *DOWNLOAD_COMMANDS
         check_download_access!
       when *PUSH_COMMANDS
-        check_push_access!(changes)
+        check_push_access!
       end
 
-      true
+      check_organization_maintenance!
+      check_additional_conditions!
+
+      success_result
     end
 
-    def guest_can_download_code?
-      Guest.can?(:download_code, project)
+    def logger
+      @logger ||= Checks::TimedLogger.new(timeout: INTERNAL_TIMEOUT, header: LOG_HEADER)
     end
 
-    def user_can_download_code?
-      authentication_abilities.include?(:download_code) && user_access.can_do_action?(:download_code)
+    def guest_can_download?
+      ::Users::Anonymous.can?(download_ability, container)
     end
 
-    def build_can_download_code?
-      authentication_abilities.include?(:build_download_code) && user_access.can_do_action?(:build_download_code)
+    def deploy_key_can_download_code?
+      authentication_abilities.include?(:download_code) &&
+        deploy_key? &&
+        deploy_key.has_access_to?(container) &&
+        project? && repository_access_level != ::Featurable::DISABLED
+    end
+
+    # @return [Symbol] the name of a Declarative Policy ability to check
+    def download_ability
+      raise NotImplementedError
+    end
+
+    # @return [Symbol] the name of a Declarative Policy ability to check
+    def push_ability
+      raise NotImplementedError
+    end
+
+    def request_from_ci_build?
+      return false unless protocol == 'http'
+
+      auth_result_type == :build || auth_result_type == :ci
     end
 
     def protocol_allowed?
-      Gitlab::ProtocolAccess.allowed?(protocol)
+      Gitlab::ProtocolAccess.allowed?(protocol, project: project)
     end
 
     private
 
+    # when accessing via the CI_JOB_TOKEN
+    def build_can_download_code?
+      authentication_abilities.include?(:build_download_code) && user_access.can_do_action?(:build_download_code)
+    end
+
+    def build_can_push?
+      authentication_abilities.include?(:build_push_code) && user_access.can_do_action?(:build_push_code)
+    end
+
+    def build_can_download?
+      build_can_download_code?
+    end
+
+    def deploy_token_can_download?
+      deploy_token?
+    end
+
+    # When overriding this method, be careful using super
+    # as deploy_token_can_download? and build_can_download?
+    # do not consider the download_ability in the inheriting class
+    # for deploy tokens and builds
+    def can_download?
+      deploy_key_can_download_code? ||
+        deploy_token_can_download? ||
+        build_can_download? ||
+        user_can_download? ||
+        guest_can_download?
+    end
+
+    def check_container!
+      # Strict nil check, to avoid any surprises with Object#present?
+      # which can delegate to #empty?
+      raise NotFoundError, not_found_message if container.nil?
+
+      check_project! if project?
+      add_container_moved_message!
+    end
+
+    def check_project!
+      check_project_accessibility!
+    end
+
+    def check_custom_ssh_action!
+      # no-op: Overridden in EE
+    end
+
+    def check_for_console_messages
+      return console_messages unless key? || deploy_key?
+
+      key_status = Gitlab::Auth::KeyStatusChecker.new(actor)
+
+      if key_status.show_console_message?
+        console_messages.push(key_status.console_message)
+      else
+        console_messages
+      end
+    end
+
+    def console_messages
+      []
+    end
+
+    def check_valid_actor!
+      if key? || deploy_key?
+        if !actor.valid?
+          raise ForbiddenError, "Your SSH key #{actor.errors[:key].first}."
+        elsif actor.expired?
+          raise ForbiddenError, "Your SSH key has expired."
+        end
+      end
+    end
+
     def check_protocol!
+      return if request_from_ci_build?
+
       unless protocol_allowed?
-        raise UnauthorizedError, "Git access over #{protocol.upcase} is not allowed"
+        raise ForbiddenError, "Git access over #{protocol.upcase} is not allowed"
       end
     end
 
     def check_active_user!
-      return if deploy_key?
+      return unless user
 
-      if user && !user_access.allowed?
-        raise UnauthorizedError, ERROR_MESSAGES[:account_blocked]
+      unless user_access.allowed?
+        message = Gitlab::Auth::UserAccessDeniedReason.new(user).rejection_message
+        raise ForbiddenError, message
       end
+    end
+
+    def check_authentication_abilities!
+      check_granular_token_permissions! if access_token
+      check_legacy_authentication_abilities! unless access_token.try(:granular?)
+    end
+
+    def check_legacy_authentication_abilities!
+      case cmd
+      when *DOWNLOAD_COMMANDS
+        unless authentication_abilities.include?(:download_code) || authentication_abilities.include?(:build_download_code)
+          raise ForbiddenError, error_message(:auth_download)
+        end
+      when *PUSH_COMMANDS
+        unless authentication_abilities.include?(:push_code) || authentication_abilities.include?(:build_push_code)
+          raise ForbiddenError, error_message(:auth_upload)
+        end
+      end
+    end
+
+    def check_granular_token_permissions!
+      result = ::Authz::Tokens::AuthorizeGranularScopesService.new(
+        boundaries: granular_token_boundaries,
+        permissions: permission_for_command,
+        token: access_token
+      ).execute
+
+      return unless result.error?
+      raise NotFoundError, error_message(:project_not_found) if result.reason == :resource_not_found
+
+      raise ForbiddenError, result.message
+    end
+
+    def granular_token_boundaries
+      ::Authz::Boundary.for(project)
+    end
+
+    def access_token
+      personal_access_token || oauth_access_token
+    end
+
+    # The granular permission required for the command. Each access type's
+    # download/push ability is a raw permission covered by an assignable
+    # group, so we reuse them as the required granular permission.
+    def permission_for_command
+      case cmd
+      when *DOWNLOAD_COMMANDS
+        download_ability
+      when *PUSH_COMMANDS
+        push_ability
+      end
+    end
+
+    # For granular tokens, permissions are validated earlier via check_granular_token_permissions!
+    # so we can skip the authentication_abilities check.
+    def has_authentication_ability?(ability)
+      access_token.try(:granular?) || authentication_abilities.include?(ability)
     end
 
     def check_project_accessibility!
-      if project.blank? || !can_read_project?
-        raise NotFoundError, ERROR_MESSAGES[:project_not_found]
+      return if can_read_project?
+
+      if user&.from_ci_job_token?
+
+        policy = ProjectPolicy.new(user, project)
+
+        if policy.project_allowed_for_job_token?
+          raise ForbiddenError, format(error_message(:auth_by_job_token_forbidden),
+            target_project_id: project.id)
+        else
+          source_project = user.ci_job_token_scope.current_project
+
+          raise ForbiddenError, format(error_message(:auth_by_job_token_project_not_in_allowlist),
+            source_project_path: source_project.path,
+            target_project_id: project.id)
+        end
+      else
+        raise NotFoundError, not_found_message
       end
     end
 
-    def check_project_moved!
-      if redirected_path
-        url = protocol == 'ssh' ? project.ssh_url_to_repo : project.http_url_to_repo
-        message = <<-MESSAGE.strip_heredoc
-          Project '#{redirected_path}' was moved to '#{project.full_path}'.
-
-          Please update your Git remote and try again:
-
-            git remote set-url origin #{url}
-        MESSAGE
-
-        raise NotFoundError, message
-      end
+    def not_found_message
+      error_message(:project_not_found)
     end
 
-    def check_command_disabled!(cmd)
-      if upload_pack?(cmd)
+    def add_container_moved_message!
+      return if redirected_path.nil?
+
+      container_moved = Checks::ContainerMoved.new(repository, user, protocol, redirected_path)
+
+      container_moved.add_message
+    end
+
+    def check_command_disabled!
+      if upload_pack?
         check_upload_pack_disabled!
-      elsif receive_pack?(cmd)
+      elsif receive_pack?
         check_receive_pack_disabled!
       end
     end
 
     def check_upload_pack_disabled!
       if http? && upload_pack_disabled_over_http?
-        raise UnauthorizedError, ERROR_MESSAGES[:upload_pack_disabled_over_http]
+        raise ForbiddenError, error_message(:upload_pack_disabled_over_http)
       end
     end
 
     def check_receive_pack_disabled!
       if http? && receive_pack_disabled_over_http?
-        raise UnauthorizedError, ERROR_MESSAGES[:receive_pack_disabled_over_http]
+        raise ForbiddenError, error_message(:receive_pack_disabled_over_http)
       end
     end
 
-    def check_command_existence!(cmd)
+    def check_command_existence!
       unless ALL_COMMANDS.include?(cmd)
-        raise UnauthorizedError, ERROR_MESSAGES[:command_not_allowed]
+        raise ForbiddenError, error_message(:command_not_allowed)
       end
+    end
+
+    def check_db_accessibility!
+      return unless receive_pack?
+
+      if Gitlab::Database.read_only?
+        raise ForbiddenError, push_to_read_only_message
+      end
+    end
+
+    def check_organization_maintenance!
+      return unless container.respond_to?(:organization)
+
+      enforce_organization_maintenance!(container.organization)
+    end
+
+    def enforce_organization_maintenance!(organization)
+      return unless organization&.under_maintenance?
+
+      raise ForbiddenError, organization.maintenance_message
     end
 
     def check_repository_existence!
-      unless project.repository.exists?
-        raise UnauthorizedError, ERROR_MESSAGES[:no_repo]
-      end
+      raise NotFoundError, no_repo_message unless repository.exists?
+    end
+
+    def no_repo_message
+      error_message(:no_repo)
     end
 
     def check_download_access!
-      return if deploy_key?
+      return if can_download?
 
-      passed = user_can_download_code? ||
-        build_can_download_code? ||
-        guest_can_download_code?
-
-      unless passed
-        raise UnauthorizedError, ERROR_MESSAGES[:download]
-      end
+      raise ForbiddenError, download_forbidden_message
     end
 
-    def check_push_access!(changes)
-      if deploy_key
-        check_deploy_key_push_access!
+    def download_forbidden_message
+      error_message(:download)
+    end
+
+    def project?
+      # Strict nil check, to avoid any surprises with Object#present?
+      # which can delegate to #empty?
+      !project.nil?
+    end
+
+    def project
+      container if container.is_a?(::Project)
+    end
+
+    def check_push_access!
+      check_read_only_push!
+
+      if project&.self_or_ancestors_archived?
+        raise ForbiddenError, error_message(:archived)
+      end
+
+      if deploy_key?
+        unless deploy_key.can_push_to?(project)
+          raise ForbiddenError, error_message(:deploy_key_upload)
+        end
       elsif user
-        check_user_push_access!
+        # User access is verified in check_change_access!
       else
-        raise UnauthorizedError, ERROR_MESSAGES[:upload]
+        raise ForbiddenError, error_message(:upload)
       end
 
-      return if changes.blank? # Allow access.
-
-      check_change_access!(changes)
+      check_change_access!
     end
 
-    def check_user_push_access!
-      unless authentication_abilities.include?(:push_code)
-        raise UnauthorizedError, ERROR_MESSAGES[:upload]
+    # overridden in EE
+    def check_read_only_push!
+      raise ForbiddenError, error_message(:read_only) if project&.repository_read_only?
+    end
+
+    def user_can_download?
+      has_authentication_ability?(:download_code) && user_access.can_do_action?(download_ability)
+    end
+
+    def user_can_push?
+      has_authentication_ability?(:push_code) && user_access.can_do_action?(push_ability)
+    end
+
+    def check_change_access!
+      if changes == ANY
+        can_push = deploy_key? ||
+          build_can_push? ||
+          user_can_push? ||
+          project&.any_branch_allows_collaboration?(user_access.user)
+
+        unless can_push
+          raise ForbiddenError, error_message(:push_code)
+        end
+      else
+        check_access!
       end
     end
 
-    def check_deploy_key_push_access!
-      unless deploy_key.can_push_to?(project)
-        raise UnauthorizedError, ERROR_MESSAGES[:deploy_key_upload]
-      end
-    end
-
-    def check_change_access!(changes)
-      changes_list = Gitlab::ChangesList.new(changes)
-
-      # Iterate over all changes to find if user allowed all of them to be applied
-      changes_list.each do |change|
-        # If user does not have access to make at least one change, cancel all
-        # push by allowing the exception to bubble up
-        check_single_change_access(change)
-      end
-    end
-
-    def check_single_change_access(change)
-      Checks::ChangeAccess.new(
-        change,
+    def check_access!
+      Checks::ChangesAccess.new(
+        changes_list.changes,
         user_access: user_access,
         project: project,
-        skip_authorization: deploy_key?,
-        protocol: protocol
-      ).exec
-    end
-
-    def matching_merge_request?(newrev, branch_name)
-      Checks::MatchingMergeRequest.new(newrev, branch_name, project).match?
+        protocol: protocol,
+        logger: logger,
+        push_options: push_options,
+        gitaly_context: gitaly_context
+      ).validate!
+    rescue Checks::TimedLogger::TimeoutError => e
+      Gitlab::ErrorTracking.log_exception(e, project_id: project.id, Labkit::Fields::GL_USER_ID => user&.id, deploy_key_id: deploy_key&.id)
+      raise TimeoutError, logger.full_message
     end
 
     def deploy_key
@@ -204,33 +463,51 @@ module Gitlab
     end
 
     def deploy_key?
-      actor.is_a?(DeployKey)
+      actor.is_a?(DeployKey) && Gitlab::ExternalAuthorization.allow_deploy_tokens_and_deploy_keys?
+    end
+
+    def deploy_token
+      actor if deploy_token?
+    end
+
+    def deploy_token?
+      actor.is_a?(DeployToken) && Gitlab::ExternalAuthorization.allow_deploy_tokens_and_deploy_keys?
     end
 
     def ci?
       actor == :ci
     end
 
+    def key?
+      actor.is_a?(Key) && actor.regular_key?
+    end
+
     def can_read_project?
       if deploy_key?
         deploy_key.has_access_to?(project)
+      elsif deploy_token?
+        deploy_token.has_access_to?(project)
       elsif user
         user.can?(:read_project, project)
       elsif ci?
-        true # allow CI (build without a user) for backwards compatibility
-      end || Guest.can?(:read_project, project)
+        false
+      end || ::Users::Anonymous.can?(:read_project, project)
     end
 
     def http?
       protocol == 'http'
     end
 
-    def upload_pack?(command)
-      command == 'git-upload-pack'
+    def ssh?
+      protocol == 'ssh'
     end
 
-    def receive_pack?(command)
-      command == 'git-receive-pack'
+    def upload_pack?
+      cmd == 'git-upload-pack'
+    end
+
+    def receive_pack?
+      cmd == 'git-receive-pack'
     end
 
     def upload_pack_disabled_over_http?
@@ -243,26 +520,117 @@ module Gitlab
 
     protected
 
-    def user
-      return @user if defined?(@user)
+    def error_message(key)
+      self.class.error_message(key)
+    end
 
-      @user =
+    def success_result
+      ::Gitlab::GitAccessResult::Success.new(console_messages: check_for_console_messages)
+    end
+
+    def changes_list
+      @changes_list ||= Gitlab::ChangesList.new(changes == ANY ? [] : changes)
+    end
+
+    def user
+      strong_memoize(:user) do
         case actor
         when User
           actor
-        when Key
-          actor.user unless actor.is_a?(DeployKey)
-        when :ci
+        when DeployKey
           nil
+        when Key
+          actor.user
         end
+      end
     end
 
     def user_access
       @user_access ||= if ci?
                          CiAccess.new
+                       elsif user && request_from_ci_build?
+                         BuildAccess.new(user, container: container)
+                       elsif deploy_key?
+                         DeployKeyAccess.new(deploy_key, container: container)
                        else
-                         UserAccess.new(user, project: project)
+                         UserAccess.new(user, container: container)
                        end
+    end
+
+    def push_to_read_only_message
+      error_message(:cannot_push_to_read_only)
+    end
+
+    def repository
+      container&.repository
+    end
+
+    def check_size_before_push!
+      if check_size_limit? && size_checker.above_size_limit?
+        raise ForbiddenError, size_checker.error_message.push_error
+      end
+    end
+
+    def check_push_size!
+      return unless check_size_limit?
+
+      # Use #check_repository_disk_size to get correct push size whenever a lot of changes
+      # gets pushed at the same time containing the same blobs. This is only
+      # doable if GIT_OBJECT_DIRECTORY_RELATIVE env var is set and happens
+      # when git push comes from CLI (not via UI and API).
+      #
+      # Fallback to determining push size using the changes_list so we can still
+      # determine the push size if env var isn't set (e.g. changes are made
+      # via UI and API).
+      if check_quarantine_size?
+        check_repository_disk_size
+      else
+        check_changes_size
+      end
+    end
+
+    def check_quarantine_size?
+      git_env = ::Gitlab::Git::HookEnv.all(repository.gl_repository)
+
+      git_env['GIT_OBJECT_DIRECTORY_RELATIVE'].present?
+    end
+
+    def check_repository_disk_size
+      check_size_against_limit(repository.object_directory_size)
+    end
+
+    def check_changes_size
+      revs = ['--not', '--all', '--not']
+      revs += changes_list.map { |change| change[:newrev] }
+
+      changes_size = repository.blobs(revs).sum(&:size)
+
+      check_size_against_limit(changes_size)
+    end
+
+    def check_size_against_limit(size)
+      if size_checker.changes_will_exceed_size_limit?(size, project)
+        raise ForbiddenError, size_checker.error_message.new_changes_error
+      end
+    end
+
+    def check_size_limit?
+      strong_memoize(:check_size_limit) do
+        changes_list.any? { |change| !Gitlab::Git.blank_ref?(change[:newrev]) }
+      end
+    end
+
+    def size_checker
+      container.repository_size_checker
+    end
+
+    # overridden in EE
+    def check_additional_conditions!; end
+
+    def repository_access_level
+      project&.repository_access_level
     end
   end
 end
+
+Gitlab::GitAccess.prepend_mod_with('Gitlab::GitAccess')

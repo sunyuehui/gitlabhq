@@ -1,31 +1,32 @@
+# frozen_string_literal: true
+
 class Dashboard::GroupsController < Dashboard::ApplicationController
+  include SortingPreference
+  include GroupTree
+
+  skip_cross_project_access_check :index
+
+  feature_category :groups_and_projects
+
+  before_action :set_sorting
+
+  urgency :low, [:index]
+
   def index
-    @groups =
-      if params[:parent_id] && Group.supports_nested_groups?
-        parent = Group.find_by(id: params[:parent_id])
+    groups = GroupsFinder.new(
+      current_user,
+      all_available: false,
+      active: safe_params[:active]
+    ).execute
 
-        if can?(current_user, :read_group, parent)
-          GroupsFinder.new(current_user, parent: parent).execute
-        else
-          Group.none
-        end
-      else
-        current_user.groups
-      end
+    render_group_tree(groups)
+  end
 
-    @groups = @groups.search(params[:filter_groups]) if params[:filter_groups].present?
-    @groups = @groups.includes(:route)
-    @groups = @groups.sort(@sort = params[:sort])
-    @groups = @groups.page(params[:page])
+  private
 
-    respond_to do |format|
-      format.html
-      format.json do
-        render json: GroupSerializer
-          .new(current_user: @current_user)
-          .with_pagination(request, response)
-          .represent(@groups)
-      end
-    end
+  def set_sorting
+    @group_projects_sort = set_sort_order(Group::SORTING_PREFERENCE_FIELD, sort_value_recently_created)
   end
 end
+
+Dashboard::GroupsController.prepend_mod_with('Dashboard::GroupsController')

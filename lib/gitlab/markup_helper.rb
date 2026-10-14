@@ -1,11 +1,15 @@
+# frozen_string_literal: true
+
 module Gitlab
   module MarkupHelper
     extend self
 
-    MARKDOWN_EXTENSIONS = %w(mdown mkd mkdn md markdown).freeze
-    ASCIIDOC_EXTENSIONS = %w(adoc ad asciidoc).freeze
-    OTHER_EXTENSIONS = %w(textile rdoc org creole wiki mediawiki rst).freeze
-    EXTENSIONS = MARKDOWN_EXTENSIONS + ASCIIDOC_EXTENSIONS + OTHER_EXTENSIONS
+    MARKDOWN_EXTENSIONS = %w[mdown mkd mkdn md markdown rmd].freeze
+    ASCIIDOC_EXTENSIONS = %w[adoc ad asciidoc].freeze
+    ORG_MODE_EXTENSIONS = %w[org].freeze
+    OTHER_EXTENSIONS = %w[textile rdoc creole wiki mediawiki rst].freeze
+    EXTENSIONS = MARKDOWN_EXTENSIONS + ASCIIDOC_EXTENSIONS + ORG_MODE_EXTENSIONS + OTHER_EXTENSIONS
+    PLAIN_FILENAMES = %w[readme index _index].freeze
 
     # Public: Determines if a given filename is compatible with GitHub::Markup.
     #
@@ -35,13 +39,22 @@ module Gitlab
       ASCIIDOC_EXTENSIONS.include?(extension(filename))
     end
 
+    # Public: Determines if the given filename has Org-mode extension.
+    #
+    # filename - Filename string to check
+    #
+    # Returns boolean
+    def org_mode?(filename)
+      ORG_MODE_EXTENSIONS.include?(extension(filename))
+    end
+
     # Public: Determines if the given filename is plain text.
     #
     # filename - Filename string to check
     #
     # Returns boolean
     def plain?(filename)
-      extension(filename) == 'txt' || filename.casecmp('readme').zero?
+      extension(filename) == 'txt' || plain_filename?(filename)
     end
 
     def previewable?(filename)
@@ -52,6 +65,10 @@ module Gitlab
 
     def extension(filename)
       File.extname(filename).downcase.delete('.')
+    end
+
+    def plain_filename?(filename)
+      PLAIN_FILENAMES.include?(filename.downcase)
     end
   end
 end

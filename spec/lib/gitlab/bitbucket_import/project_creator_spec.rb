@@ -1,36 +1,84 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::BitbucketImport::ProjectCreator do
+RSpec.describe Gitlab::BitbucketImport::ProjectCreator, feature_category: :importers do
   let(:user) { create(:user) }
 
   let(:repo) do
-    double(name: 'Vim',
-           slug: 'vim',
-           description: 'Test repo',
-           is_private: true,
-           owner: "asd",
-           full_name: 'Vim repo',
-           visibility_level: Gitlab::VisibilityLevel::PRIVATE,
-           clone_url: 'ssh://git@bitbucket.org/asd/vim.git',
-           has_wiki?: false)
+    Bitbucket::Representation::Repo.new(
+      'id' => 1,
+      'name' => 'foo',
+      'description' => 'bar',
+      'is_private' => true,
+      'links' => {
+        'clone' => [
+          { 'name' => 'https', 'href' => 'https://bitbucket.org/repo/repo.git' }
+        ]
+      }
+    )
   end
 
-  let(:namespace) { create(:group, owner: user) }
+  let(:namespace) { create(:group) }
   let(:token) { "asdasd12345" }
-  let(:secret) { "sekrettt" }
-  let(:access_params) { { bitbucket_access_token: token, bitbucket_access_token_secret: secret } }
+  let(:access_params) { { token: token } }
 
   before do
     namespace.add_owner(user)
+
+    allow_next_instance_of(Project) do |project|
+      allow(project).to receive(:add_import_job)
+    end
   end
 
+  subject(:creator) { described_class.new(repo, 'vim', namespace, user, access_params) }
+
   it 'creates project' do
-    allow_any_instance_of(Project).to receive(:add_import_job)
+    project = creator.execute
 
-    project_creator = described_class.new(repo, 'vim', namespace, user, access_params)
-    project = project_creator.execute
-
-    expect(project.import_url).to eq("ssh://git@bitbucket.org/asd/vim.git")
+    expect(project.unsafe_import_url).to eq("https://x-token-auth:asdasd12345@bitbucket.org/repo/repo.git")
     expect(project.visibility_level).to eq(Gitlab::VisibilityLevel::PRIVATE)
+    expect(project.organization_id).to eq(namespace.organization_id)
+  end
+
+  context 'when API token is used' do
+    let(:access_params) { { email: 'user@example.com', api_token: 'token123' } }
+
+    before do
+      stub_application_setting(import_sources: %w[bitbucket])
+    end
+
+    it 'sets API token auth in unsafe_import_url with static username' do
+      project = creator.execute
+
+      expect(project.unsafe_import_url)
+        .to eq("https://x-bitbucket-api-token-auth:token123@bitbucket.org/repo/repo.git")
+    end
+
+    it 'stores API token credentials in import_data' do
+      project = creator.execute
+
+      expect(project).to be_persisted, "Project errors: #{project.errors.full_messages.join(', ')}"
+      expect(project.import_data).to be_present
+      expect(project.import_data.credentials).to include(
+        email: 'user@example.com',
+        api_token: 'token123'
+      )
+    end
+  end
+
+  context 'when repo does not have clone links' do
+    let(:repo) do
+      Bitbucket::Representation::Repo.new(
+        'id' => 1,
+        'name' => 'foo',
+        'description' => 'bar',
+        'is_private' => true
+      )
+    end
+
+    it 'returns nil' do
+      expect(creator.execute).to be_nil
+    end
   end
 end

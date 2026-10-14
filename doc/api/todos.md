@@ -1,28 +1,48 @@
-# Todos API
+---
+stage: Plan
+group: Work Items
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+description: REST API to retrieve to-do items and mark them as done.
+title: GitLab To-Do List API
+---
 
-> [Introduced][ce-3188] in GitLab 8.10.
+{{< details >}}
 
-## Get a list of todos
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-Returns a list of todos. When no filter is applied, it returns all pending todos
-for the current user. Different filters allow the user to precise the request.
+{{< /details >}}
 
-```
+Use this API to interact with [to-do items](../user/todos.md).
+
+## List all to-do items
+
+Lists all to-do items. When no filter is applied, it
+returns all pending to-do items for the current user. Different filters allow the
+user to refine the request.
+
+```plaintext
 GET /todos
 ```
 
 Parameters:
 
-| Attribute | Type | Required | Description |
-| --------- | ---- | -------- | ----------- |
-| `action` | string | no | The action to be filtered. Can be `assigned`, `mentioned`, `build_failed`, `marked`, or `approval_required`. |
-| `author_id` | integer | no | The ID of an author |
-| `project_id` | integer | no | The ID of a project |
-| `state` | string | no | The state of the todo. Can be either `pending` or `done` |
-| `type` | string | no | The type of a todo. Can be either `Issue` or `MergeRequest` |
+| Attribute | Type | Required | Description                                                                                                                                                                                        |
+| --------- | ---- | -------- |----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `action` | string | no | The action to be filtered.[^action-values] |
+| `author_id` | integer | no | The ID of an author                                                                                                                                                                                |
+| `project_id` | integer | no | The ID of a project                                                                                                                                                                                |
+| `group_id` | integer | no | The ID of a group                                                                                                                                                                                  |
+| `state` | string | no | The state of the to-do item. Can be either `pending` or `done`                                                                                                                                     |
+| `type` | string | no | The type of to-do item.[^to-do-item-type] |
 
-```bash
-curl --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/todos
+[^action-values]: Values can be one of `assigned`, `mentioned`, `build_failed`, `marked`, `approval_required`, `unmergeable`, `directly_addressed`, `merge_train_removed`, `review_requested`, `member_access_requested`, `review_submitted`, `okr_checkin_requested`, `added_approver`, `ssh_key_expired`, `ssh_key_expiring_soon`, `duo_pro_access_granted`, `duo_enterprise_access_granted`, `duo_core_access_granted`, `duo_workflow_input_required`, or `transfer_failed`.
+[^to-do-item-type]: Values can be one of `Issue`, `MergeRequest`, `Commit`, `Epic`, `DesignManagement::Design`, `AlertManagement::Alert`, `Project`, `Namespace`, `Vulnerability`, `WikiPage::Meta`, `WorkItem`, `Key`, `User`, `ComplianceManagement::Projects::ComplianceViolation`, or `Ai::DuoWorkflows::Workflow`.
+
+```shell
+curl --request GET \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/todos"
 ```
 
 Example Response:
@@ -35,8 +55,8 @@ Example Response:
       "id": 2,
       "name": "Gitlab Ce",
       "name_with_namespace": "Gitlab Org / Gitlab Ce",
-      "path": "gitlab-ce",
-      "path_with_namespace": "gitlab-org/gitlab-ce"
+      "path": "gitlab-foss",
+      "path_with_namespace": "gitlab-org/gitlab-foss"
     },
     "author": {
       "name": "Administrator",
@@ -80,6 +100,7 @@ Example Response:
       "source_project_id": 2,
       "target_project_id": 2,
       "labels": [],
+      "draft": false,
       "work_in_progress": false,
       "milestone": {
         "id": 32,
@@ -94,13 +115,13 @@ Example Response:
       },
       "merge_when_pipeline_succeeds": false,
       "merge_status": "cannot_be_merged",
-      "subscribed": true,
       "user_notes_count": 7
     },
-    "target_url": "https://gitlab.example.com/gitlab-org/gitlab-ce/merge_requests/7",
+    "target_url": "https://gitlab.example.com/gitlab-org/gitlab-foss/-/merge_requests/7",
     "body": "Dolores in voluptatem tenetur praesentium omnis repellendus voluptatem quaerat.",
     "state": "pending",
-    "created_at": "2016-06-17T07:52:35.225Z"
+    "created_at": "2016-06-17T07:52:35.225Z",
+    "updated_at": "2016-06-17T07:52:35.225Z"
   },
   {
     "id": 98,
@@ -108,8 +129,8 @@ Example Response:
       "id": 2,
       "name": "Gitlab Ce",
       "name_with_namespace": "Gitlab Org / Gitlab Ce",
-      "path": "gitlab-ce",
-      "path_with_namespace": "gitlab-org/gitlab-ce"
+      "path": "gitlab-foss",
+      "path_with_namespace": "gitlab-org/gitlab-foss"
     },
     "author": {
       "name": "Maxie Medhurst",
@@ -153,6 +174,7 @@ Example Response:
       "source_project_id": 2,
       "target_project_id": 2,
       "labels": [],
+      "draft": false,
       "work_in_progress": false,
       "milestone": {
         "id": 32,
@@ -167,23 +189,23 @@ Example Response:
       },
       "merge_when_pipeline_succeeds": false,
       "merge_status": "cannot_be_merged",
-      "subscribed": true,
       "user_notes_count": 7
     },
-    "target_url": "https://gitlab.example.com/gitlab-org/gitlab-ce/merge_requests/7",
+    "target_url": "https://gitlab.example.com/gitlab-org/gitlab-foss/-/merge_requests/7",
     "body": "Dolores in voluptatem tenetur praesentium omnis repellendus voluptatem quaerat.",
     "state": "pending",
-    "created_at": "2016-06-17T07:49:24.624Z"
+    "created_at": "2016-06-17T07:49:24.624Z",
+    "updated_at": "2016-06-17T07:49:24.624Z"
   }
 ]
 ```
 
-## Mark a todo as done
+## Mark a to-do item as done
 
-Marks a single pending todo given by its ID for the current user as done. The
-todo marked as done is returned in the response.
+Marks a single pending to-do item given by its ID for the current user as done. The
+to-do item marked as done is returned in the response.
 
-```
+```plaintext
 POST /todos/:id/mark_as_done
 ```
 
@@ -191,10 +213,12 @@ Parameters:
 
 | Attribute | Type | Required | Description |
 | --------- | ---- | -------- | ----------- |
-| `id` | integer | yes | The ID of a todo |
+| `id` | integer | yes | The ID of to-do item |
 
-```bash
-curl --request POST --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/todos/130/mark_as_done
+```shell
+curl --request POST \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/todos/130/mark_as_done"
 ```
 
 Example Response:
@@ -206,8 +230,8 @@ Example Response:
       "id": 2,
       "name": "Gitlab Ce",
       "name_with_namespace": "Gitlab Org / Gitlab Ce",
-      "path": "gitlab-ce",
-      "path_with_namespace": "gitlab-org/gitlab-ce"
+      "path": "gitlab-foss",
+      "path_with_namespace": "gitlab-org/gitlab-foss"
     },
     "author": {
       "name": "Administrator",
@@ -251,6 +275,7 @@ Example Response:
       "source_project_id": 2,
       "target_project_id": 2,
       "labels": [],
+      "draft": false,
       "work_in_progress": false,
       "milestone": {
         "id": 32,
@@ -268,24 +293,24 @@ Example Response:
       "subscribed": true,
       "user_notes_count": 7
     },
-    "target_url": "https://gitlab.example.com/gitlab-org/gitlab-ce/merge_requests/7",
+    "target_url": "https://gitlab.example.com/gitlab-org/gitlab-foss/-/merge_requests/7",
     "body": "Dolores in voluptatem tenetur praesentium omnis repellendus voluptatem quaerat.",
     "state": "done",
-    "created_at": "2016-06-17T07:52:35.225Z"
+    "created_at": "2016-06-17T07:52:35.225Z",
+    "updated_at": "2016-06-17T07:52:35.225Z"
 }
 ```
 
-## Mark all todos as done
+## Mark all to-do items as done
 
-Marks all pending todos for the current user as done. It returns the HTTP status code `204` with an empty response.
+Marks all pending to-do items for the current user as done. It returns the HTTP status code `204` with an empty response.
 
-```
+```plaintext
 POST /todos/mark_as_done
 ```
 
-```bash
-curl --request POST --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/todos/donmark_as_donee
+```shell
+curl --request POST \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/todos/mark_as_done"
 ```
-
-
-[ce-3188]: https://gitlab.com/gitlab-org/gitlab-ce/merge_requests/3188

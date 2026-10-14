@@ -1,19 +1,10 @@
-- page_title "Import repository"
-%h3.page-title
-  Import repository
+- page_title _('Import repository')
 
-%hr
+- ci_cd_only = params[:ci_cd_only].present?
+- git_timeout = time_interval_in_words(::Gitlab.config.gitlab_shell.git_timeout)
+- @repository_mirrors_available = 'false'
+- render_if_exists('import/url/repository_mirrors_data')
 
-- if @project.import_failed?
-  .panel.panel-danger
-    .panel-heading The repository could not be imported.
-    .panel-body
-      %pre
-        :preserve
-          #{h(sanitize_repo_path(@project, @project.import_error))}
+= render ::Layouts::PageHeadingComponent.new(_('Import repository'))
 
-= form_for @project, url: project_import_path(@project), method: :post, html: { class: 'form-horizontal' } do |f|
-  = render "shared/import_form", f: f
-
-  .form-actions
-    = f.submit 'Start import', class: "btn btn-create", tabindex: 4
+.js-vue-import-by-url-to-project-root{ data: import_by_url_data_attributes(@project, ci_cd_only, git_timeout, @repository_mirrors_available) }

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::ReferenceParser::SnippetParser do
+RSpec.describe Banzai::ReferenceParser::SnippetParser, feature_category: :markdown do
   include ReferenceParserHelpers
 
   let(:project) { create(:project, :public) }
@@ -8,9 +10,9 @@ describe Banzai::ReferenceParser::SnippetParser do
   let(:user) { create(:user) }
   let(:external_user) { create(:user, :external) }
   let(:project_member) { create(:user) }
-
-  subject { described_class.new(project, user) }
   let(:link) { empty_html_link }
+
+  subject { described_class.new(Banzai::RenderContext.new(project, user)) }
 
   def visible_references(snippet_visibility, user = nil)
     snippet = create(:project_snippet, snippet_visibility, project: project)
@@ -21,13 +23,24 @@ describe Banzai::ReferenceParser::SnippetParser do
   end
 
   before do
-    project.add_user(project_member, :developer)
+    project.add_member(project_member, :developer)
   end
 
   describe '#nodes_visible_to_user' do
     context 'when a project is public and the snippets feature is enabled for everyone' do
       before do
         project.project_feature.update_attribute(:snippets_access_level, ProjectFeature::ENABLED)
+      end
+
+      it 'avoids N+1 cached queries', :use_sql_query_cache do
+        # Run this once to establish a baseline
+        visible_references(:public)
+
+        control = ActiveRecord::QueryRecorder.new(skip_cached: false) do
+          subject.nodes_visible_to_user(user, [link])
+        end
+
+        expect { subject.nodes_visible_to_user(user, Array.new(10, link)) }.not_to exceed_all_query_limit(control)
       end
 
       it 'creates a reference for guest for a public snippet' do
@@ -196,7 +209,8 @@ describe Banzai::ReferenceParser::SnippetParser do
   end
 
   describe '#referenced_by' do
-    let(:snippet) { create(:snippet, project: project) }
+    let(:snippet) { create(:project_snippet, project: project) }
+
     describe 'when the link has a data-snippet attribute' do
       context 'using an existing snippet ID' do
         it 'returns an Array of snippets' do

@@ -1,5 +1,8 @@
+# frozen_string_literal: true
+
 Rails.application.configure do |config|
-  config.middleware.use(Gitlab::Middleware::Multipart)
+  # ApolloUploadServer::Middleware expects to find uploaded files ready to use
+  config.middleware.insert_before(ApolloUploadServer::Middleware, Gitlab::Middleware::Multipart)
 end
 
 # The Gitlab::Middleware::Multipart middleware inserts instances of our
@@ -10,10 +13,8 @@ end
 #
 module Gitlab
   module StrongParameterScalars
-    GITLAB_PERMITTED_SCALAR_TYPES = [::UploadedFile].freeze
-
     def permitted_scalar?(value)
-      super || GITLAB_PERMITTED_SCALAR_TYPES.any? { |type| value.is_a?(type) }
+      super || value.is_a?(::UploadedFile)
     end
   end
 end

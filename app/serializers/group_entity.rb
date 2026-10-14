@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class GroupEntity < Grape::Entity
   include ActionView::Helpers::NumberHelper
   include RequestAwareEntity
@@ -15,9 +17,11 @@ class GroupEntity < Grape::Entity
   end
 
   expose :permissions do
+    # rubocop: disable CodeReuse/ActiveRecord
     expose :human_group_access do |group, options|
       group.group_members.find_by(user_id: request.current_user)&.human_access
     end
+    # rubocop: enable CodeReuse/ActiveRecord
   end
 
   expose :edit_path do |group|
@@ -36,15 +40,11 @@ class GroupEntity < Grape::Entity
     GroupsFinder.new(request.current_user, parent: group).execute.any?
   end
 
-  expose :number_projects_with_delimiter do |group|
-    number_with_delimiter(GroupProjectsFinder.new(group: group, current_user: request.current_user).execute.count)
-  end
-
   expose :number_users_with_delimiter do |group|
     number_with_delimiter(group.users.count)
   end
 
   expose :avatar_url do |group|
-    group_icon(group)
+    group_icon_url(group)
   end
 end

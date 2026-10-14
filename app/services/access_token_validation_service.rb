@@ -1,9 +1,12 @@
+# frozen_string_literal: true
+
 class AccessTokenValidationService
   # Results:
   VALID = :valid
   EXPIRED = :expired
   REVOKED = :revoked
   INSUFFICIENT_SCOPE = :insufficient_scope
+  IMPERSONATION_DISABLED = :impersonation_disabled
 
   attr_reader :token, :request
 
@@ -14,37 +17,50 @@ class AccessTokenValidationService
 
   def validate(scopes: [])
     if token.expired?
-      return EXPIRED
+      EXPIRED
 
     elsif token.revoked?
-      return REVOKED
+      REVOKED
 
-    elsif !self.include_any_scope?(scopes)
-      return INSUFFICIENT_SCOPE
+    elsif !token.try(:granular?) && !self.include_any_scope?(scopes)
+      INSUFFICIENT_SCOPE
+
+    elsif token.respond_to?(:impersonation) &&
+        token.impersonation &&
+        !Gitlab.config.gitlab.impersonation_enabled
+      IMPERSONATION_DISABLED
 
     else
-      return VALID
+      VALID
     end
   end
 
   # True if the token's scope contains any of the passed scopes.
   def include_any_scope?(required_scopes)
+    return false if token.nil?
+
     if required_scopes.blank?
       true
     else
       # We're comparing each required_scope against all token scopes, which would
       # take quadratic time. This consideration is irrelevant here because of the
       # small number of records involved.
-      # https://gitlab.com/gitlab-org/gitlab-ce/merge_requests/12300/#note_33689006
+      # https://gitlab.com/gitlab-org/gitlab-foss/merge_requests/12300/#note_33689006
       token_scopes = token.scopes.map(&:to_sym)
 
       required_scopes.any? do |scope|
-        if scope.respond_to?(:sufficient?)
-          scope.sufficient?(token_scopes, request)
-        else
-          API::Scope.new(scope).sufficient?(token_scopes, request)
-        end
+        scope = API::Scope.new(scope) unless scope.is_a?(API::Scope)
+        scope.sufficient?(token_scopes, request)
       end
+    end
+  end
+
+  # The passed scopes whose `if` condition holds for the request: the scopes
+  # that `include_any_scope?` would accept from a token for this request.
+  def applicable_scopes(required_scopes)
+    required_scopes.select do |scope|
+      scope = API::Scope.new(scope) unless scope.is_a?(API::Scope)
+      scope.applies_to?(request)
     end
   end
 end

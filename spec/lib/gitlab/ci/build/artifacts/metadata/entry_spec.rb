@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Build::Artifacts::Metadata::Entry do
+RSpec.describe Gitlab::Ci::Build::Artifacts::Metadata::Entry do
   let(:entries) do
     { 'path/' => {},
       'path/dir_1/' => {},
@@ -32,38 +34,46 @@ describe Gitlab::Ci::Build::Artifacts::Metadata::Entry do
 
     describe '#basename' do
       subject { |example| path(example).basename }
+
       it { is_expected.to eq 'absolute_path' }
     end
   end
 
   describe 'path/dir_1/', path: 'path/dir_1/' do
     subject { |example| path(example) }
+
     it { is_expected.to have_parent }
     it { is_expected.to be_directory }
 
     describe '#basename' do
       subject { |example| path(example).basename }
+
       it { is_expected.to eq 'dir_1/' }
     end
 
     describe '#name' do
       subject { |example| path(example).name }
+
       it { is_expected.to eq 'dir_1' }
     end
 
     describe '#parent' do
       subject { |example| path(example).parent }
+
       it { is_expected.to eq entry('path/') }
     end
 
     describe '#children' do
       subject { |example| path(example).children }
 
-      it { is_expected.to all(be_an_instance_of described_class) }
+      it { is_expected.to all(be_an_instance_of(described_class)) }
+
       it do
-        is_expected.to contain_exactly entry('path/dir_1/file_1'),
-                                       entry('path/dir_1/file_b'),
-                                       entry('path/dir_1/subdir/')
+        is_expected.to contain_exactly(
+          entry('path/dir_1/file_1'),
+          entry('path/dir_1/file_b'),
+          entry('path/dir_1/subdir/')
+        )
       end
     end
 
@@ -71,10 +81,13 @@ describe Gitlab::Ci::Build::Artifacts::Metadata::Entry do
       subject { |example| path(example).files }
 
       it { is_expected.to all(be_file) }
-      it { is_expected.to all(be_an_instance_of described_class) }
+      it { is_expected.to all(be_an_instance_of(described_class)) }
+
       it do
-        is_expected.to contain_exactly entry('path/dir_1/file_1'),
-                                       entry('path/dir_1/file_b')
+        is_expected.to contain_exactly(
+          entry('path/dir_1/file_1'),
+          entry('path/dir_1/file_b')
+        )
       end
     end
 
@@ -83,7 +96,7 @@ describe Gitlab::Ci::Build::Artifacts::Metadata::Entry do
         subject { |example| path(example).directories }
 
         it { is_expected.to all(be_directory) }
-        it { is_expected.to all(be_an_instance_of described_class) }
+        it { is_expected.to all(be_an_instance_of(described_class)) }
         it { is_expected.to contain_exactly entry('path/dir_1/subdir/') }
       end
 
@@ -91,30 +104,37 @@ describe Gitlab::Ci::Build::Artifacts::Metadata::Entry do
         subject { |example| path(example).directories(parent: true) }
 
         it { is_expected.to all(be_directory) }
-        it { is_expected.to all(be_an_instance_of described_class) }
+        it { is_expected.to all(be_an_instance_of(described_class)) }
+
         it do
-          is_expected.to contain_exactly entry('path/dir_1/subdir/'),
-                                         entry('path/')
+          is_expected.to contain_exactly(
+            entry('path/dir_1/subdir/'),
+            entry('path/')
+          )
         end
       end
 
       describe '#nodes' do
         subject { |example| path(example).nodes }
+
         it { is_expected.to eq 2 }
       end
 
       describe '#exists?' do
         subject { |example| path(example).exists? }
+
         it { is_expected.to be true }
       end
 
       describe '#empty?' do
         subject { |example| path(example).empty? }
+
         it { is_expected.to be false }
       end
 
       describe '#total_size' do
         subject { |example| path(example).total_size }
+
         it { is_expected.to eq(30) }
       end
     end
@@ -122,10 +142,12 @@ describe Gitlab::Ci::Build::Artifacts::Metadata::Entry do
 
   describe 'empty path', path: '' do
     subject { |example| path(example) }
+
     it { is_expected.not_to have_parent }
 
     describe '#children' do
       subject { |example| path(example).children }
+
       it { expect(subject.count).to eq 3 }
     end
   end
@@ -133,11 +155,13 @@ describe Gitlab::Ci::Build::Artifacts::Metadata::Entry do
   describe 'path/dir_1/subdir/subfile', path: 'path/dir_1/subdir/subfile' do
     describe '#nodes' do
       subject { |example| path(example).nodes }
+
       it { is_expected.to eq 4 }
     end
 
     describe '#blob' do
       let(:file_entry) { |example| path(example) }
+
       subject { file_entry.blob }
 
       it 'returns a blob representing the entry data' do
@@ -151,11 +175,13 @@ describe Gitlab::Ci::Build::Artifacts::Metadata::Entry do
   describe 'non-existent/', path: 'non-existent/' do
     describe '#empty?' do
       subject { |example| path(example).empty? }
+
       it { is_expected.to be true }
     end
 
     describe '#exists?' do
       subject { |example| path(example).exists? }
+
       it { is_expected.to be false }
     end
   end
@@ -163,6 +189,7 @@ describe Gitlab::Ci::Build::Artifacts::Metadata::Entry do
   describe 'another_directory/', path: 'another_directory/' do
     describe '#empty?' do
       subject { |example| path(example).empty? }
+
       it { is_expected.to be true }
     end
   end

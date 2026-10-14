@@ -1,21 +1,34 @@
+# frozen_string_literal: true
+
 class AuthorizedProjectsWorker
-  include Sidekiq::Worker
-  include DedicatedSidekiqQueue
+  include ApplicationWorker
 
-  # Schedules multiple jobs and waits for them to be completed.
-  def self.bulk_perform_and_wait(args_list)
-    job_ids = bulk_perform_async(args_list)
+  data_consistency :sticky
 
-    Gitlab::JobWaiter.new(job_ids).wait
-  end
+  worker_resource_boundary :cpu
 
-  def self.bulk_perform_async(args_list)
-    Sidekiq::Client.push_bulk('class' => self, 'queue' => sidekiq_options['queue'], 'args' => args_list)
+  sidekiq_options retry: 3
+
+  feature_category :permissions
+  urgency :high
+  weight 2
+
+  deduplicate :until_executed, if_deduplicated: :reschedule_once, including_scheduled: true
+
+  idempotent!
+
+  defer_on_database_health_signal :gitlab_main_org, [], 1.minute,
+    indicators: [Gitlab::Database::HealthStatus::Indicators::WalRate]
+
+  def self.defer_on_database_health_signal?
+    Feature.enabled?(:defer_primary_auth_refresh_on_wal_rate, :instance)
   end
 
   def perform(user_id)
-    user = User.find_by(id: user_id)
+    user = User.find_by_id(user_id)
 
-    user&.refresh_authorized_projects
+    return unless user
+
+    Users::RefreshAuthorizedProjectsService.new(user, source: self.class.name).execute
   end
 end

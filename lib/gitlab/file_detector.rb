@@ -1,36 +1,44 @@
-require 'set'
+# frozen_string_literal: true
 
 module Gitlab
   # Module that can be used to detect if a path points to a special file such as
   # a README or a CONTRIBUTING file.
   module FileDetector
+    PATTERNS_BASENAME = { openapi: [%r{\.(yaml|yml|json)\z}i, %r{openapi|swagger}i] }.freeze
+
     PATTERNS = {
       # Project files
-      readme: /\Areadme/i,
-      changelog: /\A(changelog|history|changes|news)/i,
-      license: /\A(licen[sc]e|copying)(\..+|\z)/i,
-      contributing: /\Acontributing/i,
+      readme: /\A(#{Regexp.union(*Gitlab::MarkupHelper::PLAIN_FILENAMES).source})(\.(txt|#{Regexp.union(*Gitlab::MarkupHelper::EXTENSIONS).source}))?\z/i,
+      changelog: %r{\A(changelog|history|changes|news)[^/]*\z}i,
+      license: %r{\A((un)?licen[sc]e|copying)(\.[^/]+)?\z}i,
+      contributing: %r{\Acontributing[^/]*\z}i,
       version: 'version',
       avatar: /\Alogo\.(png|jpg|gif)\z/,
+      issue_template: %r{\A\.gitlab/issue_templates/[^/]+\.md\z},
+      merge_request_template: %r{\A\.gitlab/merge_request_templates/[^/]+\.md\z},
+      xcode_config: %r{\A[^/]*\.(xcodeproj|xcworkspace)(/.+)?\z},
 
       # Configuration files
       gitignore: '.gitignore',
-      koding: '.koding.yml',
-      gitlab_ci: '.gitlab-ci.yml',
-      route_map: 'route-map.yml',
+      gitlab_ci: ::Ci::Pipeline::DEFAULT_CONFIG_PATH,
+      jenkinsfile: %r{\A([^/]*\.)?Jenkinsfile(\.[^/]*)?\z}i,
+      route_map: '.gitlab/route-map.yml',
 
       # Dependency files
-      cartfile: /\ACartfile/,
+      cargo_toml: 'Cargo.toml',
+      cartfile: %r{\ACartfile[^/]*\z},
       composer_json: 'composer.json',
       gemfile: /\A(Gemfile|gems\.rb)\z/,
       gemfile_lock: 'Gemfile.lock',
-      gemspec: /\.gemspec\z/,
+      gemspec: %r{\A[^/]*\.gemspec\z},
       godeps_json: 'Godeps.json',
+      go_mod: 'go.mod',
+      go_sum: 'go.sum',
       package_json: 'package.json',
       podfile: 'Podfile',
-      podspec_json: /\.podspec\.json\z/,
-      podspec: /\.podspec\z/,
-      requirements_txt: /requirements\.txt\z/,
+      podspec_json: %r{\A[^/]*\.podspec\.json\z},
+      podspec: %r{\A[^/]*\.podspec\z},
+      requirements_txt: %r{\A[^/]*requirements\.txt\z},
       yarn_lock: 'yarn.lock'
     }.freeze
 
@@ -63,18 +71,19 @@ module Gitlab
     #     type_of('README.md') # => :readme
     #     type_of('VERSION') # => :version
     def self.type_of(path)
-      name = File.basename(path)
-
       PATTERNS.each do |type, search|
         did_match = if search.is_a?(Regexp)
-                      name =~ search
+                      path =~ search
                     else
-                      name.casecmp(search) == 0
+                      path.casecmp(search) == 0
                     end
 
         return type if did_match
       end
-
+      basename = File.basename(path)
+      PATTERNS_BASENAME.each do |type, regex|
+        return type if regex.all? { |r| basename =~ r }
+      end
       nil
     end
   end

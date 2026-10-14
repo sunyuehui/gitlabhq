@@ -1,11 +1,32 @@
+# frozen_string_literal: true
+
 # == Participable concern
 #
 # Contains functionality related to objects that can have participants, such as
 # an author, an assignee and people mentioned in its description or comments.
 #
+# === Participant Permission System
+#
+# Multiple levels of permission checks (in execution order):
+#
+# 1. **Reference Extraction**:
+#    - Group references parsed based on user's group visibility
+#    - User mentions extracted from accessible content
+#    - Processes all accessible sources, relying on final per-participant filtering for security
+#
+# 2. **Confidential Content Handling**:
+#    - Separate extractor for confidential notes
+#    - Additional filtering for users who can read confidential content
+#
+# 3. **Per-Participant Filtering**:
+#    - Final filtering based on project/group read access
+#    - Enhanced filtering for confidential work items using :read_confidential_issues permission
+#    - Base permission requirement ensuring only authorized users appear
+#    - Always applied as the final security layer
+#
 # Usage:
 #
-#     class Issue < ActiveRecord::Base
+#     class Issue < ApplicationRecord
 #       include Participable
 #
 #       # ...
@@ -23,8 +44,7 @@
 #     users = issue.participants
 module Participable
   extend ActiveSupport::Concern
-
-  module ClassMethods
+  class_methods do
     # Adds a list of participant attributes. Attributes can either be symbols or
     # Procs.
     #
@@ -55,19 +75,42 @@ module Participable
   # This method processes attributes of objects in breadth-first order.
   #
   # Returns an Array of User instances.
-  def participants(current_user = nil)
-    @participants ||= Hash.new do |hash, user|
-      hash[user] = raw_participants(user)
-    end
+  def participants(user = nil)
+    filtered_participants_hash[user]
+  end
 
-    @participants[current_user]
+  # Checks if the user is a participant in a discussion.
+  #
+  # This method processes attributes of objects in breadth-first order.
+  #
+  # Returns a Boolean.
+  def participant?(user)
+    can_read_participable?(user) &&
+      all_participants_hash[user].include?(user)
   end
 
   private
 
+  def all_participants_hash
+    @all_participants_hash ||= Hash.new do |hash, user|
+      hash[user] = raw_participants(user)
+    end
+  end
+
+  def filtered_participants_hash
+    @filtered_participants_hash ||= Hash.new do |hash, user|
+      hash[user] = filter_by_ability(all_participants_hash[user])
+    end
+  end
+
   def raw_participants(current_user = nil)
-    current_user ||= author
-    ext = Gitlab::ReferenceExtractor.new(project, current_user)
+    extractor = Gitlab::ReferenceExtractor.new(project, current_user)
+
+    # Used to extract references from confidential notes.
+    # Referenced users that cannot read confidential notes are
+    # later removed from participants array.
+    internal_notes_extractor = Gitlab::ReferenceExtractor.new(project, current_user)
+
     participants = Set.new
     process = [self]
 
@@ -78,8 +121,12 @@ module Participable
       when User
         participants << source
       when Participable
+        next if skippable_system_notes?(source, participants)
+
         source.class.participant_attrs.each do |attr|
           if attr.respond_to?(:call)
+            ext = use_internal_notes_extractor_for?(source) ? internal_notes_extractor : extractor
+
             source.instance_exec(current_user, ext, &attr)
           else
             process << source.__send__(attr) # rubocop:disable GitlabSecurity/PublicSend
@@ -94,13 +141,61 @@ module Participable
       end
     end
 
-    participants.merge(ext.users)
+    participants.merge(users_that_can_read_internal_notes(internal_notes_extractor))
+    participants.merge(extractor.users)
+  end
 
+  def skippable_system_notes?(source, participants)
+    source.is_a?(Note) &&
+      source.system? &&
+      source.author.in?(participants) &&
+      !source.note.match?(User.reference_pattern)
+  end
+
+  def use_internal_notes_extractor_for?(source)
+    source.is_a?(Note) && source.confidential?
+  end
+
+  def users_that_can_read_internal_notes(extractor)
+    return [] unless self.is_a?(Noteable) && self.try(:resource_parent)
+
+    Ability.users_that_can_read_internal_notes(extractor.users, self.resource_parent)
+  end
+
+  def filter_by_ability(participants)
+    if self.is_a?(PersonalSnippet)
+      Ability.users_that_can_read_personal_snippet(participants.to_a, self)
+    elsif self.is_a?(Issue) && self.confidential?
+      Ability.users_that_can_read_confidential_issues(participants.to_a, self.resource_parent)
+    else
+      return Ability.users_that_can_read_project(participants.to_a, project) if project
+
+      # handling group level work items(issues) that would have a namespace,
+      # We need to make sure that scenarios where some models that do not have a project set and also do not have
+      # a namespace are also handled and exceptions are avoided.
+      namespace_level_participable = respond_to?(:namespace) && namespace.present?
+      return Ability.users_that_can_read_group(participants.to_a, namespace) if namespace_level_participable
+
+      []
+    end
+  end
+
+  def can_read_participable?(participant)
     case self
     when PersonalSnippet
-      Ability.users_that_can_read_personal_snippet(participants.to_a, self)
+      participant.can?(:read_snippet, self)
     else
-      Ability.users_that_can_read_project(participants.to_a, project)
+      return participant.can?(:read_project, project) if project
+
+      # handling group level work items(issues) that would have a namespace,
+      # We need to make sure that scenarios where some models that do not have a project set and also do not have
+      # a namespace are also handled and exceptions are avoided.
+      namespace_level_participable = respond_to?(:namespace) && namespace.present?
+      return participant.can?(:read_group, namespace) if namespace_level_participable
+
+      false
     end
   end
 end
+
+Participable.prepend_mod_with('Participable')

@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Ci::VariablePresenter do
+RSpec.describe Ci::VariablePresenter, feature_category: :pipeline_composition do
   include Gitlab::Routing.url_helpers
 
-  let(:project) { create(:project) }
-  let(:variable) { create(:ci_variable, project: project) }
+  let(:project) { build_stubbed(:project) }
+  let(:variable) { build_stubbed(:ci_variable, project: project) }
 
   subject(:presenter) do
     described_class.new(variable)
@@ -35,29 +37,20 @@ describe Ci::VariablePresenter do
   end
 
   describe '#form_path' do
-    context 'when variable is persisted' do
-      subject { described_class.new(variable).form_path }
+    subject { described_class.new(variable).form_path }
 
-      it { is_expected.to eq(project_variable_path(project, variable)) }
-    end
-
-    context 'when variable is not persisted' do
-      let(:variable) { build(:ci_variable, project: project) }
-      subject { described_class.new(variable).form_path }
-
-      it { is_expected.to eq(project_variables_path(project)) }
-    end
+    it { is_expected.to eq(project_settings_ci_cd_path(project)) }
   end
 
   describe '#edit_path' do
     subject { described_class.new(variable).edit_path }
 
-    it { is_expected.to eq(project_variable_path(project, variable)) }
+    it { is_expected.to eq(project_variables_path(project)) }
   end
 
   describe '#delete_path' do
     subject { described_class.new(variable).delete_path }
 
-    it { is_expected.to eq(project_variable_path(project, variable)) }
+    it { is_expected.to eq(project_variables_path(project)) }
   end
 end

@@ -1,54 +1,71 @@
-- dashboard = local_assigns[:dashboard]
-- custom_dom_id = dom_id(milestone.try(:milestones) ? milestone.milestones.first : milestone)
+- custom_dom_id = dom_id(milestone.try(:milestone) ? milestone.milestone : milestone)
+- can_admin_milestone = can?(current_user, :admin_milestone, milestone)
+- can_promote = @project && can_admin_group_milestones? && milestone.project
 
-%li{ class: "milestone milestone-#{milestone.closed? ? 'closed' : 'open'}", id: custom_dom_id }
-  .row
-    .col-sm-6
-      %strong= link_to truncate(milestone.title, length: 100), milestone_path
-      - if milestone.is_group_milestone?
-        %span - Group Milestone
-      - else
-        %span - Project Milestone
+%li{ class: "!gl-py-3 milestone milestone-#{milestone.closed? ? 'closed' : 'open'}", id: custom_dom_id }
+  .gl-flex.gl-gap-3.gl-px-4
+    .gl-flex.gl-gap-4.gl-grow.gl-flex-wrap{ class: "@sm/panel:gl-flex-nowrap" }
+      -# NAME AND PROJECT/GROUP
+      .gl-flex.gl-flex-wrap.gl-grow.gl-gap-4.gl-gap-y-0.gl-items-center{ class: "@xl/panel:gl-basis-1/2 gl-w-full @sm/panel:gl-w-auto" }
+        .gl-shrink.gl-font-bold{ data: { testid: "milestone-link", qa_milestone_title: milestone.title } }
+          = link_to milestone.title, milestone_path(milestone)
+        .gl-flex.gl-shrink-0.gl-items-center.gl-gap-2.gl-text-subtle.gl-text-sm
+          - if milestone.project_milestone?
+            = sprite_icon('project')
+            %div
+              = milestone.project.full_name
 
-    .col-sm-6
-      .pull-right.light #{milestone.percent_complete(current_user)}% complete
-  .row
-    .col-sm-6
-      = link_to pluralize(milestone.total_issues_count(current_user), 'Issue'), issues_path
-      &middot;
-      = link_to pluralize(milestone.merge_requests.size, 'Merge Request'), merge_requests_path
-    .col-sm-6= milestone_progress_bar(milestone)
-  - if milestone.is_a?(GlobalMilestone) || milestone.is_group_milestone?
-    .row
-      .col-sm-6
-        - if milestone.is_legacy_group_milestone?
-          .expiration= render('shared/milestone_expired', milestone: milestone)
-          .projects
-            - milestone.milestones.each do |milestone|
-              = link_to milestone_path(milestone) do
-                %span.label.label-gray
-                  = dashboard ? milestone.project.name_with_namespace : milestone.project.name
-      - if @group
-        .col-sm-6.milestone-actions
-          - if can?(current_user, :admin_milestones, @group)
-            - if milestone.is_group_milestone?
-              = link_to edit_group_milestone_path(@group, milestone), class: "btn btn-xs btn-grouped" do
-                Edit
-              \
-            - if milestone.closed?
-              = link_to 'Reopen Milestone', group_milestone_route(milestone, {state_event: :activate }), method: :put, class: "btn btn-xs btn-grouped btn-reopen"
+          - if milestone.group_milestone?
+            = sprite_icon('group')
+            %div
+              = milestone.group.full_name
+
+      -# RELEASES, STATUS AND DATES
+      .gl-flex.gl-shrink-0.gl-gap-4.gl-items-center.gl-justify-end.gl-text-sm.gl-whitespace-nowrap{ class: "@xl/panel:gl-basis-[17rem]" }
+        -# RELEASES
+        - recent_releases, total_count, more_count = recent_releases_with_counts(milestone, current_user)
+        - if total_count >= 1 && recent_releases.size >= 1
+          .gl-text-subtle.gl-flex.gl-gap-2.gl-items-center.gl-max-w-48
+            = sprite_icon("rocket-launch", size: 18)
+            - if total_count > 1
+              .has-tooltip{ title: milestone_releases_tooltip_list(recent_releases, more_count) }
+                = format(_('%{count} releases'), count: total_count)
             - else
-              = link_to 'Close Milestone', group_milestone_route(milestone, {state_event: :close }), method: :put, class: "btn btn-xs btn-grouped btn-close"
+              .gl-truncate.has-tooltip{ title: recent_releases.first.name }
+                = recent_releases.first.name
+        -# SEPARATOR FOR WHEN THERE ARE RELEASES AND DATES
+        - if total_count > 0 && (milestone.due_date || milestone.start_date)
+          %div &middot;
+        -# STATUS AND DATES
+        - if milestone.due_date || milestone.start_date
+          .gl-text-subtle
+            = milestone_date_range(milestone)
+        %div
+          = gl_badge_tag milestone_status_string(milestone), { variant: milestone_badge_variant(milestone) }
 
-  - if @project
-    .row
-      .col-sm-6
-        = render('shared/milestone_expired', milestone: milestone)
-      .col-sm-6.milestone-actions
-        - if can?(current_user, :admin_milestone, milestone.project) and milestone.active?
-          = link_to edit_project_milestone_path(milestone.project, milestone), class: "btn btn-xs btn-grouped" do
-            Edit
-          \
-          = link_to 'Close Milestone', project_milestone_path(@project, milestone, milestone: {state_event: :close }), method: :put, remote: true, class: "btn btn-xs btn-close btn-grouped"
-          = link_to project_milestone_path(milestone.project, milestone), data: { confirm: 'Are you sure?' }, method: :delete, class: "btn btn-xs btn-remove btn-grouped" do
-            Delete
+      -# PROGRESS
+      .gl-flex.gl-shrink-0.gl-items-center.gl-gap-3.gl-justify-end.gl-text-subtle.gl-text-sm{ class: "@xl/panel:gl-basis-1/5" }
+        .gl-text-right{ class: "gl-w-[6.5rem] gl-hidden @md/panel:gl-block" }
+          = format('%{completed}/%{total} %{complete}', completed: milestone.closed_issues_count, total: milestone.total_issues_count, complete: _('complete'))
+        .gl-w-11
+          = milestone_progress_bar(milestone)
+        .gl-whitespace-nowrap.gl-shrink-0.gl-w-8
+          = format(s_('Milestone|%{percentage}%{percent}'), percentage: milestone.percent_complete, percent: '%')
+
+    -# MENU
+    - show_delete = (@project.present? || @group.present?) && can_admin_milestone
+    .gl-w-6.gl-flex.gl-items-center
+      .js-vue-milestone-actions{ data: { id: milestone.id,
+        title: milestone.title,
+        is_active: milestone.active?.to_s,
+        show_delete: show_delete.to_s,
+        size: "small",
+        milestone_url: Gitlab::UrlBuilder.build(milestone, only_path: true),
+        edit_url: can_admin_milestone ? edit_milestone_path(milestone) : '',
+        close_url: can_admin_milestone ? milestone_path(milestone, milestone: { state_event: :close }) : '',
+        reopen_url: can_admin_milestone ? milestone_path(milestone, milestone: { state_event: :activate }) : '',
+        promote_url: can_promote ? promote_project_milestone_path(milestone.project, milestone) : '',
+        group_name: can_promote ? @project.group.name : '',
+        issue_count: milestone.issues.count,
+        merge_request_count: milestone.merge_requests.count
+      } }

@@ -1,43 +1,44 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Download buttons in tags page' do
-  given(:user) { create(:user) }
-  given(:role) { :developer }
-  given(:status) { 'success' }
-  given(:tag) { 'v1.0.0' }
-  given(:project) { create(:project, :repository) }
+RSpec.describe 'Download buttons in tags page', feature_category: :source_code_management do
+  let(:user) { create(:user) }
+  let(:role) { :developer }
+  let(:status) { 'success' }
+  let(:tag) { 'v1.0.0' }
+  let(:project) { create(:project, :repository) }
 
-  given(:pipeline) do
-    create(:ci_pipeline,
-           project: project,
-           sha: project.commit(tag).sha,
-           ref: tag,
-           status: status)
+  let(:pipeline) do
+    create(
+      :ci_pipeline,
+      project: project,
+      sha: project.commit(tag).sha,
+      ref: tag,
+      status: status
+    )
   end
 
-  given!(:build) do
-    create(:ci_build, :success, :artifacts,
-           pipeline: pipeline,
-           status: pipeline.status,
-           name: 'build')
+  let!(:build) do
+    create(
+      :ci_build, :success, :artifacts,
+      pipeline: pipeline,
+      status: pipeline.status,
+      name: 'build'
+    )
   end
 
-  background do
+  before do
     sign_in(user)
-    project.team << [user, role]
+    project.add_role(user, role)
   end
 
   describe 'when checking tags' do
-    context 'with artifacts' do
-      before do
-        visit project_tags_path(project)
-      end
-
-      scenario 'shows download artifacts button' do
-        href = latest_succeeded_project_artifacts_path(project, "#{tag}/download", job: 'build')
-
-        expect(page).to have_link "Download '#{build.name}'", href: href
-      end
+    it_behaves_like 'archive download buttons' do
+      let(:path_to_visit) { project_tags_path(project) }
+      let(:ref) { tag }
+      let(:ref_type) { 'tags' }
+      let(:download_button_container) { find_by_testid("tag-row", text: tag) }
     end
   end
 end

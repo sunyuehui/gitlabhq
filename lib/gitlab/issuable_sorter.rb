@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module IssuableSorter
     class << self
@@ -5,7 +7,7 @@ module Gitlab
         grouped_items = issuables.group_by do |issuable|
           if issuable.project.id == project.id
             :project_ref
-          elsif issuable.project.namespace.id == project.namespace.id
+          elsif issuable.project.namespace_id == project.namespace_id
             :namespace_ref
           else
             :full_ref
@@ -20,7 +22,7 @@ module Gitlab
       private
 
       def natural_sort_issuables(issuables, project)
-        VersionSorter.sort(issuables || []) do |issuable|
+        VersionSorter.sort(issuables || []) do |issuable| # rubocop:disable Lint/UnexpectedBlockArity -- false positive (detected as Array.sort)
           issuable.to_reference(project)
         end
       end

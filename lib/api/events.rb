@@ -1,83 +1,78 @@
+# frozen_string_literal: true
+
 module API
-  class Events < Grape::API
+  class Events < ::API::Base
     include PaginationParams
+    include APIGuard
 
-    helpers do
-      params :event_filter_params do
-        optional :action, type: String, values: Event.actions, desc: 'Event action to filter on'
-        optional :target_type, type: String, values: Event.target_types, desc: 'Event target type to filter on'
-        optional :before, type: Date, desc: 'Include only events created before this date'
-        optional :after, type: Date, desc: 'Include only events created after this date'
-      end
+    helpers ::API::Helpers::EventsHelpers
 
-      params :sort_params do
-        optional :sort, type: String, values: %w[asc desc], default: 'desc',
-                        desc: 'Return events sorted in ascending and descending order'
-      end
+    allow_access_with_scope :read_user, if: ->(request) { request.get? || request.head? }
+    allow_access_with_scope :ai_workflows, if: ->(request) { request_current_user_events?(request) }
 
-      def present_events(events)
-        events = events.reorder(created_at: params[:sort])
+    feature_category :user_profile
+    urgency :low
 
-        present paginate(events), with: Entities::Event
-      end
+    def self.request_current_user_events?(request)
+      (request.get? || request.head?) && request.path.match?(%r{/api/v\d+/events$})
     end
 
     resource :events do
-      desc "List currently authenticated user's events" do
-        detail 'This feature was introduced in GitLab 9.3.'
+      desc 'List all events' do
+        detail 'Lists all events for the authenticated user. Does not return events associated with epics or merge ' \
+          'requests. Returns bulk push events with limited commit details.'
         success Entities::Event
+        is_array true
+        tags %w[events]
+        failure [
+          { code: 401, message: 'Unauthorized' }
+        ]
       end
       params do
+        optional :scope, type: String,
+          desc: "Include all events across the user's projects.",
+          documentation: { example: 'all' }
         use :pagination
         use :event_filter_params
         use :sort_params
       end
+
+      route_setting :authorization, permissions: :read_event, boundary_type: :user
       get do
         authenticate!
 
-        events = EventsFinder.new(params.merge(source: current_user, current_user: current_user)).execute.preload(:author, :target)
+        events = find_events(current_user)
 
         present_events(events)
       end
     end
 
     params do
-      requires :id, type: String, desc: 'The ID or Username of the user'
+      requires :id, type: String, desc: 'ID or username of the user.'
     end
     resource :users do
-      desc 'Get the contribution events of a specified user' do
-        detail 'This feature was introduced in GitLab 8.13.'
+      desc 'Retrieve contribution events for a user' do
+        detail 'Retrieves the contribution events for a specified user. Does not return events associated with epics ' \
+          'or merge requests. Returns bulk push events with limited commit details.'
         success Entities::Event
+        tags %w[events]
+        is_array true
+        failure [
+          { code: 404, message: 'Not found' }
+        ]
       end
       params do
         use :pagination
         use :event_filter_params
         use :sort_params
       end
+
+      route_setting :authorization, permissions: :read_event, boundary_type: :user
       get ':id/events' do
         user = find_user(params[:id])
         not_found!('User') unless user
 
-        events = EventsFinder.new(params.merge(source: user, current_user: current_user)).execute.preload(:author, :target)
-
-        present_events(events)
-      end
-    end
-
-    params do
-      requires :id, type: String, desc: 'The ID of a project'
-    end
-    resource :projects, requirements: { id: %r{[^/]+} } do
-      desc "List a Project's visible events" do
-        success Entities::Event
-      end
-      params do
-        use :pagination
-        use :event_filter_params
-        use :sort_params
-      end
-      get ":id/events" do
-        events = EventsFinder.new(params.merge(source: user_project, current_user: current_user)).execute.preload(:author, :target)
+        events = find_events(user)
 
         present_events(events)
       end

@@ -1,12 +1,6 @@
-- @hide_top_links = true
-- page_title "Groups"
-- header_title  "Groups", dashboard_groups_path
+- page_title _("Groups")
+
+= render_dashboard_ultimate_trial(current_user)
+
 = render 'dashboard/groups_head'
-
-= webpack_bundle_tag 'common_vue'
-= webpack_bundle_tag 'groups'
-
-- if @groups.empty?
-  = render 'empty_state'
-- else
-  = render 'groups'
+#js-your-work-groups-app{ data: { app_data: groups_list_with_filtered_search_app_data(dashboard_groups_path(format: :json)) } }

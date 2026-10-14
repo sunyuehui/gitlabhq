@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::GemspecLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::GemspecLinker do
   describe '.support?' do
     it 'supports *.gemspec' do
       expect(described_class.support?('gitlab_git.gemspec')).to be_truthy
@@ -19,7 +21,7 @@ describe Gitlab::DependencyLinker::GemspecLinker do
         Gem::Specification.new do |s|
           s.name        = 'gitlab_git'
           s.version     = `cat VERSION`
-          s.date        = Time.now.strftime('%Y-%m-%d')
+          s.date        = Date.current.iso8601
           s.summary     = "Gitlab::Git library"
           s.description = "GitLab wrapper around git objects"
           s.authors     = ["Dmitriy Zaporozhets"]
@@ -40,11 +42,11 @@ describe Gitlab::DependencyLinker::GemspecLinker do
     subject { Gitlab::Highlight.highlight(file_name, file_content) }
 
     def link(name, url)
-      %{<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>}
+      %(<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>)
     end
 
-    it 'links the gem name' do
-      expect(subject).to include(link('gitlab_git', 'https://rubygems.org/gems/gitlab_git'))
+    it 'does not link the gem name' do
+      expect(subject).not_to include(link('gitlab_git', 'https://rubygems.org/gems/gitlab_git'))
     end
 
     it 'links the license' do

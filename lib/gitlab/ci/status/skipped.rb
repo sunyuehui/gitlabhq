@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
       class Skipped < Status::Core
         def text
-          s_('CiStatusText|skipped')
+          s_('CiStatusText|Skipped')
         end
 
         def label
@@ -11,11 +13,15 @@ module Gitlab
         end
 
         def icon
-          'icon_status_skipped'
+          'status_skipped'
         end
 
         def favicon
           'favicon_status_skipped'
+        end
+
+        def details_path
+          nil
         end
       end
     end

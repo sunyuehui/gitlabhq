@@ -1,17 +1,20 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::SlashCommands::IssueNew do
+RSpec.describe Gitlab::SlashCommands::IssueNew do
   describe '#execute' do
     let(:project) { create(:project) }
     let(:user) { create(:user) }
+    let(:chat_name) { double(:chat_name, user: user) }
     let(:regex_match) { described_class.match("issue create bird is the word") }
 
     before do
-      project.team << [user, :master]
+      project.add_maintainer(user)
     end
 
     subject do
-      described_class.new(project, user).execute(regex_match)
+      described_class.new(project, chat_name).execute(regex_match)
     end
 
     context 'without description' do
@@ -43,12 +46,27 @@ describe Gitlab::SlashCommands::IssueNew do
     end
 
     context 'issue cannot be created' do
-      let!(:issue)  { create(:issue, project: project, title: 'bird is the word') }
+      let!(:issue) { create(:issue, project: project, title: 'bird is the word') }
       let(:regex_match) { described_class.match("issue create #{'a' * 512}}") }
 
       it 'displays the errors' do
         expect(subject[:response_type]).to be(:ephemeral)
         expect(subject[:text]).to match("- Title is too long")
+      end
+
+      context 'when create issue service return an unrecoverable error' do
+        let(:regex_match) { described_class.match("issue create title}") }
+
+        before do
+          allow_next_instance_of(Issues::CreateService) do |create_service|
+            allow(create_service).to receive(:execute).and_return(ServiceResponse.error(message: 'unauthorized'))
+          end
+        end
+
+        it 'displays the errors' do
+          expect(subject[:response_type]).to be(:ephemeral)
+          expect(subject[:text]).to eq('unauthorized')
+        end
       end
     end
   end

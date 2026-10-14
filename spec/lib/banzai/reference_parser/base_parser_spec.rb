@@ -1,17 +1,44 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Banzai::ReferenceParser::BaseParser do
+RSpec.describe Banzai::ReferenceParser::BaseParser, feature_category: :markdown do
   include ReferenceParserHelpers
 
   let(:user) { create(:user) }
   let(:project) { create(:project, :public) }
-
-  subject do
-    klass = Class.new(described_class) do
+  let(:context) { Banzai::RenderContext.new(project, user) }
+  let(:parser_class) do
+    Class.new(described_class) do
       self.reference_type = :foo
     end
+  end
 
-    klass.new(project, user)
+  subject do
+    parser_class.new(context)
+  end
+
+  describe '.reference_class' do
+    context 'when the method is not defined' do
+      it 'build the reference class' do
+        dummy = Class.new(described_class)
+        dummy.reference_type = :issue
+
+        expect(dummy.reference_class).to eq(Issue)
+      end
+    end
+
+    context 'when the method is redefined' do
+      it 'uses specified reference class' do
+        dummy = Class.new(described_class) do
+          def self.reference_class
+            AlertManagement::Alert
+          end
+        end
+
+        expect(dummy.reference_class).to eq(AlertManagement::Alert)
+      end
+    end
   end
 
   describe '.reference_type=' do
@@ -23,22 +50,43 @@ describe Banzai::ReferenceParser::BaseParser do
     end
   end
 
+  describe '#project_for_node' do
+    it 'returns the Project for a node' do
+      document = double('document', fragment?: false)
+      project = instance_double('Project')
+      object = double('object', project: project)
+      node = double('node', document: document)
+
+      context.associate_document(document, object)
+
+      expect(subject.project_for_node(node)).to eq(project)
+    end
+  end
+
   describe '#nodes_visible_to_user' do
     let(:link) { empty_html_link }
 
     context 'when the link has a data-project attribute' do
-      it 'checks if user can read the resource' do
+      before do
         link['data-project'] = project.id.to_s
+      end
 
-        expect(subject).to receive(:can_read_reference?).with(user, project, link)
+      it 'includes the link if can_read_reference? returns true' do
+        expect(subject).to receive(:can_read_reference?).with(user, project, link).and_return(true)
 
-        subject.nodes_visible_to_user(user, [link])
+        expect(subject.nodes_visible_to_user(user, [link])).to contain_exactly(link)
+      end
+
+      it 'excludes the link if can_read_reference? returns false' do
+        expect(subject).to receive(:can_read_reference?).with(user, project, link).and_return(false)
+
+        expect(subject.nodes_visible_to_user(user, [link])).to be_empty
       end
     end
 
     context 'when the link does not have a data-project attribute' do
       it 'returns the nodes' do
-        expect(subject.nodes_visible_to_user(user, [link])).to eq([link])
+        expect(subject.nodes_visible_to_user(user, [link])).to match_array([link])
       end
     end
   end
@@ -53,12 +101,31 @@ describe Banzai::ReferenceParser::BaseParser do
 
   describe '#referenced_by' do
     context 'when references_relation is implemented' do
-      it 'returns a collection of objects' do
-        links = Nokogiri::HTML.fragment("<a data-foo='#{user.id}'></a>")
-          .children
+      context 'and ids_only is set to false' do
+        it 'returns a collection of objects' do
+          links = Nokogiri::HTML.fragment("<a data-foo='#{user.id}'></a>")
+                    .children
 
-        expect(subject).to receive(:references_relation).and_return(User)
-        expect(subject.referenced_by(links)).to eq([user])
+          expect(subject).to receive(:references_relation).and_return(User)
+          expect(subject.referenced_by(links)).to eq([user])
+        end
+      end
+
+      context 'and ids_only is set to true' do
+        it 'returns a collection of id values without performing a db query' do
+          links = Nokogiri::HTML.fragment("<a data-foo='1'></a><a data-foo='2'></a>").children
+
+          expect(subject).not_to receive(:references_relation)
+          expect(subject.referenced_by(links, ids_only: true)).to eq(%w[1 2])
+        end
+
+        context 'and the html fragment does not contain any attributes' do
+          it 'returns an empty array' do
+            links = Nokogiri::HTML.fragment("no links").children
+
+            expect(subject.referenced_by(links, ids_only: true)).to eq([])
+          end
+        end
       end
     end
 
@@ -162,58 +229,56 @@ describe Banzai::ReferenceParser::BaseParser do
     it 'gathers the references for every node matching the reference type' do
       dummy = Class.new(described_class) do
         self.reference_type = :test
+
+        def gather_references(nodes, ids_only: false)
+          nodes
+        end
       end
 
-      instance = dummy.new(project, user)
-      document = Nokogiri::HTML.fragment('<a class="gfm"></a><a class="gfm" data-reference-type="test"></a>')
+      instance = dummy.new(context)
+      document_a = Nokogiri::HTML.fragment(<<-FRAG)
+      <a class="gfm">one</a>
+      <a class="gfm" data-reference-type="test">two</a>
+      <a class="gfm" data-reference-type="other">three</a>
+      FRAG
+      document_b = Nokogiri::HTML.fragment(<<-FRAG)
+      <a class="gfm" data-reference-type="test">four</a>
+      FRAG
+      document_c = Nokogiri::HTML.fragment('')
 
-      expect(instance).to receive(:gather_references)
-        .with([document.children[1]])
-        .and_return([user])
-
-      expect(instance.process([document])).to eq([user])
+      expect(instance.process([document_a, document_b, document_c]))
+        .to contain_exactly(document_a.css('a')[1], document_b.css('a')[0])
     end
   end
 
   describe '#gather_references' do
-    let(:link) { double(:link) }
+    let(:nodes) { (1..10).map { |n| double(:link, id: n) } }
 
-    it 'does not process links a user can not reference' do
-      expect(subject).to receive(:nodes_user_can_reference)
-        .with(user, [link])
-        .and_return([])
+    let(:parser_class) do
+      Class.new(described_class) do
+        def nodes_user_can_reference(_user, nodes)
+          nodes.select { |n| n.id.even? }
+        end
 
-      expect(subject).to receive(:referenced_by).with([])
+        def nodes_visible_to_user(_user, nodes)
+          nodes.select { |n| n.id > 5 }
+        end
 
-      subject.gather_references([link])
+        def referenced_by(nodes, ids_only: false)
+          nodes.map(&:id)
+        end
+      end
     end
 
-    it 'does not process links a user can not see' do
-      expect(subject).to receive(:nodes_user_can_reference)
-        .with(user, [link])
-        .and_return([link])
+    it 'returns referenceable and visible objects, alongside all and visible nodes' do
+      referenceable = nodes.select { |n| n.id.even? }
+      visible = nodes.select { |n| [6, 8, 10].include?(n.id) }
 
-      expect(subject).to receive(:nodes_visible_to_user)
-        .with(user, [link])
-        .and_return([])
-
-      expect(subject).to receive(:referenced_by).with([])
-
-      subject.gather_references([link])
+      expect_gathered_references(subject.gather_references(nodes), [6, 8, 10], referenceable, visible)
     end
 
-    it 'returns the references if a user can reference and see a link' do
-      expect(subject).to receive(:nodes_user_can_reference)
-        .with(user, [link])
-        .and_return([link])
-
-      expect(subject).to receive(:nodes_visible_to_user)
-        .with(user, [link])
-        .and_return([link])
-
-      expect(subject).to receive(:referenced_by).with([link])
-
-      subject.gather_references([link])
+    it 'is always empty if the input is empty' do
+      expect_gathered_references(subject.gather_references([]), [], [], [])
     end
   end
 
@@ -249,11 +314,10 @@ describe Banzai::ReferenceParser::BaseParser do
       end
     end
 
-    context 'with RequestStore enabled' do
+    context 'with RequestStore enabled', :request_store do
       before do
         cache = Hash.new { |hash, key| hash[key] = {} }
 
-        allow(RequestStore).to receive(:active?).and_return(true)
         allow(subject).to receive(:collection_cache).and_return(cache)
       end
 
@@ -296,6 +360,15 @@ describe Banzai::ReferenceParser::BaseParser do
 
         expect(subject.collection_objects_for_ids(Project, [project.id]))
           .to eq([project])
+      end
+
+      it 'does not overflow the stack' do
+        ids = 1.upto(1_000_000).to_a
+
+        # Avoid executing a large, unnecessary SQL query
+        expect(User).to receive(:where).with(id: ids).and_return(User.none)
+
+        expect { subject.collection_objects_for_ids(User, ids) }.not_to raise_error
       end
     end
   end

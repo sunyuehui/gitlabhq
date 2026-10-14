@@ -1,3 +1,8 @@
+# frozen_string_literal: true
+
+require 'capybara/rspec'
+require 'capybara-screenshot/rspec'
+
 module QA
   module Runtime
     ##
@@ -8,20 +13,23 @@ module QA
     # CE to EE.
     #
     class Release
-      def initialize
-        require "qa/#{version.downcase}/strategy"
-      end
-
       def version
-        @version ||= File.directory?("#{__dir__}/../ee") ? :EE : :CE
+        @version ||= ::File.directory?("#{__dir__}/../ee") ? :EE : :CE
       end
 
       def strategy
-        QA.const_get("QA::#{version}::Strategy")
+        Object.const_get("QA::#{version}::Strategy", false)
       end
 
       def self.method_missing(name, *args)
-        self.new.strategy.public_send(name, *args) # rubocop:disable GitlabSecurity/PublicSend
+        new.strategy.public_send(name, *args)
+      rescue StandardError
+        saved = Capybara::Screenshot.screenshot_and_save_page
+
+        QA::Runtime::Logger.error("Screenshot: #{saved[:image]}") if saved&.key?(:image)
+        QA::Runtime::Logger.error("HTML capture: #{saved[:html]}") if saved&.key?(:html)
+
+        raise
       end
     end
   end

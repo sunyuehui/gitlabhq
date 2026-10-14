@@ -1,28 +1,42 @@
-- if current_user.admin?
-  .form-group
-    = f.label :lfs_enabled, 'Large File Storage', class: 'control-label'
-    .col-sm-10
-      .checkbox
-        = f.label :lfs_enabled do
-          = f.check_box :lfs_enabled, checked: @group.lfs_enabled?
-          %strong
-            Allow projects within this group to use Git LFS
-            = link_to icon('question-circle'), help_page_path('workflow/lfs/manage_large_binaries_with_git_lfs')
-          %br/
-          %span.descr This setting can be overridden in each project.
+%fieldset.form-group.gl-form-group
+  %legend.col-form-label.col-form-label
+    = _('Large File Storage')
+  = f.gitlab_ui_checkbox_component :lfs_enabled, checkbox_options: { checked: @group.lfs_enabled? } do |c|
+    - c.with_label do
+      = _('Projects in this group can use Git LFS')
+      = link_to sprite_icon('question-o'), help_page_path('topics/git/lfs/_index.md'), class: 'gl-ml-2'
+    - c.with_help_text do
+      = _('This setting can be overridden in each project.')
+.form-group.gl-form-group{ role: 'group' }
+  = f.label s_('ProjectCreationLevel|Minimum role required to create projects'), class: 'gl-block col-form-label'
+  = f.select :project_creation_level, options_for_select(::Gitlab::Access.project_creation_options, @group.project_creation_level), {}, class: 'gl-form-select custom-select'
 
-- if can? current_user, :admin_group, @group
-  .form-group
-    = f.label :require_two_factor_authentication, 'Two-factor authentication', class: 'control-label col-sm-2'
-    .col-sm-10
-      .checkbox
-        = f.label :require_two_factor_authentication do
-          = f.check_box :require_two_factor_authentication
-          %strong
-            Require all users in this group to setup Two-factor authentication
-            = link_to icon('question-circle'), help_page_path('security/two_factor_authentication', anchor: 'enforcing-2fa-for-all-users-in-a-group')
-  .form-group
-    .col-sm-offset-2.col-sm-10
-      .checkbox
-        = f.text_field :two_factor_grace_period, class: 'form-control'
-        .help-block Amount of time (in hours) that users are allowed to skip forced configuration of two-factor authentication
+.form-group.gl-form-group{ role: 'group' }
+  = f.label s_('SubgroupCreationLevel|Roles allowed to create subgroups'), class: 'gl-block col-form-label'
+  - ::Gitlab::Access.subgroup_creation_options.each do |label, action|
+    = f.gitlab_ui_radio_component :subgroup_creation_level, action, label
+
+%fieldset.form-group.gl-form-group
+  %legend.col-form-label.col-form-label
+    = _('Two-factor authentication')
+  - label = _("All users in this group must set up two-factor authentication")
+  - help_link = link_to sprite_icon('question-o'), help_page_path('security/two_factor_authentication.md', anchor: 'enforce-2fa-for-all-users-in-a-group'), class: 'gl-ml-2'
+  = f.gitlab_ui_checkbox_component :require_two_factor_authentication, '%{label}%{help_link}'.html_safe % { label: label, help_link: help_link }
+
+.form-group.gl-form-group{ role: 'group' }
+  = f.label :two_factor_grace_period, _('Two-factor authentication grace period'), class: 'gl-block col-form-label'
+  = f.text_field :two_factor_grace_period, class: 'form-control gl-form-input gl-form-input-sm'
+  %small.form-text.gl-text-subtle
+    = _("Time (in hours) that users are allowed to skip forced configuration of two-factor authentication.")
+
+- if @group.namespace_settings.present?
+  - if ::Security::PolicyAvailability.any_available?(@group) && @group.root?
+    = render_if_exists 'groups/admin_security_policies', form: f
+
+  .form-group.gl-form-group
+    %legend.col-form-label.col-form-label
+      = s_('Runners|Runner Registration')
+    = f.gitlab_ui_checkbox_component :runner_registration_enabled,
+      s_('Runners|New group runners can be registered'),
+      checkbox_options: { checked: @group.runner_registration_enabled?, disabled: !@group.all_ancestors_have_runner_registration_enabled? },
+      help_text: s_('Runners|Existing runners are not affected. To permit runner registration for all groups, enable this setting in the Admin area in Settings &gt; CI/CD.').html_safe

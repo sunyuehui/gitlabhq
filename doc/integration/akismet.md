@@ -1,58 +1,74 @@
-# Akismet
+---
+stage: Software Supply Chain Security
+group: Authorization
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Akismet
+---
 
-> *Note:* Before 8.11 only issues submitted via the API and for non-project
-members were submitted to Akismet.
+{{< details >}}
 
-GitLab leverages [Akismet](http://akismet.com) to protect against spam. Currently
-GitLab uses Akismet to prevent the creation of spam issues on public projects. Issues
-created via the WebUI or the API can be submitted to Akismet for review.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-Detected spam will be rejected, and an entry in the "Spam Log" section in the
-Admin page will be created.
+{{< /details >}}
 
-Privacy note: GitLab submits the user's IP and user agent to Akismet. Note that
-adding a user to a project will disable the Akismet check and prevent this
-from happening.
+GitLab uses [Akismet](https://akismet.com/) to prevent the creation of
+spam issues on public projects. Issues created through the web UI or the API can be submitted to
+Akismet for review, and instance administrators can
+[mark snippets as spam](../user/snippets.md#mark-snippet-as-spam).
 
-## Configuration
+Detected spam is rejected, and an entry is added in the **Spam log** section of the
+**Admin** area.
+
+Privacy note: GitLab submits the user's IP and user agent to Akismet.
+
+> [!note]
+> GitLab submits all issues to Akismet.
+
+Akismet configuration is available to users on GitLab Self-Managed. Akismet is already enabled on
+GitLab.com, where its configuration and management are handled by GitLab Inc.
+
+## Configure Akismet
+
+{{< details >}}
+
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab Self-Managed, GitLab Dedicated
+
+{{< /details >}}
 
 To use Akismet:
 
-1. Go to the URL: https://akismet.com/account/
+1. Go to the [Akismet sign-in page](https://akismet.com/account/).
+1. Sign in or create a new account.
+1. Select **Show** to reveal the API key, and copy the API key's value.
+1. Sign in to GitLab as an administrator.
+1. In the upper-right corner, select **Admin**.
+1. In the left sidebar, select **Settings** > **Reporting**.
+1. Expand **Spam and Anti-bot Protection**.
+1. Select the **Enable Akismet** checkbox.
+1. Fill in the API key from step 3.
+1. Save the configuration.
 
-2. Sign-in or create a new account.
+## Train the Akismet filter
 
-3. Click on **Show** to reveal the API key.
+{{< details >}}
 
-4. Go to Applications Settings on Admin Area (`admin/application_settings`)
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab Self-Managed, GitLab Dedicated
 
-5. Check the **Enable Akismet** checkbox
+{{< /details >}}
 
-6. Fill in the API key from step 3.
-
-7. Save the configuration.
-
-![Screenshot of Akismet settings](img/akismet_settings.png)
-
-
-## Training
-
-> *Note:* Training the Akismet filter is only available in 8.11 and above.
-
-As a way to better recognize between spam and ham, you can train the Akismet
+To better differentiate between spam and ham, you can train the Akismet
 filter whenever there is a false positive or false negative.
 
-When an entry is recognized as spam, it is rejected and added to the Spam Logs. 
-From here you can review if they are really spam. If one of them is not really
-spam, you can use the **Submit as ham** button to tell Akismet that it falsely 
+When an entry is recognized as spam, it is rejected and added to the spam logs.
+From here you can review if entries are really spam. If one of them is not really
+spam, select **Submit as ham** to tell Akismet that it falsely
 recognized an entry as spam.
 
-![Screenshot of Spam Logs](img/spam_log.png)
+If an entry that is actually spam was not recognized as such, use **Submit as spam** to submit
+this information to Akismet. The **Submit as spam** button is only displayed
+to administrator users.
 
-If an entry that is actually spam was not recognized as such, you will be able
-to also submit this to Akismet. The **Submit as spam** button will only appear
-to admin users.
-
-![Screenshot of Issue](img/submit_issue.png)
-
-Training Akismet will help it to recognize spam more accurately in the future.
+Training Akismet helps it to recognize spam more accurately in the future.

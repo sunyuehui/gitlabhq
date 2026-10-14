@@ -1,78 +1,166 @@
-# Custom Queues configuration
-queues_config_hash = Gitlab::Redis::Queues.params
-queues_config_hash[:namespace] = Gitlab::Redis::Queues::SIDEKIQ_NAMESPACE
+# frozen_string_literal: true
 
-# Default is to retry 25 times with exponential backoff. That's too much.
-Sidekiq.default_worker_options = { retry: 3 }
+module SidekiqLogArguments
+  def self.enabled?
+    Gitlab::Utils.to_boolean(ENV['SIDEKIQ_LOG_ARGUMENTS'], default: true)
+  end
+end
+
+# initialise migrated_shards on start-up to catch any malformed SIDEKIQ_MIGRATED_SHARD lists.
+Gitlab::SidekiqSharding::Router.migrated_shards
+
+# Custom Queues configuration
+#
+# We omit :command_builder since Sidekiq::RedisConnection performs a deep clone using
+# Marshal.load(Marshal.dump(options.slice(*keys))) on the Redis config and Gitlab::Redis::CommandBuilder
+# can't be referred to.
+#
+# We do not need the custom command builder since Sidekiq will handle the typing of Redis arguments.
+queue_instance = ENV.fetch('SIDEKIQ_SHARD_NAME', Gitlab::Redis::Queues::SIDEKIQ_MAIN_SHARD_INSTANCE_NAME)
+queues_config_hash = Gitlab::Redis::Queues.instances[queue_instance].params.except(:command_builder)
+
+enable_json_logs = Gitlab.config.sidekiq.log_format != 'text'
+
+# Sidekiq's `strict_args!` raises an exception by default in 7.0
+# https://github.com/sidekiq/sidekiq/blob/31bceff64e10d501323bc06ac0552652a47c082e/docs/7.0-Upgrade.md?plain=1#L59
+# We set :warn in development/test to pick out workers that try to serialise complex args
+strict_args_mode = Gitlab.dev_or_test_env? ? :warn : false
+Sidekiq.strict_args!(strict_args_mode)
+
+# Perform version check before configuring server with the custome scheduled job enqueue class
+unless Gem::Version.new(Sidekiq::VERSION) == Gem::Version.new('7.3.9')
+  raise 'New version of Sidekiq detected, please either update the version for this check ' \
+        'and update Gitlab::SidekiqSharding::ScheduledEnq is compatible.'
+end
+
+Sidekiq::Cron.configure do |cfg|
+  # IMPORTANT: In sidekiq-cron > 2.0.0, setting `cron_poll_interval` to `nil` has the same effect as setting
+  # it to `0` (essentially disables it). To avoid that, we do the check below and preserve the fallback to default value
+  cfg.cron_poll_interval = Gitlab.config.cron_jobs.poll_interval if Gitlab.config.cron_jobs.poll_interval
+  cfg.cron_poll_interval = 0 if queue_instance != Gitlab::Redis::Queues::SIDEKIQ_MAIN_SHARD_INSTANCE_NAME
+
+  # sidekiq-cron's ScheduleLoader auto-loads config/schedule.yml on :startup, which conflicts
+  # with CronJobInitializer.execute that loads FOSS + EE + SaaS schedules. Disable it by
+  # pointing at a non-existent path.
+  cfg.cron_schedule_file = 'config/sidekiq_schedule_disabled.yml'
+end
 
 Sidekiq.configure_server do |config|
-  config.redis = queues_config_hash
+  config[:strict] = false
+  config[:scheduled_enq] = Gitlab::SidekiqSharding::ScheduledEnq
+  config[:queues] = Gitlab::SidekiqConfig.expand_queues(config[:queues])
 
-  config.server_middleware do |chain|
-    chain.add Gitlab::SidekiqMiddleware::ArgumentsLogger if ENV['SIDEKIQ_LOG_ARGUMENTS']
-    chain.add Gitlab::SidekiqMiddleware::MemoryKiller if ENV['SIDEKIQ_MEMORY_KILLER_MAX_RSS']
-    chain.add Gitlab::SidekiqMiddleware::RequestStoreMiddleware unless ENV['SIDEKIQ_REQUEST_STORE'] == '0'
-    chain.add Gitlab::SidekiqStatus::ServerMiddleware
+  if enable_json_logs
+    config.logger.formatter = Gitlab::SidekiqLogging::JSONFormatter.new
+    config[:job_logger] = Gitlab::SidekiqLogging::StructuredLogger
+
+    # Remove the default-provided handler. The exception is logged inside
+    # Gitlab::SidekiqLogging::StructuredLogger
+    config.error_handlers.delete(Sidekiq::Config::ERROR_HANDLER)
   end
 
-  config.client_middleware do |chain|
-    chain.add Gitlab::SidekiqStatus::ClientMiddleware
-  end
+  config.logger.level = ENV.fetch("GITLAB_LOG_LEVEL", ::Logger::INFO)
+
+  Sidekiq.logger.info "Listening on queues #{config[:queues].uniq.sort}"
+
+  # In Sidekiq 6.x, connection pools have a size of concurrency+5.
+  # ref: https://github.com/sidekiq/sidekiq/blob/v6.5.10/lib/sidekiq/redis_connection.rb#L93
+  #
+  # In Sidekiq 7.x, capsule connection pools have a size equal to its concurrency. Internal
+  # housekeeping pool has a size of 10.
+  # ref: https://github.com/sidekiq/sidekiq/blob/v7.1.6/lib/sidekiq/capsule.rb#L94
+  # ref: https://github.com/sidekiq/sidekiq/blob/v7.1.6/lib/sidekiq/config.rb#L133
+  #
+  # We restore the concurrency+5 in Sidekiq 7.x to ensure that we do not experience resource bottlenecks with Redis
+  # connections. The connections are created lazily so slightly over-provisioning a connection pool is not an issue.
+  # This also increases the internal redis pool from 10 to concurrency+5.
+  config.redis = queues_config_hash.merge({ size: config.concurrency + 5 })
+
+  config.server_middleware(&Gitlab::SidekiqMiddleware::Server.configurator(
+    metrics: Settings.monitoring.sidekiq_exporter,
+    arguments_logger: SidekiqLogArguments.enabled? && !enable_json_logs,
+    skip_jobs: Gitlab::Utils.to_boolean(ENV['SIDEKIQ_SKIP_JOBS'], default: true)
+  ))
+
+  config.client_middleware(&Gitlab::SidekiqMiddleware::Client.configurator)
+
+  config.death_handlers << Gitlab::SidekiqDeathHandler.method(:handler)
 
   config.on :startup do
     # Clear any connections that might have been obtained before starting
     # Sidekiq (e.g. in an initializer).
-    ActiveRecord::Base.clear_all_connections!
-  end
+    ActiveRecord::Base.connection_handler.clear_all_connections!
 
-  # Sidekiq-cron: load recurring jobs from gitlab.yml
-  # UGLY Hack to get nested hash from settingslogic
-  cron_jobs = JSON.parse(Gitlab.config.cron_jobs.to_json)
-  # UGLY hack: Settingslogic doesn't allow 'class' key
-  cron_jobs_required_keys = %w(job_class cron)
-  cron_jobs.each do |k, v|
-    if cron_jobs[k] && cron_jobs_required_keys.all? { |s| cron_jobs[k].key?(s) }
-      cron_jobs[k]['class'] = cron_jobs[k].delete('job_class')
-    else
-      cron_jobs.delete(k)
-      Rails.logger.error("Invalid cron_jobs config key: '#{k}'. Check your gitlab config file.")
+    # Start monitor to track running jobs. By default, cancel job is not enabled
+    # To cancel job, it requires `SIDEKIQ_MONITOR_WORKER=1` to enable notification channel
+    Gitlab::SidekiqDaemon::Monitor.instance.start
+
+    first_sidekiq_worker = !ENV['SIDEKIQ_WORKER_ID'] || ENV['SIDEKIQ_WORKER_ID'] == '0'
+    health_checks = Settings.monitoring.sidekiq_health_checks
+
+    # Start health-check in-process server
+    if first_sidekiq_worker && health_checks.enabled
+      Gitlab::HealthChecks::Server.instance(
+        address: health_checks.address,
+        port: health_checks.port
+      ).start
     end
   end
-  Sidekiq::Cron::Job.load_from_hash! cron_jobs
 
-  Gitlab::SidekiqThrottler.execute!
+  config.on(:shutdown) do
+    Gitlab::Cluster::LifecycleEvents.do_worker_stop
+  end
 
-  config = Gitlab::Database.config ||
-    Rails.application.config.database_configuration[Rails.env]
-  config['pool'] = Sidekiq.options[:concurrency]
-  ActiveRecord::Base.establish_connection(config)
-  Rails.logger.debug("Connection Pool size for Sidekiq Server is now: #{ActiveRecord::Base.connection.pool.instance_variable_get('@size')}")
+  config[:semi_reliable_fetch] = true # Default value is false
+
+  Sidekiq::ReliableFetch.setup_reliable_fetch!(config)
+
+  Gitlab::SidekiqVersioning.install!
+
+  Gitlab::SidekiqConfig::CronJobInitializer.execute
 
   # Avoid autoload issue such as 'Mail::Parsers::AddressStruct'
   # https://github.com/mikel/mail/issues/912#issuecomment-214850355
   Mail.eager_autoload!
+
+  # Ensure the whole process group is terminated if possible
+  Gitlab::SidekiqSignals.install!(Sidekiq::CLI::SIGNAL_HANDLERS)
 end
 
 Sidekiq.configure_client do |config|
   config.redis = queues_config_hash
+  # We only need to do this for other clients. If Sidekiq-server is the
+  # client scheduling jobs, we have access to the regular sidekiq logger that
+  # writes to STDOUT
+  config.logger = Gitlab::SidekiqLogging::ClientLogger.build
+  config.logger.formatter = Gitlab::SidekiqLogging::JSONFormatter.new if enable_json_logs
 
-  config.client_middleware do |chain|
-    chain.add Gitlab::SidekiqStatus::ClientMiddleware
-  end
+  config.client_middleware(&Gitlab::SidekiqMiddleware::Client.configurator)
 end
 
-# The Sidekiq client API always adds the queue to the Sidekiq queue
-# list, but mail_room and gitlab-shell do not. This is only necessary
-# for monitoring.
-config = YAML.load_file(Rails.root.join('config', 'sidekiq_queues.yml').to_s)
-
-begin
-  Sidekiq.redis do |conn|
-    conn.pipelined do
-      config[:queues].each do |queue|
-        conn.sadd('queues', queue[0])
-      end
-    end
-  end
-rescue Redis::BaseError, SocketError, Errno::ENOENT, Errno::EADDRNOTAVAIL, Errno::EAFNOSUPPORT, Errno::ECONNRESET, Errno::ECONNREFUSED
+if Rails.env.production?
+  # Configure Sidekiq to serve assets from webpack-compiled location.
+  # Add Rack::Static middleware to serve assets from
+  # public/assets/sidekiq at URLs like /stylesheets/*, /images/*,
+  # /javascripts/*. This is needed because in Cloud Native GitLab,
+  # Workhorse does not install the Sidekiq gem.
+  #
+  # This method should be available in Sidekiq 8.1.0:
+  # https://github.com/sidekiq/sidekiq/pull/6865
+  # This needs to be kept in sync with lib/tasks/gitlab/assets.rake.
+  Sidekiq::Web.assets_path = Rails.public_path.join('assets', 'sidekiq').to_s
 end
+
+Gitlab::Application.configure do |config|
+  config.middleware.use(Gitlab::Middleware::SidekiqShardAwarenessValidation)
+end
+
+Sidekiq::Scheduled::Poller.prepend Gitlab::Patch::SidekiqPoller
+Sidekiq::Cron::Poller.prepend Gitlab::Patch::SidekiqPoller
+Sidekiq::Cron::Poller.prepend Gitlab::Patch::SidekiqCronPoller
+
+Sidekiq::Client.prepend Gitlab::SidekiqSharding::Validator::Client
+Sidekiq::RedisClientAdapter::CompatMethods.prepend Gitlab::SidekiqSharding::Validator
+Sidekiq::Job::Setter.prepend Gitlab::Patch::SidekiqJobSetter
+
+Gitlab::BackgroundTask.new(Gitlab::SidekiqMiddleware::Throttling::RecoveryTask.new).start if Gitlab::Runtime.sidekiq?

@@ -1,19 +1,30 @@
-- page_title "Repository"
-- @content_class = "limit-container-width" unless fluid_layout
+- breadcrumb_title s_('Navigation|Repository settings')
+- page_title _("Repository")
+- deploy_token_description = s_('DeployTokens|Deploy tokens allow access to packages, your repository, and registry images.')
 
-- if show_new_nav?
-  - add_to_breadcrumbs("Settings", edit_project_path(@project))
+- if can?(current_user, :admin_project, @project)
+  = render_if_exists "projects/settings/repository/general", project: @project
+  = render "projects/branch_defaults/show"
 
-= render "projects/settings/head"
+- if can?(current_user, :read_branch_rule, @project)
+  = render "projects/branch_rules/show"
 
-- content_for :page_specific_javascripts do
-  = page_specific_javascript_bundle_tag('common_vue')
-  = page_specific_javascript_bundle_tag('deploy_keys')
+- if can?(current_user, :admin_push_rules, @project)
+  = render_if_exists "projects/push_rules/index"
 
--# Protected branches & tags use a lot of nested partials.
--# The shared parts of the views can be found in the `shared` directory.
--# Those are used throughout the actual views. These `shared` views are then
--# reused in EE.
-= render "projects/protected_branches/index"
-= render "projects/protected_tags/index"
-= render @deploy_keys
+- if can?(current_user, :admin_project, @project)
+  = render "projects/mirrors/mirror_repos"
+
+  -# Protected branches & tags use a lot of nested partials.
+  -# The shared parts of the views can be found in the `shared` directory.
+  -# Those are used throughout the actual views. These `shared` views are then
+  -# reused in EE.
+- if can?(current_user, :admin_protected_branch, @project)
+  = render "projects/settings/repository/protected_branches", protected_branch_entity: @project
+
+- if current_user.can?(:read_deploy_token, @project)
+  = render "shared/deploy_tokens/index", group_or_project: @project, description: deploy_token_description
+
+- if can?(current_user, :admin_project, @project)
+  = render 'shared/deploy_keys/index'
+  = render "projects/maintenance/show"

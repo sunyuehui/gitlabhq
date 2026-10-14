@@ -1,14 +1,19 @@
+# frozen_string_literal: true
+
 class FileSizeValidator < ActiveModel::EachValidator
   MESSAGES = { is: :wrong_size, minimum: :size_too_small, maximum: :size_too_big }.freeze
   CHECKS   = { is: :==, minimum: :>=, maximum: :<= }.freeze
 
-  DEFAULT_TOKENIZER = -> (value) { value.split(//) }.freeze
+  DEFAULT_TOKENIZER = ->(value) { value.split("") }.freeze
   RESERVED_OPTIONS  = [:minimum, :maximum, :within, :is, :tokenizer, :too_short, :too_long].freeze
 
   def initialize(options)
-    if range = (options.delete(:in) || options.delete(:within))
+    range = options.delete(:in) || options.delete(:within)
+    if range
       raise ArgumentError, ":in and :within must be a Range" unless range.is_a?(Range)
-      options[:minimum], options[:maximum] = range.begin, range.end
+
+      options[:minimum] = range.begin
+      options[:maximum] = range.end
       options[:maximum] -= 1 if range.exclude_end?
     end
 
@@ -37,7 +42,8 @@ class FileSizeValidator < ActiveModel::EachValidator
     value = (options[:tokenizer] || DEFAULT_TOKENIZER).call(value) if value.is_a?(String)
 
     CHECKS.each do |key, validity_check|
-      next unless check_value = options[key]
+      check_value = options[key]
+      next unless check_value
 
       check_value =
         case check_value
@@ -58,7 +64,7 @@ class FileSizeValidator < ActiveModel::EachValidator
       default_message = options[MESSAGES[key]]
       errors_options[:message] ||= default_message if default_message
 
-      record.errors.add(attribute, MESSAGES[key], errors_options)
+      record.errors.add(attribute, MESSAGES[key], **errors_options)
     end
   end
 

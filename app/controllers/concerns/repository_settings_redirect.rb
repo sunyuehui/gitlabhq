@@ -1,7 +1,7 @@
-module RepositorySettingsRedirect
-  extend ActiveSupport::Concern
+# frozen_string_literal: true
 
-  def redirect_to_repository_settings(project)
-    redirect_to project_settings_repository_path(project)
+module RepositorySettingsRedirect
+  def redirect_to_repository_settings(project, anchor: nil)
+    redirect_to project_settings_repository_path(project, anchor: anchor)
   end
 end

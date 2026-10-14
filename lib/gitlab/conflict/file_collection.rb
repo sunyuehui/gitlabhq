@@ -1,50 +1,64 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Conflict
     class FileCollection
-      ConflictSideMissing = Class.new(StandardError)
+      include Gitlab::RepositoryCacheAdapter
 
-      attr_reader :merge_request, :our_commit, :their_commit, :project
+      attr_reader :merge_request, :resolver
 
-      delegate :repository, to: :project
-
-      class << self
-        # We can only write when getting the merge index from the source
-        # project, because we will write to that project. We don't use this all
-        # the time because this fetches a ref into the source project, which
-        # isn't needed for reading.
-        def for_resolution(merge_request)
-          project = merge_request.source_project
-
-          new(merge_request, project).tap do |file_collection|
-            project
-              .repository
-              .with_repo_branch_commit(merge_request.target_project.repository, merge_request.target_branch) do
-
-              yield file_collection
-            end
-          end
-        end
-
-        # We don't need to do `with_repo_branch_commit` here, because the target
-        # project always fetches source refs when creating merge request diffs.
-        def read_only(merge_request)
-          new(merge_request, merge_request.target_project)
-        end
+      def initialize(merge_request, allow_tree_conflicts: false, skip_content: false)
+        @our_commit = merge_request.source_branch_head.raw
+        @their_commit = merge_request.target_branch_head.raw
+        @target_repo = merge_request.target_project.repository
+        @source_repo = merge_request.source_project.repository.raw
+        @our_commit_id = @our_commit.id
+        @their_commit_id = @their_commit.id
+        @resolver = Gitlab::Git::Conflict::Resolver.new(@target_repo.raw, @our_commit_id, @their_commit_id, allow_tree_conflicts: allow_tree_conflicts, skip_content: skip_content)
+        @merge_request = merge_request
       end
 
-      def merge_index
-        @merge_index ||= repository.rugged.merge_commits(our_commit, their_commit)
+      def resolve(user, commit_message, files)
+        msg = commit_message || default_commit_message
+        resolution = Gitlab::Git::Conflict::Resolution.new(user, files, msg)
+
+        resolver.resolve_conflicts(
+          @source_repo,
+          resolution,
+          source_branch: merge_request.source_branch,
+          target_branch: merge_request.target_branch
+        )
+      ensure
+        @merge_request.clear_memoized_shas
       end
 
       def files
-        @files ||= merge_index.conflicts.map do |conflict|
-          raise ConflictSideMissing unless conflict[:theirs] && conflict[:ours]
-
-          Gitlab::Conflict::File.new(merge_index.merge_file(conflict[:ours][:path]),
-                                     conflict,
-                                     merge_request: merge_request)
+        @files ||= resolver.conflicts.map do |conflict_file|
+          Gitlab::Conflict::File.new(conflict_file, merge_request: merge_request)
         end
       end
+
+      def can_be_resolved_in_ui?
+        # Try to parse each conflict. If the MR's mergeable status hasn't been
+        # updated, ensure that we don't say there are conflicts to resolve
+        # when there are no conflict files.
+        files.each(&:lines)
+        files.any?
+      rescue Gitlab::Git::Conflict::Parser::UnresolvableError,
+        Gitlab::Git::Conflict::Resolver::ConflictSideMissing,
+        Gitlab::Git::Conflict::File::UnsupportedEncoding,
+        Gitlab::Git::CommandError => e
+        # These errors indicate conflicts exist but can't be parsed/resolved
+        # in the UI - return false to show "cannot be resolved" message.
+        # CommandError covers cases like missing refs after force push.
+        #
+        # However, if the underlying cause is Gitaly unavailability (not just
+        # a missing ref), re-raise so the controller can return 503.
+        raise if gitaly_unavailable?(e)
+
+        false
+      end
+      cache_method :can_be_resolved_in_ui?
 
       def file_for_path(old_path, new_path)
         files.find { |file| file.their_path == old_path && file.our_path == new_path }
@@ -53,6 +67,10 @@ module Gitlab
       def as_json(opts = nil)
         {
           target_branch: merge_request.target_branch,
+          source_commit: {
+            sha: @our_commit.id,
+            message: @our_commit.message
+          },
           source_branch: merge_request.source_branch,
           commit_sha: merge_request.diff_head_sha,
           commit_message: default_commit_message,
@@ -61,25 +79,43 @@ module Gitlab
       end
 
       def default_commit_message
-        conflict_filenames = merge_index.conflicts.map do |conflict|
-          "#   #{conflict[:ours][:path]}"
+        conflict_filenames = files.map do |conflict|
+          "#   #{conflict.our_path}"
         end
 
-        <<EOM.chomp
+        <<TEXT.chomp
 Merge branch '#{merge_request.target_branch}' into '#{merge_request.source_branch}'
 
 # Conflicts:
 #{conflict_filenames.join("\n")}
-EOM
+TEXT
       end
 
       private
 
-      def initialize(merge_request, project)
-        @merge_request = merge_request
-        @our_commit = merge_request.source_branch_head.raw.rugged_commit
-        @their_commit = merge_request.target_branch_head.raw.rugged_commit
-        @project = project
+      # Check if the error indicates Gitaly service unavailability
+      # (as opposed to a legitimate "ref not found" type error)
+      def gitaly_unavailable?(error)
+        cause = error.cause
+        return false unless cause.is_a?(GRPC::BadStatus)
+
+        # These status codes indicate service unavailability
+        [
+          GRPC::Core::StatusCodes::UNAVAILABLE,
+          GRPC::Core::StatusCodes::DEADLINE_EXCEEDED,
+          GRPC::Core::StatusCodes::RESOURCE_EXHAUSTED
+        ].include?(cause.code)
+      end
+
+      def cache
+        @cache ||= begin
+          # Use the commit ids as a namespace so if the MR branches get
+          # updated we instantiate the cache under a different namespace. That
+          # way don't have to worry about explicitly invalidating the cache
+          namespace = "#{@our_commit_id}:#{@their_commit_id}"
+
+          Gitlab::RepositoryCache.new(@target_repo, extra_namespace: namespace)
+        end
       end
     end
   end

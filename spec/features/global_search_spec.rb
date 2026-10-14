@@ -1,28 +1,49 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Global search' do
-  let(:user) { create(:user) }
-  let(:project) { create(:project, namespace: user.namespace) }
+RSpec.describe 'Global search', :js, :with_current_organization, feature_category: :global_search do
+  let_it_be(:user) { create(:user, organization: current_organization) }
+  let_it_be(:project) { create(:project, :public, namespace: user.namespace) }
+  let_it_be(:search_selector) { 'input[type="search"]:focus' }
 
   before do
-    project.team << [user, :master]
-    sign_in(user)
+    project.add_maintainer(user)
   end
 
-  describe 'I search through the issues and I see pagination' do
+  after do
+    expect_page_to_have_no_console_errors
+  end
+
+  shared_examples 'header search' do
+    it 'renders search button' do
+      expect(page).to have_selector('[data-testid="super-topbar-search-button"]')
+    end
+
+    it 'opens search modal when shortcut "s" is pressed' do
+      expect(page).not_to have_selector(search_selector)
+
+      find('body').native.send_key('s')
+
+      expect(page).to have_selector(search_selector)
+    end
+  end
+
+  describe 'when signed out' do
     before do
-      allow_any_instance_of(Gitlab::SearchResults).to receive(:per_page).and_return(1)
-      create_list(:issue, 2, project: project, title: 'initial')
+      visit project_path(project)
     end
 
-    it "has a pagination" do
+    it_behaves_like 'header search'
+  end
+
+  describe 'when signed in' do
+    before do
+      sign_in(user)
+
       visit dashboard_projects_path
-
-      fill_in "search", with: "initial"
-      click_button "Go"
-
-      select_filter("Issues")
-      expect(page).to have_selector('.gl-pagination .page', count: 2)
     end
+
+    it_behaves_like 'header search'
   end
 end

@@ -1,23 +1,25 @@
-export const isSticky = (el, scrollY, stickyTop) => {
-  const top = el.offsetTop - scrollY;
+import { getScrollingElement } from '~/lib/utils/panels';
+import { getCoveringElementSync, withHiddenTooltips } from '~/lib/utils/viewport';
 
-  if (top <= stickyTop) {
-    el.classList.add('is-stuck');
-  } else {
-    el.classList.remove('is-stuck');
-  }
-};
+/**
+ * Scrolls the panel so that the provided element is not covered by sticky elements
+ *
+ * @param {HTMLElement} element Element that should not be covered by sticky elements
+ * @param {Number} maxIterations Limit scroll attempts for performance
+ */
+export const scrollPastCoveringElements = (element, maxIterations = 10) => {
+  withHiddenTooltips(() => {
+    for (let i = 0; i < maxIterations; i += 1) {
+      const coveringElement = getCoveringElementSync(element);
+      if (!coveringElement) return;
 
-export default (el) => {
-  if (!el) return;
+      const coveringRect = coveringElement.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      const scrollAmount = coveringRect.bottom - elementRect.top;
 
-  const computedStyle = window.getComputedStyle(el);
+      if (scrollAmount <= 0) return;
 
-  if (!/sticky/.test(computedStyle.position)) return;
-
-  const stickyTop = parseInt(computedStyle.top, 10);
-
-  document.addEventListener('scroll', () => isSticky(el, window.scrollY, stickyTop), {
-    passive: true,
+      getScrollingElement(element).scrollBy({ top: -scrollAmount, behavior: 'instant' });
+    }
   });
 };

@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe 'Internal Group access' do
+require 'spec_helper'
+
+RSpec.describe 'Internal Group access', feature_category: :system_access do
   include AccessMatchers
 
   let(:group)   { create(:group, :internal) }
@@ -14,6 +16,7 @@ describe 'Internal Group access' do
   describe "Group should be internal" do
     describe '#internal?' do
       subject { group.internal? }
+
       it { is_expected.to be_truthy }
     end
   end
@@ -21,9 +24,16 @@ describe 'Internal Group access' do
   describe 'GET /groups/:path' do
     subject { group_path(group) }
 
-    it { is_expected.to be_allowed_for(:admin) }
+    context 'when admin mode is enabled', :enable_admin_mode do
+      it { is_expected.to be_allowed_for(:admin) }
+    end
+
+    context 'when admin mode is disabled' do
+      it { is_expected.to be_allowed_for(:admin) }
+    end
+
     it { is_expected.to be_allowed_for(:owner).of(group) }
-    it { is_expected.to be_allowed_for(:master).of(group) }
+    it { is_expected.to be_allowed_for(:maintainer).of(group) }
     it { is_expected.to be_allowed_for(:developer).of(group) }
     it { is_expected.to be_allowed_for(:reporter).of(group) }
     it { is_expected.to be_allowed_for(:guest).of(group) }
@@ -33,12 +43,19 @@ describe 'Internal Group access' do
     it { is_expected.to be_denied_for(:visitor) }
   end
 
-  describe 'GET /groups/:path/issues' do
+  describe 'GET /groups/:path/-/issues' do
     subject { issues_group_path(group) }
 
-    it { is_expected.to be_allowed_for(:admin) }
+    context 'when admin mode is enabled', :enable_admin_mode do
+      it { is_expected.to be_allowed_for(:admin) }
+    end
+
+    context 'when admin mode is disabled' do
+      it { is_expected.to be_allowed_for(:admin) }
+    end
+
     it { is_expected.to be_allowed_for(:owner).of(group) }
-    it { is_expected.to be_allowed_for(:master).of(group) }
+    it { is_expected.to be_allowed_for(:maintainer).of(group) }
     it { is_expected.to be_allowed_for(:developer).of(group) }
     it { is_expected.to be_allowed_for(:reporter).of(group) }
     it { is_expected.to be_allowed_for(:guest).of(group) }
@@ -48,13 +65,21 @@ describe 'Internal Group access' do
     it { is_expected.to be_denied_for(:visitor) }
   end
 
-  describe 'GET /groups/:path/merge_requests' do
+  describe 'GET /groups/:path/-/merge_requests' do
     let(:project) { create(:project, :internal, :repository, group: group) }
+
     subject { merge_requests_group_path(group) }
 
-    it { is_expected.to be_allowed_for(:admin) }
+    context 'when admin mode is enabled', :enable_admin_mode do
+      it { is_expected.to be_allowed_for(:admin) }
+    end
+
+    context 'when admin mode is disabled' do
+      it { is_expected.to be_allowed_for(:admin) }
+    end
+
     it { is_expected.to be_allowed_for(:owner).of(group) }
-    it { is_expected.to be_allowed_for(:master).of(group) }
+    it { is_expected.to be_allowed_for(:maintainer).of(group) }
     it { is_expected.to be_allowed_for(:developer).of(group) }
     it { is_expected.to be_allowed_for(:reporter).of(group) }
     it { is_expected.to be_allowed_for(:guest).of(group) }
@@ -64,12 +89,19 @@ describe 'Internal Group access' do
     it { is_expected.to be_denied_for(:visitor) }
   end
 
-  describe 'GET /groups/:path/group_members' do
+  describe 'GET /groups/:path/-/group_members' do
     subject { group_group_members_path(group) }
 
-    it { is_expected.to be_allowed_for(:admin) }
+    context 'when admin mode is enabled', :enable_admin_mode do
+      it { is_expected.to be_allowed_for(:admin) }
+    end
+
+    context 'when admin mode is disabled' do
+      it { is_expected.to be_allowed_for(:admin) }
+    end
+
     it { is_expected.to be_allowed_for(:owner).of(group) }
-    it { is_expected.to be_allowed_for(:master).of(group) }
+    it { is_expected.to be_allowed_for(:maintainer).of(group) }
     it { is_expected.to be_allowed_for(:developer).of(group) }
     it { is_expected.to be_allowed_for(:reporter).of(group) }
     it { is_expected.to be_allowed_for(:guest).of(group) }
@@ -79,12 +111,19 @@ describe 'Internal Group access' do
     it { is_expected.to be_denied_for(:visitor) }
   end
 
-  describe 'GET /groups/:path/edit' do
+  describe 'GET /groups/:path/-/edit' do
     subject { edit_group_path(group) }
 
-    it { is_expected.to be_allowed_for(:admin) }
+    context 'when admin mode is enabled', :enable_admin_mode do
+      it { is_expected.to be_allowed_for(:admin) }
+    end
+
+    context 'when admin mode is disabled' do
+      it { is_expected.to be_denied_for(:admin) }
+    end
+
     it { is_expected.to be_allowed_for(:owner).of(group) }
-    it { is_expected.to be_denied_for(:master).of(group) }
+    it { is_expected.to be_denied_for(:maintainer).of(group) }
     it { is_expected.to be_denied_for(:developer).of(group) }
     it { is_expected.to be_denied_for(:reporter).of(group) }
     it { is_expected.to be_denied_for(:guest).of(group) }

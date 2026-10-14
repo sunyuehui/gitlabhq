@@ -1,11 +1,8 @@
-- if current_user
-  .js-file-fork-suggestion-section.file-fork-suggestion.hidden
-    %span.file-fork-suggestion-note
-      You're not allowed to
-      %span.js-file-fork-suggestion-section-action
-        edit
-      files in this project directly. Please fork this project,
-      make your changes there, and submit a merge request.
-    = link_to 'Fork', nil, method: :post, class: 'js-fork-suggestion-button btn btn-grouped btn-inverted btn-new'
-    %button.js-cancel-fork-suggestion-button.btn.btn-grouped{ type: 'button' }
-      Cancel
+- message_base = s_("ForkSuggestion|You can’t %{edit_start}edit%{edit_end} files directly in this project. Fork this project and submit a merge request with your changes.").html_safe
+- message = message_base.html_safe % { edit_start: '<span class="js-file-fork-suggestion-section-action">'.html_safe, edit_end: '</span>'.html_safe }
+.js-file-fork-suggestion-section.file-fork-suggestion.hidden
+  %span.file-fork-suggestion-note= message
+  = render Pajamas::ButtonComponent.new(type: :submit, variant: :confirm, category: :secondary, button_options: { class: "js-fork-suggestion-button btn-grouped" }) do
+    = s_('ForkSuggestion|Fork')
+  = render Pajamas::ButtonComponent.new(button_options: { class: "js-cancel-fork-suggestion-button btn-grouped" }) do
+    = s_('ForkSuggestion|Cancel')

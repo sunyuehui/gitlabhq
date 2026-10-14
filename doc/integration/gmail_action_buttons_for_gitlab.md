@@ -1,22 +1,43 @@
-# Gmail actions buttons for GitLab
+---
+stage: Plan
+group: Work Items
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Gmail actions
+description: "Configure Gmail actions for GitLab notifications."
+---
 
-GitLab supports [Google actions in email](https://developers.google.com/gmail/markup/actions/actions-overview).
+{{< details >}}
 
-If correctly setup, emails that require an action will be marked in Gmail.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-![gmail_actions_button.png](img/gmail_action_buttons_for_gitlab.png)
+{{< /details >}}
 
-To get this functioning, you need to be registered with Google.
-[See how to register with Google in this document.](https://developers.google.com/gmail/markup/registering-with-google)
+GitLab supports [Google actions in email](https://developers.google.com/workspace/gmail/markup/actions/actions-overview).
+When you configure this integration, emails that require an action are marked in Gmail.
 
-*This process has a lot of steps so make sure that you fulfill all requirements set by Google.*
-*Your application will be rejected by Google if you fail to do so.*
+To get this functioning, you must be registered with Google. For instructions, see
+[Register with Google](https://developers.google.com/workspace/gmail/markup/registering-with-google).
 
-Pay close attention to:
+This process has many steps. Make sure that you fulfill all requirements set by
+Google to avoid your application being rejected by Google.
 
-* Email account used by GitLab to send notification emails needs to have "Consistent history of sending a high volume of mail from your domain (order of hundred emails a day minimum to Gmail) for a few weeks at least".
-* "A very very low rate of spam complaints from users."
-* Emails must be authenticated via DKIM or SPF
-* Before sending the final form("Gmail Schema Whitelist Request"), you must send a real email from your production server. This means that you will have to find a way to send this email from the email address you are registering. You can do this by, for example, forwarding the real email from the email address you are registering or going into the rails console on the GitLab server and triggering the email sending from there.
+In particular, note:
 
-You can check how it looks going through all the steps laid out in the "Registering with Google" doc in [this GitLab.com issue](https://gitlab.com/gitlab-org/gitlab-ce/issues/1517).
+<!-- vale gitlab_base.InclusiveLanguage = NO -->
+
+- The email account used by GitLab to send notification emails must:
+  - Have a "Consistent history of sending a high volume of mail from your domain
+    (order of hundred emails a day minimum to Gmail) for a few weeks at least".
+  - Have a very low rate of spam complaints from users.
+- Emails must be authenticated with DKIM or SPF.
+- Before sending the final form (**Gmail Schema Whitelist Request**), you must
+  send a real email from your production server. This means that you must find
+  a way to send this email from the email address you are registering. You can
+  do this by forwarding the real email from the email address you are
+  registering. You can also go into the Rails console on the GitLab server and
+  trigger sending the email from there.
+
+<!-- vale gitlab_base.InclusiveLanguage = YES -->
+
+You can check how it looks going through all the steps laid out in the "Registering with Google" doc in [this GitLab.com issue](https://gitlab.com/gitlab-org/gitlab-foss/-/issues/1517).

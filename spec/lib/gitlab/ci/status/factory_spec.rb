@@ -1,17 +1,19 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Status::Factory do
+RSpec.describe Gitlab::Ci::Status::Factory, feature_category: :continuous_integration do
   let(:user) { create(:user) }
   let(:fabricated_status) { factory.fabricate! }
   let(:factory) { described_class.new(resource, user) }
 
   context 'when object has a core status' do
-    HasStatus::AVAILABLE_STATUSES.each do |simple_status|
+    Ci::HasStatus::AVAILABLE_STATUSES.each do |simple_status|
       context "when simple core status is #{simple_status}" do
         let(:resource) { double('resource', status: simple_status) }
 
         let(:expected_status) do
-          Gitlab::Ci::Status.const_get(simple_status.capitalize)
+          Gitlab::Ci::Status.const_get(simple_status.to_s.camelize, false)
         end
 
         it "fabricates a core status #{simple_status}" do
@@ -72,7 +74,7 @@ describe Gitlab::Ci::Status::Factory do
       end
 
       it 'delegates to core status' do
-        expect(fabricated_status.text).to eq 'passed'
+        expect(fabricated_status.text).to eq 'Passed'
       end
 
       it 'latest matches status becomes a status name' do
@@ -102,7 +104,7 @@ describe Gitlab::Ci::Status::Factory do
       end
 
       it 'delegates to core status' do
-        expect(fabricated_status.text).to eq 'passed'
+        expect(fabricated_status.text).to eq 'Passed'
       end
 
       it 'matches correct core status' do
@@ -130,6 +132,16 @@ describe Gitlab::Ci::Status::Factory do
       end
 
       it_behaves_like 'compound decorator factory'
+    end
+  end
+
+  context 'behaviour of FactoryBot traits that create associations' do
+    context 'creating a namespace with an associated aggregation_schedule record' do
+      it 'creates only one Namespace record and one Namespace::AggregationSchedule record' do
+        expect { create(:namespace, :with_aggregation_schedule) }
+          .to change { Namespace.count }.by(1)
+          .and change { Namespace::AggregationSchedule.count }.by(1)
+      end
     end
   end
 end

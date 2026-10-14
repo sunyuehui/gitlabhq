@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe ContainerRegistry::Path do
+RSpec.describe ContainerRegistry::Path do
   subject { described_class.new(path) }
 
   describe '#components' do
@@ -17,8 +19,8 @@ describe ContainerRegistry::Path do
 
       it 'return all project path like node in reverse order' do
         expect(subject.nodes).to eq %w[path/to/some/project
-                                       path/to/some
-                                       path/to]
+          path/to/some
+          path/to]
       end
     end
 
@@ -86,6 +88,24 @@ describe ContainerRegistry::Path do
 
       it { is_expected.to be_valid }
     end
+
+    context 'when path contains double underscore' do
+      let(:path) { 'my/repository__name' }
+
+      it { is_expected.to be_valid }
+    end
+
+    context 'when path contains invalid separator with dot' do
+      let(:path) { 'some/registry-.name' }
+
+      it { is_expected.not_to be_valid }
+    end
+
+    context 'when path contains invalid separator with underscore' do
+      let(:path) { 'some/registry._name' }
+
+      it { is_expected.not_to be_valid }
+    end
   end
 
   describe '#has_repository?' do
@@ -123,8 +143,8 @@ describe ContainerRegistry::Path do
       let(:path) { 'some_group/some_project' }
 
       before do
-        create(:project, group: group, name: 'some_project')
-        create(:project, name: 'some_project')
+        create(:project, group: group, path: 'some_project')
+        create(:project, path: 'some_project')
       end
 
       it 'returns a correct project' do
@@ -140,9 +160,20 @@ describe ContainerRegistry::Path do
       end
     end
 
+    context 'when initialized with a project' do
+      subject { described_class.new(path, project: project) }
+
+      let(:project) { create(:project) }
+      let(:path) { 'any_path' }
+
+      it 'returns initialized project' do
+        expect(subject.repository_project).to eq project
+      end
+    end
+
     context 'when matching multi-level path' do
       let(:project) do
-        create(:project, group: group, name: 'some_project')
+        create(:project, group: group, path: 'some_project')
       end
 
       context 'when using the zero-level path' do
@@ -192,7 +223,7 @@ describe ContainerRegistry::Path do
       let(:group) { create(:group, path: 'Some_Group') }
 
       before do
-        create(:project, group: group, name: 'some_project')
+        create(:project, group: group, path: 'some_project')
       end
 
       context 'when project path equal repository path' do
@@ -235,7 +266,7 @@ describe ContainerRegistry::Path do
       let(:group) { create(:group, path: 'SomeGroup') }
 
       before do
-        create(:project, group: group, name: 'MyProject')
+        create(:project, group: group, path: 'MyProject')
       end
 
       it 'returns downcased project path' do

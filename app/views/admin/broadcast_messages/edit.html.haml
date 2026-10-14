@@ -1,4 +1,6 @@
-- breadcrumb_title "Messages"
-- page_title "Broadcast Messages"
+- add_to_breadcrumbs _("Messages"), admin_broadcast_messages_path
+- add_to_breadcrumbs @broadcast_message.id, edit_admin_broadcast_message_path(@broadcast_message)
+- breadcrumb_title _("Edit")
+- page_title _("Broadcast Messages")
 
-= render 'form'
+#js-broadcast-message{ data: broadcast_message_data(@broadcast_message) }

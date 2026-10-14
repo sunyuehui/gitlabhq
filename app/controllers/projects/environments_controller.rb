@@ -1,92 +1,128 @@
+# frozen_string_literal: true
+
 class Projects::EnvironmentsController < Projects::ApplicationController
+  include ProductAnalyticsTracking
+  include KasCookie
+
+  MIN_SEARCH_LENGTH = 3
+  ACTIVE_STATES = %i[available stopping].freeze
+  SCOPES_TO_STATES = { "active" => ACTIVE_STATES, "stopped" => %i[stopped] }.freeze
+
   layout 'project'
+
+  before_action only: [:show] do
+    push_frontend_feature_flag(:k8s_tree_view, project)
+  end
+
   before_action :authorize_read_environment!
   before_action :authorize_create_environment!, only: [:new, :create]
-  before_action :authorize_create_deployment!, only: [:stop]
-  before_action :authorize_update_environment!, only: [:edit, :update]
+  before_action :authorize_stop_environment!, only: [:stop]
+  before_action :authorize_update_environment!, only: [:edit, :update, :cancel_auto_stop]
   before_action :authorize_admin_environment!, only: [:terminal, :terminal_websocket_authorize]
-  before_action :environment, only: [:show, :edit, :update, :stop, :terminal, :terminal_websocket_authorize, :metrics]
+  before_action :environment,
+    only: [:show, :edit, :update, :stop, :terminal, :terminal_websocket_authorize, :cancel_auto_stop, :k8s]
   before_action :verify_api_request!, only: :terminal_websocket_authorize
+  before_action :expire_etag_cache, only: [:index], unless: -> { request.format.json? }
+  before_action :set_kas_cookie, only: [:edit, :new, :show, :k8s], if: -> { current_user && request.format.html? }
+  before_action :ensure_certificate_based_clusters_enabled!, only: [:terminal]
+  after_action :expire_etag_cache, only: [:cancel_auto_stop]
+
+  track_event :index, :folder, :show, :new, :edit, :create, :update, :stop, :cancel_auto_stop, :terminal, :k8s,
+    name: 'users_visiting_environments_pages'
+
+  feature_category :continuous_delivery
+  urgency :low
 
   def index
-    @environments = project.environments
-      .with_state(params[:scope] || :available)
+    @project = ProjectPresenter.new(project, current_user: current_user)
 
     respond_to do |format|
       format.html
       format.json do
-        Gitlab::PollingInterval.set_header(response, interval: 3_000)
+        states = SCOPES_TO_STATES.fetch(permitted_params[:scope], ACTIVE_STATES)
+        @environments = search_environments.with_state(states)
 
+        environments_count_by_state = search_environments.count_by_state
+
+        Gitlab::PollingInterval.set_header(response, interval: 3_000)
         render json: {
-          environments: EnvironmentSerializer
-            .new(project: @project, current_user: @current_user)
-            .with_pagination(request, response)
-            .within_folders
-            .represent(@environments),
-          available_count: project.environments.available.count,
-          stopped_count: project.environments.stopped.count
+          environments: serialize_environments(request, response, permitted_params[:nested]),
+          review_app: serialize_review_app,
+          can_stop_stale_environments: can?(current_user, :stop_environment, @project),
+          available_count: environments_count_by_state[:available],
+          active_count: environments_count_by_state[:available] + environments_count_by_state[:stopping],
+          stopped_count: environments_count_by_state[:stopped]
         }
       end
     end
   end
 
+  # Returns all environments for a given folder
+  # rubocop: disable CodeReuse/ActiveRecord
   def folder
-    folder_environments = project.environments.where(environment_type: params[:id])
-    @environments = folder_environments.with_state(params[:scope] || :available)
-      .order(:name)
+    @folder = permitted_params[:id]
 
     respond_to do |format|
       format.html
       format.json do
+        states = SCOPES_TO_STATES.fetch(permitted_params[:scope], ACTIVE_STATES)
+        folder_environments = search_environments(type: permitted_params[:id])
+
+        @environments = folder_environments.with_state(states)
+          .order(:name)
+
         render json: {
-          environments: EnvironmentSerializer
-            .new(project: @project, current_user: @current_user)
-            .with_pagination(request, response)
-            .represent(@environments),
+          environments: serialize_environments(request, response),
           available_count: folder_environments.available.count,
+          active_count: folder_environments.active.count,
           stopped_count: folder_environments.stopped.count
         }
       end
     end
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
-  def show
-    @deployments = environment.deployments.order(id: :desc).page(params[:page])
-  end
+  def show; end
 
   def new
     @environment = project.environments.new
   end
 
-  def edit
+  def edit; end
+
+  def k8s
+    render action: :show
   end
 
   def create
     @environment = project.environments.create(environment_params)
 
     if @environment.persisted?
-      redirect_to project_environment_path(project, @environment)
+      render json: { environment: @environment, path: project_environment_path(project, @environment) }
     else
-      render :new
+      render json: { message: @environment.errors.full_messages }, status: :bad_request
     end
   end
 
   def update
     if @environment.update(environment_params)
-      redirect_to project_environment_path(project, @environment)
+      render json: { environment: @environment, path: project_environment_path(project, @environment) }
     else
-      render :edit
+      render json: { message: @environment.errors.full_messages }, status: :bad_request
     end
   end
 
   def stop
-    return render_404 unless @environment.available?
+    return render_404 unless environment_stoppable?
 
-    stop_action = @environment.stop_with_action!(current_user)
+    service_response = Environments::StopService.new(project, current_user, force: force_stop?).execute(@environment)
+    return render_403 unless service_response.success?
+
+    job = service_response[:actions].first if service_response[:actions]&.count == 1
 
     action_or_env_url =
-      if stop_action
-        polymorphic_url([project.namespace.becomes(Namespace), project, stop_action])
+      if job
+        project_job_url(project, job)
       else
         project_environment_url(project, @environment)
       end
@@ -94,6 +130,27 @@ class Projects::EnvironmentsController < Projects::ApplicationController
     respond_to do |format|
       format.html { redirect_to action_or_env_url }
       format.json { render json: { redirect_url: action_or_env_url } }
+    end
+  end
+
+  def cancel_auto_stop
+    result = Environments::ResetAutoStopService.new(project, current_user)
+                                               .execute(environment)
+
+    if result[:status] == :success
+      respond_to do |format|
+        message = _('Auto stop successfully canceled.')
+
+        format.html { redirect_back_or_default(default: { action: 'show' }, options: { notice: message }) }
+        format.json { render json: { message: message }, status: :ok }
+      end
+    else
+      respond_to do |format|
+        message = result[:message]
+
+        format.html { redirect_back_or_default(default: { action: 'show' }, options: { alert: message }) }
+        format.json { render json: { message: message }, status: :unprocessable_entity }
+      end
     end
   end
 
@@ -112,46 +169,112 @@ class Projects::EnvironmentsController < Projects::ApplicationController
     terminal = environment.terminals.try(:first)
     if terminal
       set_workhorse_internal_api_content_type
-      render json: Gitlab::Workhorse.terminal_websocket(terminal)
+      render json: Gitlab::Workhorse.channel_websocket(terminal)
     else
-      render text: 'Not found', status: 404
+      render html: 'Not found', status: :not_found
     end
   end
 
-  def metrics
-    # Currently, this acts as a hint to load the metrics details into the cache
-    # if they aren't there already
-    @metrics = environment.metrics || {}
-
-    respond_to do |format|
-      format.html
-      format.json do
-        render json: @metrics, status: @metrics.any? ? :ok : :no_content
-      end
-    end
-  end
-
-  def additional_metrics
+  def search
     respond_to do |format|
       format.json do
-        additional_metrics = environment.additional_metrics || {}
+        environment_names = search_environment_names
 
-        render json: additional_metrics, status: additional_metrics.any? ? :ok : :no_content
+        render json: environment_names, status: environment_names.any? ? :ok : :no_content
       end
     end
   end
 
   private
 
+  def permitted_params
+    params.permit(:id, :scope, :search, :nested, :page, :query)
+  end
+  strong_memoize_attr :permitted_params
+
+  def deployments
+    environment
+      .deployments
+      .with_environment_page_associations
+      .ordered
+      .page(permitted_params[:page])
+  end
+
   def verify_api_request!
     Gitlab::Workhorse.verify_api_request!(request.headers)
   end
 
+  def expire_etag_cache
+    # this forces to reload json content
+    Gitlab::EtagCaching::Store.new.tap do |store|
+      store.touch(project_environments_path(project, format: :json))
+    end
+  end
+
+  def allowed_environment_attributes
+    attributes = [:external_url]
+    attributes << :name if action_name == "create"
+    attributes
+  end
+
   def environment_params
-    params.require(:environment).permit(:name, :external_url)
+    params.require(:environment).permit(allowed_environment_attributes)
   end
 
   def environment
-    @environment ||= project.environments.find(params[:id])
+    @environment ||= project.environments.find(permitted_params[:id])
+  end
+
+  def search_environments(type: nil)
+    search_term = permitted_params[:search]
+    search = search_term if search_term && search_term.length >= MIN_SEARCH_LENGTH
+
+    @search_environments ||= Environments::EnvironmentsFinder.new(
+      project,
+      current_user,
+      type: type,
+      search: search
+    ).execute
+  end
+
+  def search_environment_names
+    query = permitted_params[:query]
+    return [] unless query
+
+    project.environments.for_name_like(query).pluck_names
+  end
+
+  def serialize_environments(request, response, nested = false)
+    EnvironmentSerializer
+      .new(project: @project, current_user: @current_user)
+      .tap { |serializer| serializer.within_folders if nested }
+      .with_pagination(request, response)
+      .represent(@environments)
+  end
+
+  def serialize_review_app
+    ReviewAppSetupSerializer.new(current_user: @current_user).represent(@project)
+  end
+
+  def authorize_stop_environment!
+    access_denied! unless can?(current_user, :stop_environment, environment)
+  end
+
+  def authorize_update_environment!
+    access_denied! unless can?(current_user, :update_environment, environment)
+  end
+
+  def environment_stoppable?
+    @environment.available? || (force_stop? && @environment.stopping?)
+  end
+
+  def force_stop?
+    Gitlab::Utils.to_boolean(params.permit(:force)[:force], default: false)
+  end
+
+  def ensure_certificate_based_clusters_enabled!
+    render_404 unless @project.certificate_based_clusters_enabled?
   end
 end
+
+Projects::EnvironmentsController.prepend_mod_with('Projects::EnvironmentsController')

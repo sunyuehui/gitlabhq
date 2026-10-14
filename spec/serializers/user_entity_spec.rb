@@ -1,10 +1,13 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe UserEntity do
+RSpec.describe UserEntity, feature_category: :user_profile do
   include Gitlab::Routing
 
   let(:entity) { described_class.new(user) }
-  let(:user) { create(:user) }
+  let(:user) { build_stubbed(:user) }
+
   subject { entity.as_json }
 
   it 'exposes user name and login' do

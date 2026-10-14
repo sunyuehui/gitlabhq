@@ -1,54 +1,84 @@
+# frozen_string_literal: true
+
 module Banzai
   module Pipeline
     class GfmPipeline < BasePipeline
-      # These filters convert GitLab Flavored Markdown (GFM) to HTML.
-      # The handlers defined in app/assets/javascripts/copy_as_gfm.js
-      # consequently convert that same HTML to GFM to be copied to the clipboard.
-      # Every filter that generates HTML from GFM should have a handler in
-      # app/assets/javascripts/copy_as_gfm.js, in reverse order.
+      # These filters transform GitLab Flavored Markdown (GFM) to HTML.
+      # The nodes and marks referenced in app/assets/javascripts/behaviors/markdown/editor_extensions.js
+      # consequently transform that same HTML to GFM to be copied to the clipboard.
+      # Every filter that generates HTML from GFM should have a node or mark in
+      # app/assets/javascripts/behaviors/markdown/editor_extensions.js.
       # The GFM-to-HTML-to-GFM cycle is tested in spec/features/copy_as_gfm_spec.rb.
       def self.filters
         @filters ||= FilterArray[
+          Filter::CodeLanguageFilter,
+          Filter::JsonTableFilter,
           Filter::PlantumlFilter,
+          Filter::SpacedLinkFilter,
+          Filter::IframeToImgFilter,
+          # ======== Sanitization boundary ========
+          # Items above this point must not be moved below this point, as they depend
+          # on running before SanitizationFilter and SanitizeLinkFilter for safety.
           Filter::SanitizationFilter,
-          Filter::SyntaxHighlightFilter,
-
+          Filter::SanitizeLinkFilter,
+          # =======================================
+          Filter::KrokiFilter,
+          Filter::GollumTagsFilter,
+          Filter::WikiLinkGollumFilter,
+          Filter::AttributesFilter,
+          Filter::IframeLinkFilter, # keep before <img> handling filters
+          Filter::AssetProxyFilter,
           Filter::MathFilter,
-          Filter::UploadLinkFilter,
+          Filter::ColorFilter,
+          Filter::MermaidFilter,
           Filter::VideoLinkFilter,
-          Filter::ImageLazyLoadFilter,
-          Filter::ImageLinkFilter,
-          Filter::EmojiFilter,
-          Filter::TableOfContentsFilter,
-          Filter::AutolinkFilter,
-          Filter::ExternalLinkFilter,
-
-          Filter::UserReferenceFilter,
-          Filter::IssueReferenceFilter,
-          Filter::ExternalIssueReferenceFilter,
-          Filter::MergeRequestReferenceFilter,
-          Filter::SnippetReferenceFilter,
-          Filter::CommitRangeReferenceFilter,
-          Filter::CommitReferenceFilter,
-          Filter::LabelReferenceFilter,
-          Filter::MilestoneReferenceFilter,
-
-          Filter::TaskListFilter,
+          Filter::AudioLinkFilter,
+          Filter::HeadingLocalizationFilter,
+          Filter::TableOfContentsTagFilter,
+          Filter::SuggestionFilter,
+          Filter::FootnoteFilter,
           Filter::InlineDiffFilter,
+          *reference_filters,
+          Filter::ImageLazyLoadFilter, # keep after reference filters
+          Filter::ImageLinkFilter, # keep after reference filters
+          Filter::ExternalLinkFilter, # keep after ImageLinkFilter
+          Filter::EmojiFilter,
+          Filter::CustomEmojiFilter,
+          Filter::TaskListFilter,
+          Filter::SetDirectionFilter,
+          Filter::SyntaxHighlightFilter # this filter should remain at the end
+        ]
+      end
 
-          Filter::SetDirectionFilter
+      def self.reference_filters
+        [
+          Filter::References::UserReferenceFilter,
+          Filter::References::ProjectReferenceFilter,
+          Filter::References::DesignReferenceFilter,
+          Filter::References::IssueReferenceFilter,
+          Filter::References::WorkItemReferenceFilter,
+          Filter::References::ExternalIssueReferenceFilter,
+          # keep filters that resolve issues above this line, IssueReferenceExtractionPipeline drops the rest
+          Filter::References::MergeRequestReferenceFilter,
+          Filter::References::SnippetReferenceFilter,
+          Filter::References::PersonalSnippetReferenceFilter,
+          Filter::References::CommitRangeReferenceFilter,
+          Filter::References::LabelReferenceFilter,
+          Filter::References::MilestoneReferenceFilter,
+          Filter::References::AlertReferenceFilter,
+          Filter::References::FeatureFlagReferenceFilter,
+          Filter::References::CommitReferenceFilter,
+          Filter::References::WikiPageReferenceFilter
         ]
       end
 
       def self.transform_context(context)
-        context.merge(
-          only_path: true,
+        context[:only_path] = true unless context.key?(:only_path)
 
-          # EmojiFilter
-          asset_host: Gitlab::Application.config.asset_host,
-          asset_root: Gitlab.config.gitlab.base_url
-        )
+        Filter::AssetProxyFilter.transform_context(context)
       end
     end
   end
 end
+
+Banzai::Pipeline::GfmPipeline.prepend_mod_with('Banzai::Pipeline::GfmPipeline')

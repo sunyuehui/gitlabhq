@@ -1,4 +1,6 @@
-import AccessorUtilities from '../../lib/utils/accessor';
+import AccessorUtilities from '~/lib/utils/accessor';
+
+const GL_EMOJI_VERSION = '0.3.0';
 
 const unicodeSupportTestMap = {
   // man, student (emojione does not have any of these yet), http://emojipedia.org/emoji-zwj-sequences/
@@ -13,6 +15,7 @@ const unicodeSupportTestMap = {
   horseRacing: '\u{1F3C7}\u{1F3FF}',
   // US flag, http://emojipedia.org/flags/
   flag: '\u{1F1FA}\u{1F1F8}',
+  rainbowFlag: '\u{1F3F3}\u{1F308}',
   // http://emojipedia.org/modifiers/
   skinToneModifier: [
     // spy_tone5
@@ -22,6 +25,24 @@ const unicodeSupportTestMap = {
     // angel_tone5
     '\u{1F47C}\u{1F3FF}',
   ],
+  // lime, http://emojipedia.org/emoji-15.1/
+  15.1: '\u{1F642}\u{200D}\u{2194}\u{FE0F}',
+  // jellyfish, http://emojipedia.org/unicode-15.0/
+  '15.0': '\u{1FAE8}',
+  // coral, http://emojipedia.org/unicode-14.0/
+  '14.0': '\u{1FAE0}',
+  // face_with_spiral_eyes, http://emojipedia.org/emoji-13.1/
+  13.1: '\u{1F635}\u{200D}\u{1F4AB}',
+  // lungs, http://emojipedia.org/unicode-9.0/
+  '13.0': '\u{1FAC1}',
+  // person_red_hair, http://emojipedia.org/emoji-12.1/
+  12.1: '\u{1F9D1}\u{200D}\u{1F9B0}',
+  // yawning_face, http://emojipedia.org/unicode-13.0/
+  '12.0': '\u{1F971}',
+  // smiling_face_with_hearts, http://emojipedia.org/unicode-12.0/
+  '11.0': '\u{1F970}',
+  // face_vomiting, http://emojipedia.org/unicode-10.0/
+  '10.0': '\u{1F92E}',
   // rofl, http://emojipedia.org/unicode-9.0/
   '9.0': '\u{1F923}',
   // metal, http://emojipedia.org/unicode-8.0/
@@ -51,7 +72,8 @@ const unicodeSupportTestMap = {
 function checkPixelInImageDataArray(pixelOffset, imageDataArray) {
   // `4 *` because RGBA
   const indexOffset = 4 * pixelOffset;
-  const hasColor = imageDataArray[indexOffset + 0] ||
+  const hasColor =
+    imageDataArray[indexOffset + 0] ||
     imageDataArray[indexOffset + 1] ||
     imageDataArray[indexOffset + 2];
   const isVisible = imageDataArray[indexOffset + 3];
@@ -72,23 +94,25 @@ const chromeVersion = chromeMatches && chromeMatches[1] && parseInt(chromeMatche
 const fontSize = 16;
 function generateUnicodeSupportMap(testMap) {
   const testMapKeys = Object.keys(testMap);
-  const numTestEntries = testMapKeys
-    .reduce((list, testKey) => list.concat(testMap[testKey]), []).length;
+  const numTestEntries = testMapKeys.reduce(
+    (list, testKey) => list.concat(testMap[testKey]),
+    [],
+  ).length;
 
   const canvas = document.createElement('canvas');
   (window.gl || window).testEmojiUnicodeSupportMapCanvas = canvas;
   const ctx = canvas.getContext('2d');
-  canvas.width = (2 * fontSize);
-  canvas.height = (numTestEntries * fontSize);
+  canvas.width = 2 * fontSize;
+  canvas.height = numTestEntries * fontSize;
   ctx.fillStyle = '#000000';
   ctx.textBaseline = 'middle';
-  ctx.font = `${fontSize}px "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"`;
+  ctx.font = `${fontSize}px "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"`;
   // Write each emoji to the canvas vertically
   let writeIndex = 0;
   testMapKeys.forEach((testKey) => {
     const testEntry = testMap[testKey];
     [].concat(testEntry).forEach((emojiUnicode) => {
-      ctx.fillText(emojiUnicode, 0, (writeIndex * fontSize) + (fontSize / 2));
+      ctx.fillText(emojiUnicode, 0, writeIndex * fontSize + fontSize / 2);
       writeIndex += 1;
     });
   });
@@ -103,22 +127,22 @@ function generateUnicodeSupportMap(testMap) {
     const isTestSatisfied = [].concat(testEntry).reduce((isSatisfied) => {
       // Sample along the vertical-middle for a couple of characters
       const imageData = ctx.getImageData(
-          0,
-          (readIndex * fontSize) + (fontSize / 2),
-          2 * fontSize,
-          1,
-        ).data;
+        0,
+        readIndex * fontSize + fontSize / 2,
+        2 * fontSize,
+        1,
+      ).data;
 
       let isValidEmoji = false;
       for (let currentPixel = 0; currentPixel < 64; currentPixel += 1) {
         const isLookingAtFirstChar = currentPixel < fontSize;
-        const isLookingAtSecondChar = currentPixel >= (fontSize + (fontSize / 2));
+        const isLookingAtSecondChar = currentPixel >= fontSize + fontSize / 2;
         // Check for the emoji somewhere along the row
         if (isLookingAtFirstChar && checkPixelInImageDataArray(currentPixel, imageData)) {
           isValidEmoji = true;
 
-        // Check to see that nothing is rendered next to the first character
-        // to ensure that the ZWJ sequence rendered as one piece
+          // Check to see that nothing is rendered next to the first character
+          // to ensure that the ZWJ sequence rendered as one piece
         } else if (isLookingAtSecondChar && checkPixelInImageDataArray(currentPixel, imageData)) {
           isValidEmoji = false;
           break;
@@ -141,25 +165,36 @@ function generateUnicodeSupportMap(testMap) {
 }
 
 export default function getUnicodeSupportMap() {
-  let unicodeSupportMap;
+  const isLocalStorageAvailable = AccessorUtilities.canUseLocalStorage();
+
+  let glEmojiVersionFromCache;
   let userAgentFromCache;
+  if (isLocalStorageAvailable) {
+    glEmojiVersionFromCache = window.localStorage.getItem('gl-emoji-version');
+    userAgentFromCache = window.localStorage.getItem('gl-emoji-user-agent');
+  }
 
-  const isLocalStorageAvailable = AccessorUtilities.isLocalStorageAccessSafe();
-
-  if (isLocalStorageAvailable) userAgentFromCache = window.localStorage.getItem('gl-emoji-user-agent');
-
+  let unicodeSupportMap;
   try {
     unicodeSupportMap = JSON.parse(window.localStorage.getItem('gl-emoji-unicode-support-map'));
   } catch (err) {
     // swallow
   }
 
-  if (!unicodeSupportMap || userAgentFromCache !== navigator.userAgent) {
+  if (
+    !unicodeSupportMap ||
+    glEmojiVersionFromCache !== GL_EMOJI_VERSION ||
+    userAgentFromCache !== navigator.userAgent
+  ) {
     unicodeSupportMap = generateUnicodeSupportMap(unicodeSupportTestMap);
 
     if (isLocalStorageAvailable) {
+      window.localStorage.setItem('gl-emoji-version', GL_EMOJI_VERSION);
       window.localStorage.setItem('gl-emoji-user-agent', navigator.userAgent);
-      window.localStorage.setItem('gl-emoji-unicode-support-map', JSON.stringify(unicodeSupportMap));
+      window.localStorage.setItem(
+        'gl-emoji-unicode-support-map',
+        JSON.stringify(unicodeSupportMap),
+      );
     }
   }
 

@@ -2,6 +2,67 @@
 # See https://github.com/svenfuchs/rails-i18n/tree/master/rails%2Flocale for starting points.
 
 en:
+  hello: "Hello world"
+  activerecord:
+    attributes:
+      appearance:
+        pwa_name: "PWA name"
+        pwa_short_name: "PWA short name"
+        pwa_description: "PWA description"
+        pwa_icon: "Icon"
+      incident_management/timeline_event:
+        note: 'Timeline text'
+      issue_link:
+        source: Source issue
+        target: Target issue
+      group:
+        path: Group URL
+      namespace_setting:
+        unique_project_download_limit: "Number of projects"
+        unique_project_download_limit_interval_in_seconds: "Interval (seconds)"
+      member:
+        user: "The member's email address"
+        invite_email: "The member's email address"
+      personal_access_token:
+        expires_at: "Expiration date"
+      project:
+        unsafe_import_url: "Import URL"
+      project/error_tracking_setting:
+        token: "Auth Token"
+        project: "Project"
+        api_url: "Sentry API URL"
+      project/metrics_setting:
+        external_dashboard_url: "External dashboard URL"
+      security/scan_profile_trigger/configuration:
+        configuration: "Configuration"
+      service_desk_setting:
+        project_key: "Project name suffix"
+      system_access/group_microsoft_application:
+        tenant_xid: "Tenant ID"
+        client_xid: "Client ID"
+        encrypted_client_secret: "Client secret"
+        login_endpoint: "Login API endpoint"
+        graph_endpoint: "Graph API endpoint"
+      system_access/microsoft_application:
+        tenant_xid: "Tenant ID"
+        client_xid: "Client ID"
+        encrypted_client_secret: "Client secret"
+        login_endpoint: "Login API endpoint"
+        graph_endpoint: "Graph API endpoint"
+      user/user_detail:
+        job_title: 'Job title'
+        bio: 'Bio'
+        linkedin: 'Linkedin'
+        twitter: 'Twitter'
+        location: 'Location'
+        organization: 'Organization'
+        website_url: 'Website url'
+    errors:
+      models:
+        user_preference:
+          attributes:
+            duo_default_namespace_id:
+              invalid: "specified does not allow you to execute a workflow."
   views:
     pagination:
       previous: "Prev"
@@ -40,7 +101,9 @@ en:
     formats:
       default: "%Y-%m-%d"
       long: "%B %d, %Y"
+      long_unpadded: "%B %-d, %Y"
       short: "%b %d"
+      admin: "%e %b, %Y"
     month_names:
     -
     - January
@@ -144,6 +207,8 @@ en:
     format: "%{attribute} %{message}"
     messages:
       label_already_exists_at_group_level: "already exists at group level for %{group}. Please choose another one."
+      username_exists_as_a_different_namespace: A user, alias, or group already exists with that username.
+      does_not_start_with_project_full_path: should start with the project's full path
       wrong_size: "is the wrong size (should be %{file_size})"
       size_too_small: "is too small (should be at least %{file_size})"
       size_too_big: "is too big (should be at most %{file_size})"
@@ -176,6 +241,8 @@ en:
       wrong_length:
         one: is the wrong length (should be 1 character)
         other: is the wrong length (should be %{count} characters)
+      search_chars_too_long: Search query is too long (maximum is %{count} characters)
+      search_terms_too_long: Search query is too long (maximum is %{count} terms)
       other_than: must be other than %{count}
     template:
       body: 'There were problems with the following fields:'
@@ -223,13 +290,13 @@ en:
       storage_units:
         format: "%n %u"
         units:
-          byte:
-            one: Byte
-            other: Bytes
-          gb: GB
-          kb: KB
-          mb: MB
-          tb: TB
+          byte: B
+          kb: KiB
+          mb: MiB
+          gb: GiB
+          tb: TiB
+          pb: PiB
+          eb: EiB
     percentage:
       format:
         delimiter: ''
@@ -249,4 +316,5 @@ en:
       long: "%B %d, %Y %H:%M"
       short: "%d %b %H:%M"
       timeago_tooltip: "%b %-d, %Y %-l:%M%P"
+      with_timezone: "%Y-%m-%d %H:%M:%S %z"
     pm: pm

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Identifier do
+RSpec.describe Gitlab::Identifier do
   let(:identifier) do
     Class.new { include Gitlab::Identifier }.new
   end
@@ -8,14 +10,12 @@ describe Gitlab::Identifier do
   let(:project) { create(:project) }
   let(:user) { create(:user) }
   let(:key) { create(:key, user: user) }
+  let(:deploy_token) { create(:deploy_token, user: user) }
 
   describe '#identify' do
     context 'without an identifier' do
-      it 'identifies the user using a commit' do
-        expect(identifier).to receive(:identify_using_commit)
-          .with(project, '123')
-
-        identifier.identify('', project, '123')
+      it 'returns nil' do
+        expect(identifier.identify('')).to be_nil
       end
     end
 
@@ -24,7 +24,7 @@ describe Gitlab::Identifier do
         expect(identifier).to receive(:identify_using_user)
           .with("user-#{user.id}")
 
-        identifier.identify("user-#{user.id}", project, '123')
+        identifier.identify("user-#{user.id}")
       end
     end
 
@@ -33,41 +33,16 @@ describe Gitlab::Identifier do
         expect(identifier).to receive(:identify_using_ssh_key)
           .with("key-#{key.id}")
 
-        identifier.identify("key-#{key.id}", project, '123')
+        identifier.identify("key-#{key.id}")
       end
     end
-  end
 
-  describe '#identify_using_commit' do
-    it "returns the User for an existing commit author's Email address" do
-      commit = double(:commit, author: user, author_email: user.email)
+    context 'with a deploy token identifier' do
+      it 'identifies the deploy token using a deploy token ID' do
+        expect(identifier).to receive(:identify_using_deploy_token)
+          .with("deploy-token-#{deploy_token.id}")
 
-      expect(project).to receive(:commit).with('123').and_return(commit)
-
-      expect(identifier.identify_using_commit(project, '123')).to eq(user)
-    end
-
-    it 'returns nil when no user could be found' do
-      allow(project).to receive(:commit).with('123').and_return(nil)
-
-      expect(identifier.identify_using_commit(project, '123')).to be_nil
-    end
-
-    it 'returns nil when the commit does not have an author Email' do
-      commit = double(:commit, author_email: nil)
-
-      expect(project).to receive(:commit).with('123').and_return(commit)
-
-      expect(identifier.identify_using_commit(project, '123')).to be_nil
-    end
-
-    it 'caches the found users per Email' do
-      commit = double(:commit, author: user, author_email: user.email)
-
-      expect(project).to receive(:commit).with('123').twice.and_return(commit)
-
-      2.times do
-        expect(identifier.identify_using_commit(project, '123')).to eq(user)
+        identifier.identify("deploy-token-#{deploy_token.id}")
       end
     end
   end
@@ -116,6 +91,64 @@ describe Gitlab::Identifier do
         found = identifier.identify_using_ssh_key("key-#{key.id}")
 
         expect(found).to eq(user)
+      end
+    end
+
+    context 'when key id is for a deploy key' do
+      let(:key) { create(:deploy_key, user: user) }
+
+      it 'returns nil' do
+        found = identifier.identify_using_ssh_key("key-#{key.id}")
+
+        expect(found).to be_nil
+      end
+    end
+  end
+
+  describe '#identify_using_username' do
+    it 'returns the User for an existing username in the identifier' do
+      found = identifier.identify_using_username("username-#{user.username}")
+
+      expect(found).to eq(user)
+    end
+
+    it 'returns nil for a non existing username' do
+      found = identifier.identify_using_username('username-does-not-exist')
+
+      expect(found).to be_nil
+    end
+
+    it 'caches the found users per username' do
+      expect(User).to receive(:find_by_username).once.and_call_original
+
+      2.times do
+        found = identifier.identify_using_username("username-#{user.username}")
+
+        expect(found).to eq(user)
+      end
+    end
+  end
+
+  describe '#identify_using_deploy_token' do
+    it 'returns the DeployToken for an existing ID in the identifier' do
+      found = identifier.identify_using_deploy_token("deploy-token-#{deploy_token.id}")
+
+      expect(found).to eq(deploy_token)
+    end
+
+    it 'returns nil for a non existing deploy token ID' do
+      found = identifier.identify_using_deploy_token('deploy-token--1')
+
+      expect(found).to be_nil
+    end
+
+    it 'caches the found deploy tokens per ID' do
+      expect(DeployToken).to receive(:find_by_id).once.and_call_original
+
+      2.times do
+        found = identifier.identify_using_deploy_token("deploy-token-#{deploy_token.id}")
+
+        expect(found).to eq(deploy_token)
       end
     end
   end

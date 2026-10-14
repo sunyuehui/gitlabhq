@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module CycleAnalytics
     class Permissions
@@ -10,8 +12,8 @@ module Gitlab
         production: :read_issue
       }.freeze
 
-      def self.get(*args)
-        new(*args).get
+      def self.get(...)
+        new(...).get
       end
 
       def initialize(user:, project:)
@@ -21,7 +23,7 @@ module Gitlab
       end
 
       def get
-        ::CycleAnalytics::STAGES.each do |stage|
+        Gitlab::Analytics::CycleAnalytics::DefaultStages.symbolized_stage_names.each do |stage|
           @stage_permission_hash[stage] = authorized_stage?(stage)
         end
 

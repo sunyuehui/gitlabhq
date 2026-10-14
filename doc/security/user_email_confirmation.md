@@ -1,7 +1,42 @@
-# User email confirmation at sign-up
+---
+stage: Software Supply Chain Security
+group: Authentication
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Make new users confirm email
+---
 
-Gitlab admin can enable email confirmation on sign-up, if you want to confirm all
-user emails before they are able to sign-in.
+{{< details >}}
 
-In the Admin area under **Settings** (`/admin/application_settings`), go to section
-**Sign-in Restrictions** and look for **Send confirmation email on sign-up** option.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab Self-Managed, GitLab Dedicated
+
+{{< /details >}}
+
+GitLab can be configured to require confirmation of a user's email address when
+the user signs up. When this setting is enabled, the user is unable to sign in until
+they confirm their email address.
+
+Prerequisites:
+
+- Administrator access.
+
+1. In the upper-right corner, select **Admin**.
+1. In the left sidebar, select **Settings** > **General**.
+1. Expand **New user account restrictions** and look for the **Email confirmation settings** options.
+
+## Confirmation token expiry
+
+By default, a user can confirm their account within 24 hours after the confirmation email was sent.
+After 24 hours, the confirmation token becomes invalid.
+
+## Automatically delete unconfirmed users
+
+{{< details >}}
+
+- Tier: Premium, Ultimate
+- Offering: GitLab Self-Managed, GitLab Dedicated
+
+{{< /details >}}
+
+When email confirmation is turned on, administrators can enable the setting to
+[automatically delete unconfirmed users](../administration/moderate_users.md#automatically-delete-unconfirmed-users).

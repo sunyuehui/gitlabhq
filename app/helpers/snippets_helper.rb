@@ -1,17 +1,13 @@
-module SnippetsHelper
-  def reliable_snippet_path(snippet, opts = nil)
-    if snippet.project_id?
-      project_snippet_path(snippet.project, snippet, opts)
-    else
-      snippet_path(snippet, opts)
-    end
-  end
+# frozen_string_literal: true
 
-  def download_snippet_path(snippet)
-    if snippet.project_id
-      raw_project_snippet_path(@project, snippet, inline: false)
+module SnippetsHelper
+  def snippets_upload_path(snippet, user)
+    return unless user
+
+    if snippet&.persisted?
+      upload_path('personal_snippet', id: snippet.id)
     else
-      raw_snippet_path(snippet, inline: false)
+      upload_path('user', id: user.id)
     end
   end
 
@@ -26,78 +22,77 @@ module SnippetsHelper
     end
   end
 
-  # Get an array of line numbers surrounding a matching
-  # line, bounded by min/max.
-  #
-  # @returns Array of line numbers
-  def bounded_line_numbers(line, min, max, surrounding_lines)
-    lower = line - surrounding_lines > min ? line - surrounding_lines : min
-    upper = line + surrounding_lines < max ? line + surrounding_lines : max
-    (lower..upper).to_a
+  def snippet_badge(snippet)
+    return unless attrs = snippet_badge_attributes(snippet)
+
+    icon_name, text = attrs
+
+    gl_badge_tag(text, icon: icon_name)
   end
 
-  # Returns a sorted set of lines to be included in a snippet preview.
-  # This ensures matching adjacent lines do not display duplicated
-  # surrounding code.
-  #
-  # @returns Array, unique and sorted.
-  def matching_lines(lined_content, surrounding_lines, query)
-    used_lines = []
-    lined_content.each_with_index do |line, line_number|
-      used_lines.concat bounded_line_numbers(
-        line_number,
-        0,
-        lined_content.size,
-        surrounding_lines
-      ) if line.downcase.include?(query.downcase)
+  def snippet_badge_attributes(snippet)
+    if snippet.private?
+      ['lock', _('private')]
     end
-
-    used_lines.uniq.sort
   end
 
-  # 'Chunkify' entire snippet.  Splits the snippet data into matching lines +
-  # surrounding_lines() worth of unmatching lines.
-  #
-  # @returns a hash with {snippet_object, snippet_chunks:{data,start_line}}
-  def chunk_snippet(snippet, query, surrounding_lines = 3)
-    lined_content = snippet.content.split("\n")
-    used_lines = matching_lines(lined_content, surrounding_lines, query)
+  def snippet_report_abuse_path(snippet)
+    return unless snippet.submittable_as_spam_by?(current_user)
 
-    snippet_chunk = []
-    snippet_chunks = []
-    snippet_start_line = 0
-    last_line = -1
+    mark_as_spam_snippet_path(snippet)
+  end
 
-    # Go through each used line, and add consecutive lines as a single chunk
-    # to the snippet chunk array.
-    used_lines.each do |line_number|
-      if last_line < 0
-        # Start a new chunk.
-        snippet_start_line = line_number
-        snippet_chunk << lined_content[line_number]
-      elsif last_line == line_number - 1
-        # Consecutive line, continue chunk.
-        snippet_chunk << lined_content[line_number]
-      else
-        # Non-consecutive line, add chunk to chunk array.
-        snippet_chunks << {
-          data: snippet_chunk.join("\n"),
-          start_line: snippet_start_line + 1
-        }
+  def embedded_raw_snippet_button(snippet, blob)
+    return if blob.empty? || blob.binary? || blob.stored_externally?
 
-        # Start a new chunk.
-        snippet_chunk = [lined_content[line_number]]
-        snippet_start_line = line_number
-      end
-      last_line = line_number
+    render Pajamas::ButtonComponent.new(href: gitlab_raw_snippet_blob_url(snippet, blob.path), target: '_blank',
+      button_options: { rel: 'noopener noreferrer', title: 'Open raw' }) do
+      external_snippet_icon('doc-code')
     end
-    # Add final chunk to chunk array
-    snippet_chunks << {
-      data: snippet_chunk.join("\n"),
-      start_line: snippet_start_line + 1
-    }
+  end
 
-    # Return snippet with chunk array
-    { snippet_object: snippet, snippet_chunks: snippet_chunks }
+  def embedded_snippet_download_button(snippet, blob)
+    render Pajamas::ButtonComponent.new(href: gitlab_raw_snippet_blob_url(snippet, blob.path, nil, inline: false),
+      target: '_blank', button_options: { rel: 'noopener noreferrer', title: 'Download' }) do
+      external_snippet_icon('download')
+    end
+  end
+
+  def embedded_copy_snippet_button(blob)
+    return unless blob.rendered_as_text?(ignore_errors: false)
+
+    button_options = { title: 'Copy snippet contents',
+                       onclick: "copyToClipboard('.blob-content[data-blob-id=\"#{blob.id}\"] > pre')" }
+
+    render Pajamas::ButtonComponent.new(button_options: button_options) do
+      external_snippet_icon('copy-to-clipboard')
+    end
+  end
+
+  def snippet_file_count(snippet)
+    file_count = snippet.statistics&.file_count
+
+    return unless file_count&.nonzero?
+
+    tooltip = n_('%d file', '%d files', file_count) % file_count
+
+    render Pajamas::ButtonComponent.new(
+      category: :tertiary,
+      size: :small,
+      icon: 'documents',
+      button_options: {
+        title: tooltip,
+        data: { toggle: 'tooltip', container: 'body' },
+        aria: { label: tooltip },
+        class: "file_count gl-min-h-0 gl-min-w-0 !gl-bg-transparent !gl-p-0"
+      }
+    ) do
+      concat(' ')
+      concat(file_count.to_s)
+    end
+  end
+
+  def project_snippets_award_api_path(snippet)
+    api_v4_projects_snippets_award_emoji_path(id: snippet.project.id, snippet_id: snippet.id)
   end
 end

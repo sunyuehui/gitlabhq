@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Admin::ImpersonationsController do
+RSpec.describe Admin::ImpersonationsController, feature_category: :system_access do
   let(:impersonator) { create(:admin) }
   let(:user) { create(:user) }
 
@@ -22,7 +24,7 @@ describe Admin::ImpersonationsController do
         it "responds with status 404" do
           delete :destroy
 
-          expect(response).to have_http_status(404)
+          expect(response).to have_gitlab_http_status(:not_found)
         end
 
         it "doesn't sign us in" do
@@ -40,13 +42,13 @@ describe Admin::ImpersonationsController do
         context "when the impersonator is not admin (anymore)" do
           before do
             impersonator.admin = false
-            impersonator.save
+            impersonator.save!
           end
 
           it "responds with status 404" do
             delete :destroy
 
-            expect(response).to have_http_status(404)
+            expect(response).to have_gitlab_http_status(:not_found)
           end
 
           it "doesn't sign us in as the impersonator" do
@@ -65,7 +67,7 @@ describe Admin::ImpersonationsController do
             it "responds with status 404" do
               delete :destroy
 
-              expect(response).to have_http_status(404)
+              expect(response).to have_gitlab_http_status(:not_found)
             end
 
             it "doesn't sign us in as the impersonator" do
@@ -90,6 +92,14 @@ describe Admin::ImpersonationsController do
 
                 expect(warden.user).to eq(impersonator)
               end
+
+              it 'clears token session keys' do
+                session[:bitbucket_token] = SecureRandom.hex(8)
+
+                delete :destroy
+
+                expect(session[:bitbucket_token]).to be_nil
+              end
             end
 
             # base case
@@ -99,6 +109,14 @@ describe Admin::ImpersonationsController do
               before do
                 allow(user).to receive(:temp_oauth_email?).and_return(true)
                 allow(controller).to receive(:current_user).and_return(user)
+              end
+
+              it_behaves_like "successfully stops impersonating"
+            end
+
+            context "and the impersonated user's password has expired" do
+              before do
+                user.update!(password_expires_at: 5.minutes.ago)
               end
 
               it_behaves_like "successfully stops impersonating"

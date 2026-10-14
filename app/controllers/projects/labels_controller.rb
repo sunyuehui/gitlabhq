@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class Projects::LabelsController < Projects::ApplicationController
   include ToggleSubscriptionAction
 
@@ -5,19 +7,30 @@ class Projects::LabelsController < Projects::ApplicationController
   before_action :label, only: [:edit, :update, :destroy, :promote]
   before_action :find_labels, only: [:index, :set_priorities, :remove_priority, :toggle_subscription]
   before_action :authorize_read_label!
-  before_action :authorize_admin_labels!, only: [:new, :create, :edit, :update,
-                                                 :generate, :destroy, :remove_priority,
-                                                 :set_priorities]
-  before_action :authorize_admin_group_labels!, only: [:promote]
+  before_action :authorize_create_label!, only: [:new, :create, :generate]
+  before_action :authorize_update_label!, only: [:edit, :update, :remove_priority, :set_priorities]
+  before_action :authorize_delete_label!, only: [:destroy]
+  before_action :authorize_promote_label!, only: [:promote]
 
   respond_to :js, :html
 
-  def index
-    @prioritized_labels = @available_labels.prioritized(@project)
-    @labels = @available_labels.unprioritized(@project).page(params[:page])
+  feature_category :team_planning
+  urgency :low
 
+  def index
     respond_to do |format|
-      format.html
+      format.html do
+        @prioritized_labels = if label_filter_params[:archived] == 'true'
+                                Label.none
+                              else
+                                @available_labels.prioritized(@project)
+                              end
+
+        @labels = @available_labels.unprioritized(@project).page(permitted_params[:page])
+        # preload group, project, and subscription data
+        Preloaders::LabelsPreloader.new(@prioritized_labels, current_user, @project).preload_all
+        Preloaders::LabelsPreloader.new(@labels, current_user, @project).preload_all
+      end
       format.json do
         render json: LabelSerializer.new.represent_appearance(@available_labels)
       end
@@ -29,7 +42,7 @@ class Projects::LabelsController < Projects::ApplicationController
   end
 
   def create
-    @label = Labels::CreateService.new(label_params).execute(project: @project)
+    @label = Labels::CreateService.new(current_user, label_params).execute(project: @project)
 
     if @label.valid?
       respond_to do |format|
@@ -39,16 +52,15 @@ class Projects::LabelsController < Projects::ApplicationController
     else
       respond_to do |format|
         format.html { render :new }
-        format.json { render json: { message: @label.errors.messages }, status: 400 }
+        format.json { render json: { message: @label.errors.messages }, status: :bad_request }
       end
     end
   end
 
-  def edit
-  end
+  def edit; end
 
   def update
-    @label = Labels::UpdateService.new(label_params).execute(@label)
+    @label = Labels::UpdateService.new(current_user, label_params).execute(@label)
 
     if @label.valid?
       redirect_to project_labels_path(@project)
@@ -60,9 +72,10 @@ class Projects::LabelsController < Projects::ApplicationController
   def generate
     Gitlab::IssuesLabels.generate(@project)
 
-    if params[:redirect] == 'issues'
+    case permitted_params[:redirect]
+    when 'issues'
       redirect_to project_issues_path(@project)
-    elsif params[:redirect] == 'merge_requests'
+    when 'merge_requests'
       redirect_to project_merge_requests_path(@project)
     else
       redirect_to project_labels_path(@project)
@@ -70,17 +83,20 @@ class Projects::LabelsController < Projects::ApplicationController
   end
 
   def destroy
-    @label.destroy
-    @labels = find_labels
+    label = Labels::DestroyService.new(current_user, @label).execute
 
-    redirect_to project_labels_path(@project),
-                status: 302,
-                notice: 'Label was removed'
+    if label.destroyed?
+      redirect_to project_labels_path(@project), status: :found,
+        notice: format(_('%{label_name} was removed'), label_name: label.name)
+    else
+      redirect_to project_labels_path(@project), status: :found,
+        alert: label.errors.full_messages.to_sentence
+    end
   end
 
   def remove_priority
     respond_to do |format|
-      label = @available_labels.find(params[:id])
+      label = @available_labels.find(permitted_params[:id])
 
       if label.unprioritize!(project)
         format.json { render json: label }
@@ -90,10 +106,11 @@ class Projects::LabelsController < Projects::ApplicationController
     end
   end
 
+  # rubocop: disable CodeReuse/ActiveRecord
   def set_priorities
     Label.transaction do
-      available_labels_ids = @available_labels.where(id: params[:label_ids]).pluck(:id)
-      label_ids = params[:label_ids].select { |id| available_labels_ids.include?(id.to_i) }
+      available_labels_ids = @available_labels.where(id: permitted_params[:label_ids]).pluck(:id)
+      label_ids = permitted_params[:label_ids].select { |id| available_labels_ids.include?(id.to_i) }
 
       label_ids.each_with_index do |label_id, index|
         label = @available_labels.find(label_id)
@@ -105,18 +122,22 @@ class Projects::LabelsController < Projects::ApplicationController
       format.json { render json: { message: 'success' } }
     end
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def promote
     promote_service = Labels::PromoteService.new(@project, @current_user)
 
     begin
       return render_404 unless promote_service.execute(@label)
+
+      flash[:notice] = flash_notice_for(@label, @project.group)
       respond_to do |format|
         format.html do
-          redirect_to(project_labels_path(@project),
-                      notice: 'Label was promoted to a Group Label')
+          redirect_to(project_labels_path(@project, page: permitted_params[:page]), status: :see_other)
         end
-        format.js
+        format.json do
+          render json: { url: project_labels_path(@project, page: permitted_params[:page]) }
+        end
       end
     rescue ActiveRecord::RecordInvalid => e
       Gitlab::AppLogger.error "Failed to promote label \"#{@label.title}\" to group label"
@@ -124,37 +145,76 @@ class Projects::LabelsController < Projects::ApplicationController
 
       respond_to do |format|
         format.html do
-          redirect_to(project_labels_path(@project),
-                      notice: 'Failed to promote label due to internal error. Please contact administrators.')
+          redirect_to(
+            project_labels_path(@project),
+            notice: _('Failed to promote label due to internal error. Please contact administrators.'))
         end
         format.js
       end
     end
   end
 
+  def flash_notice_for(label, group)
+    safe_link = view_context.link_to('<u>group label</u>'.html_safe, group_labels_path(group))
+    view_context.safe_join([ERB::Util.html_escape(label.title), " promoted to ", safe_link, "."])
+  end
+
   protected
 
+  def permitted_params
+    params.permit(:page, :redirect, :sort, :id, label_ids: [])
+  end
+
   def label_params
-    params.require(:label).permit(:title, :description, :color)
+    allowed = [:title, :description, :color, :archived]
+    allowed << :lock_on_merge if @project.supports_lock_on_merge?
+
+    params.require(:label).permit(allowed)
   end
 
   def label
-    @label ||= @project.labels.find(params[:id])
+    @label ||= @project.labels.find(permitted_params[:id])
   end
 
   def subscribable_resource
-    @available_labels.find(params[:id])
+    @available_labels.find(permitted_params[:id])
+  end
+
+  def label_filter_params
+    params.permit(:archived, :search, :subscribed)
   end
 
   def find_labels
-    @available_labels ||= LabelsFinder.new(current_user, project_id: @project.id).execute
+    archived_param = label_filter_params[:archived].nil? ? false : label_filter_params[:archived]
+
+    @available_labels ||= LabelsFinder.new(
+      current_user,
+      project_id: @project.id,
+      include_ancestor_groups: true,
+      search: label_filter_params[:search],
+      subscribed: label_filter_params[:subscribed],
+      archived: archived_param,
+      sort: sort
+    ).execute
   end
 
-  def authorize_admin_labels!
-    return render_404 unless can?(current_user, :admin_label, @project)
+  def sort
+    @sort ||= permitted_params[:sort] || 'name_asc'
   end
 
-  def authorize_admin_group_labels!
-    return render_404 unless can?(current_user, :admin_label, @project.group)
+  def authorize_create_label!
+    render_404 unless can?(current_user, :create_label, @project)
+  end
+
+  def authorize_update_label!
+    render_404 unless can?(current_user, :update_label, @project)
+  end
+
+  def authorize_delete_label!
+    render_404 unless can?(current_user, :delete_label, @project)
+  end
+
+  def authorize_promote_label!
+    render_404 unless can?(current_user, :promote_label, @project.group)
   end
 end

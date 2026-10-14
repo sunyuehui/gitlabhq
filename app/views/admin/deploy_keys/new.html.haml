@@ -1,10 +1,11 @@
-- page_title 'New Deploy Key'
-%h3.page-title New public deploy key
-%hr
+- add_to_breadcrumbs _('Deploy keys'), admin_deploy_keys_path
+- page_title _('New deploy key')
 
-%div
-  = form_for [:admin, @deploy_key], html: { class: 'deploy-key-form form-horizontal' } do |f|
-    = render partial: 'shared/deploy_keys/form', locals: { form: f, deploy_key: @deploy_key }
-    .form-actions
-      = f.submit 'Create', class: 'btn-create btn'
-      = link_to 'Cancel', admin_deploy_keys_path, class: 'btn btn-cancel'
+= render ::Layouts::PageHeadingComponent.new(_('New public deploy key'))
+
+= gitlab_ui_form_for [:admin, @deploy_key], html: { class: 'deploy-key-form' } do |f|
+  = render partial: 'shared/deploy_keys/form', locals: { form: f, deploy_key: @deploy_key }
+  .gl-flex.gl-gap-3
+    = f.submit 'Create', pajamas_button: true
+    = render Pajamas::ButtonComponent.new(href: admin_deploy_keys_path) do
+      = _('Cancel')

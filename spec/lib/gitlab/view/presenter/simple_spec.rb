@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::View::Presenter::Simple do
+RSpec.describe Gitlab::View::Presenter::Simple do
   let(:project) { double(:project, user: 'John Doe') }
   let(:presenter_class) do
     Class.new(described_class)

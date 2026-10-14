@@ -1,29 +1,28 @@
+# frozen_string_literal: true
+
 module Gitlab
   module ImportExport
     class MembersMapper
-      def initialize(exported_members:, user:, project:)
-        @exported_members = user.admin? ? exported_members : []
+      def initialize(exported_members:, user:, importable:, default_member: true)
         @user = user
-        @project = project
+        @importable = importable
+        @exported_members = determine_exported_members(exported_members)
 
         # This needs to run first, as second call would be from #map
-        # which means project members already exist.
-        ensure_default_member!
+        # which means Project/Group members already exist.
+        # Skip this when importing single relations to avoid destroying project members
+        ensure_default_member! if default_member
       end
 
       def map
         @map ||=
-          begin
-            @exported_members.inject(missing_keys_tracking_hash) do |hash, member|
-              if member['user']
-                old_user_id = member['user']['id']
-                existing_user = User.where(find_project_user_query(member)).first
-                hash[old_user_id] = existing_user.id if existing_user && add_team_member(member, existing_user)
-              else
-                add_team_member(member)
-              end
-
-              hash
+          @exported_members.each_with_object(missing_keys_tracking_hash) do |member, hash|
+            if member['user']
+              old_user_id = member['user']['id']
+              existing_user_id = existing_users_email_map[get_email(member)]
+              hash[old_user_id] = existing_user_id if existing_user_id && add_team_member(member, existing_user_id)
+            else
+              add_team_member(member)
             end
           end
       end
@@ -32,11 +31,22 @@ module Gitlab
         @user.id
       end
 
-      def include?(old_author_id)
-        map.keys.include?(old_author_id) && map[old_author_id] != default_user_id
+      def include?(old_user_id)
+        map.has_key?(old_user_id)
       end
 
       private
+
+      def determine_exported_members(exported_members)
+        return [] unless @user.admin?
+        return [] unless can_add_members?
+
+        exported_members
+      end
+
+      def can_add_members?
+        ::Import::MemberLimitCheckService.new(@importable).execute.success?
+      end
 
       def missing_keys_tracking_hash
         Hash.new do |_, key|
@@ -45,32 +55,148 @@ module Gitlab
       end
 
       def ensure_default_member!
-        @project.project_members.destroy_all
+        return if @user.project_bot?
+        return if user_already_member?
+        return unless can_add_members?
 
-        ProjectMember.create!(user: @user, access_level: ProjectMember::MASTER, source_id: @project.id, importing: true)
+        relation_class.create!(user: @user, access_level: importer_access_level, source_id: @importable.id, importing: true)
+      rescue ActiveRecord::RecordInvalid => e
+        # Handle duplicate member validation error during retry scenarios
+        log_member_addition_failure({ 'user_id' => @user.id, 'access_level' => importer_access_level }, [e.message])
+      rescue StandardError => e
+        raise e, "Error adding importer user to #{@importable.class} members. #{e.message}"
       end
 
-      def add_team_member(member, existing_user = nil)
-        member['user'] = existing_user
+      def importer_access_level
+        if @importable.parent.is_a?(::Group) && !@user.admin?
+          lvl = @importable.parent.max_member_access_for_user(@user, only_concrete_membership: true)
+          [lvl, highest_access_level].min
+        else
+          highest_access_level
+        end
+      end
 
-        ProjectMember.create(member_hash(member)).persisted?
+      def user_already_member?
+        member = @importable.members&.first
+
+        member&.user == @user && member.access_level >= highest_access_level
+      end
+
+      # Returns {email => user_id} hash where user_id is an ID at current instance
+      def existing_users_email_map
+        @existing_users_email_map ||= begin
+          emails = @exported_members.map { |member| get_email(member) }
+
+          User.by_user_email(emails).pluck(:email, :id).to_h
+        end
+      end
+
+      # Returns {user_id => email} hash where user_id is an ID at source "old" instance
+      def exported_members_email_map
+        @exported_members_email_map ||= begin
+          result = {}
+          @exported_members.each do |member|
+            email = get_email(member)
+
+            next unless email
+
+            result[member.dig('user', 'id')] = email
+          end
+
+          result
+        end
+      end
+
+      def get_email(member_data)
+        return unless member_data['user']
+
+        member_data.dig('user', 'public_email') || member_data.dig('user', 'email')
+      end
+
+      def add_team_member(member, existing_user_id = nil)
+        return true if existing_user_id && @importable.members.exists?(user_id: existing_user_id)
+
+        member_hash = member_hash(member)
+        if existing_user_id
+          member_hash.delete('user')
+          member_hash['user_id'] = existing_user_id
+        end
+
+        member = relation_class.create(member_hash)
+
+        if member.persisted?
+          log_member_addition(member_hash)
+
+          true
+        else
+          log_member_addition_failure(member_hash, member.errors.full_messages)
+
+          false
+        end
       end
 
       def member_hash(member)
-        parsed_hash(member).merge('source_id' => @project.id, 'importing' => true)
+        result = parsed_hash(member).merge(
+          'source_id' => @importable.id,
+          'importing' => true,
+          'access_level' => [member['access_level'], highest_access_level].min
+        ).except('user_id')
+
+        if result['created_by_id']
+          created_by_email = exported_members_email_map[result['created_by_id']]
+
+          result['created_by_id'] = existing_users_email_map[created_by_email]
+        end
+
+        result
       end
 
       def parsed_hash(member)
         Gitlab::ImportExport::AttributeCleaner.clean(relation_hash: member.deep_stringify_keys,
-                                                     relation_class: ProjectMember)
+          relation_class: relation_class)
       end
 
-      def find_project_user_query(member)
-        user_arel[:email].eq(member['user']['email']).or(user_arel[:username].eq(member['user']['username']))
+      def relation_class
+        case @importable
+        when ::Project
+          ProjectMember
+        when ::Group
+          GroupMember
+        end
       end
 
-      def user_arel
-        @user_arel ||= User.arel_table
+      def highest_access_level
+        return relation_class::OWNER if relation_class == GroupMember
+
+        relation_class::MAINTAINER
+      end
+
+      def log_member_addition(member_hash)
+        log_params = base_log_params(member_hash)
+        log_params[:message] = '[Project/Group Import] Added new member'
+
+        logger.info(log_params)
+      end
+
+      def log_member_addition_failure(member_hash, errors)
+        log_params = base_log_params(member_hash)
+        log_params[:message] = "[Project/Group Import] Member addition failed: #{errors&.join(', ')}"
+
+        logger.info(log_params)
+      end
+
+      def base_log_params(member_hash)
+        {
+          user_id: member_hash['user_id'],
+          access_level: member_hash['access_level'],
+          importable_type: @importable.class.to_s,
+          importable_id: @importable.id,
+          root_namespace_id: @importable.try(:root_ancestor)&.id
+        }
+      end
+
+      def logger
+        @logger ||= ::Import::Framework::Logger.build
       end
     end
   end

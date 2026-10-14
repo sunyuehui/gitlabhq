@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     class Config
@@ -5,15 +7,21 @@ module Gitlab
         ##
         # Entry that represents a configuration for pipeline stages.
         #
-        class Stages < Node
-          include Validatable
+        class Stages < ::Gitlab::Config::Entry::Node
+          include ::Gitlab::Config::Entry::Validatable
+
+          MAX_NESTING_LEVEL = 10
 
           validations do
-            validates :config, array_of_strings: true
+            validates :config, nested_array_of_strings: { max_level: MAX_NESTING_LEVEL }
           end
 
           def self.default
-            %w[build test deploy]
+            Config::Stages.wrap_with_edge_stages %w[build test deploy]
+          end
+
+          def value
+            @config.flatten
           end
         end
       end

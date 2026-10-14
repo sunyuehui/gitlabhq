@@ -1,53 +1,70 @@
+# frozen_string_literal: true
+
 module NavHelper
+  extend self
+
   def page_with_sidebar_class
     class_name = page_gutter_class
-    class_name << 'page-with-new-sidebar' if defined?(@new_sidebar) && @new_sidebar
-    class_name << 'page-with-icon-sidebar' if collapsed_sidebar? && @new_sidebar
+
+    class_name << 'page-with-super-sidebar'
+    class_name << 'page-with-super-sidebar-collapsed' if collapsed_super_sidebar?
+
+    class_name -= ['right-sidebar-expanded'] if defined?(@right_sidebar) && !@right_sidebar
 
     class_name
   end
 
+  def super_sidebar_loading_state_class
+    cookies['super_sidebar_collapsed'] == 'true' ? 'super-sidebar-is-icon-only' : ''
+  end
+
   def page_gutter_class
-    if current_path?('merge_requests#show') ||
-        current_path?('projects/merge_requests/conflicts#show') ||
-        current_path?('issues#show') ||
-        current_path?('milestones#show')
+    if (page_has_markdown? || current_path?('projects/merge_requests#diffs')) && !current_controller?('conflicts')
       if cookies[:collapsed_gutter] == 'true'
-        %w[page-gutter right-sidebar-collapsed]
+        ["page-gutter", ('right-sidebar-collapsed' unless skip_right_sidebar_classes?).to_s]
       else
-        %w[page-gutter right-sidebar-expanded]
+        ["page-gutter", ('right-sidebar-expanded' unless skip_right_sidebar_classes?).to_s]
       end
     elsif current_path?('jobs#show')
       %w[page-gutter build-sidebar right-sidebar-expanded]
-    elsif current_path?('wikis#show') ||
-        current_path?('wikis#edit') ||
-        current_path?('wikis#update') ||
-        current_path?('wikis#history') ||
-        current_path?('wikis#git_access')
-      %w[page-gutter wiki-sidebar right-sidebar-expanded]
+    elsif current_controller?('wikis') &&
+        current_action?('show', 'create', 'edit', 'update', 'history', 'git_access', 'destroy', 'diff')
+      %w[page-gutter has-wiki-sidebar]
     else
       []
     end
   end
 
-  def nav_header_class
-    class_names = []
-    class_names << 'with-horizontal-nav' if defined?(nav) && nav
-
-    class_names
+  def page_has_markdown?
+    current_path?('projects/merge_requests#show') ||
+      current_path?('projects/merge_requests/conflicts#show') ||
+      current_path?('issues#show') ||
+      current_path?('milestones#show') ||
+      current_path?('issues#designs') ||
+      current_path?('incidents#show')
   end
 
-  def layout_nav_class
-    return [] if show_new_nav?
-
-    class_names = []
-    class_names << 'page-with-layout-nav' if defined?(nav) && nav
-    class_names << 'page-with-sub-nav' if content_for?(:sub_nav)
-
-    class_names
+  def admin_monitoring_nav_links
+    %w[system_info background_migrations background_jobs health_check]
   end
 
-  def nav_control_class
-    "nav-control" if current_user
+  private
+
+  def merge_request_sidebar?
+    current_controller?('merge_requests')
+  end
+
+  def work_item_epic_page?
+    current_controller?('epics')
+  end
+
+  def new_issue_look?
+    current_controller?('issues') && @issue&.show_as_work_item?
+  end
+
+  def skip_right_sidebar_classes?
+    merge_request_sidebar? || work_item_epic_page? || new_issue_look?
   end
 end
+
+NavHelper.prepend_mod_with('NavHelper')

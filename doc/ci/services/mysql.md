@@ -1,118 +1,137 @@
-# Using MySQL
+---
+stage: Verify
+group: Runner Core
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Using MySQL
+---
 
-As many applications depend on MySQL as their database, you will eventually
-need it in order for your tests to run. Below you are guided how to do this
-with the Docker and Shell executors of GitLab Runner.
+{{< details >}}
+
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
+
+{{< /details >}}
+
+Many applications depend on MySQL as their database, and you may
+need it for your tests to run.
 
 ## Use MySQL with the Docker executor
 
-If you are using [GitLab Runner](../runners/README.md) with the Docker executor
-you basically have everything set up already.
+If you want to use a MySQL container, you can use [GitLab Runner](../runners/_index.md) with the Docker executor.
 
-First, in your `.gitlab-ci.yml` add:
+This example shows you how to set a username and password that GitLab uses to access the MySQL container. If you do not set a username and password, you must use `root`.
 
-```yaml
-services:
-  - mysql:latest
+> [!note]
+> Variables set in the GitLab UI are not passed down to the service containers.
+> For more information, see [GitLab CI/CD variables](../variables/_index.md).
 
-variables:
-  # Configure mysql environment variables (https://hub.docker.com/r/_/mysql/)
-  MYSQL_DATABASE: el_duderino
-  MYSQL_ROOT_PASSWORD: mysql_strong_password
-```
+1. To specify a MySQL image, add the following to your `.gitlab-ci.yml` file:
 
-And then configure your application to use the database, for example:
+   ```yaml
+   services:
+     - mysql:latest
+   ```
 
-```yaml
-Host: mysql
-User: root
-Password: mysql_strong_password
-Database: el_duderino
-```
+   - You can use any Docker image available on [Docker Hub](https://hub.docker.com/_/mysql/).
+     For example, to use MySQL 5.5, use `mysql:5.5`.
+   - The `mysql` image can accept environment variables. For more information, view
+     the [Docker Hub documentation](https://hub.docker.com/_/mysql/).
 
-If you are wondering why we used `mysql` for the `Host`, read more at
-[How is service linked to the job](../docker/using_docker_images.md#how-is-service-linked-to-the-job).
+1. To include the database name and password, add the following to your `.gitlab-ci.yml` file:
 
-You can also use any other docker image available on [Docker Hub][hub-mysql].
-For example, to use MySQL 5.5 the service becomes `mysql:5.5`.
+   ```yaml
+   variables:
+     # Configure mysql environment variables (https://hub.docker.com/_/mysql/)
+     MYSQL_DATABASE: $MYSQL_DB
+     MYSQL_ROOT_PASSWORD: $MYSQL_PASS
+   ```
 
-The `mysql` image can accept some environment variables. For more details
-check the documentation on [Docker Hub][hub-mysql].
+   The MySQL container uses `MYSQL_DATABASE` and `MYSQL_ROOT_PASSWORD` to connect to the database.
+   Pass these values by using [GitLab CI/CD variables](../variables/_index.md) (`$MYSQL_DB` and `$MYSQL_PASS` in the example above),
+   [rather than calling them directly](https://gitlab.com/gitlab-org/gitlab/-/issues/30178).
+
+1. Configure your application to use the database, for example:
+
+   ```yaml
+   Host: mysql
+   User: runner
+   Password: <your_mysql_password>
+   Database: <your_mysql_database>
+   ```
+
+   In this example, the user is `runner`. You should use a user that has permission to
+   access your database.
 
 ## Use MySQL with the Shell executor
 
-You can also use MySQL on manually configured servers that are using
+You can also use MySQL on manually-configured servers that use
 GitLab Runner with the Shell executor.
 
-First install the MySQL server:
+1. Install the MySQL server:
 
-```bash
-sudo apt-get install -y mysql-server mysql-client libmysqlclient-dev
-```
+   ```shell
+   sudo apt-get install -y mysql-server mysql-client libmysqlclient-dev
+   ```
 
-Pick a MySQL root password (can be anything), and type it twice when asked.
+1. Choose a MySQL root password and type it twice when asked.
 
-*Note: As a security measure you can run `mysql_secure_installation` to
-remove anonymous users, drop the test database and disable remote logins with
-the root user.*
+   > [!note]
+   > As a security measure, you can run `mysql_secure_installation` to
+   > remove anonymous users, drop the test database, and disable remote logins by
+   > the root user.
 
-The next step is to create a user, so login to MySQL as root:
+1. Create a user by logging in to MySQL as root:
 
-```bash
-mysql -u root -p
-```
+   ```shell
+   mysql -u root -p
+   ```
 
-Then create a user (in our case `runner`) which will be used by your
-application. Change `$password` in the command below to a real strong password.
+1. Create a user (in this case, `runner`) that is used by your
+   application. Change `$password` in the command to a strong password.
 
-*Note: Do not type `mysql>`, this is part of the MySQL prompt.*
+   At the `mysql>` prompt, type:
 
-```bash
-mysql> CREATE USER 'runner'@'localhost' IDENTIFIED BY '$password';
-```
+   ```sql
+   CREATE USER 'runner'@'localhost' IDENTIFIED BY '$password';
+   ```
 
-Create the database:
+1. Create the database:
 
-```bash
-mysql> CREATE DATABASE IF NOT EXISTS `el_duderino` DEFAULT CHARACTER SET `utf8` COLLATE `utf8_unicode_ci`;
-```
+   ```sql
+   CREATE DATABASE IF NOT EXISTS `<your_mysql_database>` DEFAULT CHARACTER SET `utf8` \
+   COLLATE `utf8_unicode_ci`;
+   ```
 
-Grant the necessary permissions on the database:
+1. Grant the necessary permissions on the database:
 
-```bash
-mysql> GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, CREATE TEMPORARY TABLES, DROP, INDEX, ALTER, LOCK TABLES ON `el_duderino`.* TO 'runner'@'localhost';
-```
+   ```sql
+   GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, CREATE TEMPORARY TABLES, DROP, INDEX, ALTER, LOCK TABLES ON `<your_mysql_database>`.* TO 'runner'@'localhost';
+   ```
 
-If all went well you can now quit the database session:
+1. If all went well, you can quit the database session:
 
-```bash
-mysql> \q
-```
+   ```shell
+   \q
+   ```
 
-Now, try to connect to the newly created database to check that everything is
-in place:
+1. Connect to the newly-created database to check that everything is
+   in place:
 
-```bash
-mysql -u runner -p -D el_duderino
-```
+   ```shell
+   mysql -u runner -p -D <your_mysql_database>
+   ```
 
-As a final step, configure your application to use the database, for example:
+1. Configure your application to use the database, for example:
 
-```bash
-Host: localhost
-User: runner
-Password: $password
-Database: el_duderino
-```
+   ```shell
+   Host: localhost
+   User: runner
+   Password: $password
+   Database: <your_mysql_database>
+   ```
 
 ## Example project
 
-We have set up an [Example MySQL Project][mysql-example-repo] for your
-convenience that runs on [GitLab.com](https://gitlab.com) using our publicly
-available [shared runners](../runners/README.md).
-
-Want to hack on it? Simply fork it, commit and push  your changes. Within a few
-moments the changes will be picked by a public runner and the job will begin.
-
-[hub-mysql]: https://hub.docker.com/r/_/mysql/
-[mysql-example-repo]: https://gitlab.com/gitlab-examples/mysql
+To view a MySQL example, create a fork of this [sample project](https://gitlab.com/gitlab-examples/mysql).
+This project uses publicly-available [instance runners](../runners/_index.md) on [GitLab.com](https://gitlab.com).
+Update the README.md file, commit your changes, and view the CI/CD pipeline to see it in action.

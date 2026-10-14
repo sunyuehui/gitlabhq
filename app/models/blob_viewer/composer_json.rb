@@ -1,19 +1,21 @@
+# frozen_string_literal: true
+
 module BlobViewer
   class ComposerJson < DependencyManager
     include ServerSide
 
-    self.file_types = %i(composer_json)
+    self.file_types = %i[composer_json]
 
     def manager_name
       'Composer'
     end
 
     def manager_url
-      'https://getcomposer.com/'
+      'https://getcomposer.org/'
     end
 
     def package_name
-      @package_name ||= package_name_from_json('name')
+      @package_name ||= fetch_from_json('name')
     end
 
     def package_url

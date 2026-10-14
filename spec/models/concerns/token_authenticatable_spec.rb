@@ -1,78 +1,185 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-shared_examples 'TokenAuthenticatable' do
-  describe 'dynamically defined methods' do
-    it { expect(described_class).to be_private_method_defined(:generate_token) }
-    it { expect(described_class).to be_private_method_defined(:write_new_token) }
-    it { expect(described_class).to respond_to("find_by_#{token_field}") }
-    it { is_expected.to respond_to("ensure_#{token_field}") }
-    it { is_expected.to respond_to("set_#{token_field}") }
-    it { is_expected.to respond_to("reset_#{token_field}!") }
-  end
-end
+RSpec.describe TokenAuthenticatable, feature_category: :system_access do
+  let(:field) { 'token' }
+  let(:digest_field) { "#{field}_digest" }
+  let(:encrypted_field) { "#{field}_encrypted" }
+  let(:base_class) do
+    Struct.new(:name, :token_prefix, field) do
+      include TokenAuthenticatable
 
-describe User, 'TokenAuthenticatable' do
-  let(:token_field) { :authentication_token }
-  it_behaves_like 'TokenAuthenticatable'
+      alias_method :read_attribute, :[]
 
-  describe 'ensures authentication token' do
-    subject { create(:user).send(token_field) }
-    it { is_expected.to be_a String }
-  end
-end
-
-describe ApplicationSetting, 'TokenAuthenticatable' do
-  let(:token_field) { :runners_registration_token }
-  it_behaves_like 'TokenAuthenticatable'
-
-  describe 'generating new token' do
-    context 'token is not generated yet' do
-      describe 'token field accessor' do
-        subject { described_class.new.send(token_field) }
-        it { is_expected.not_to be_blank }
-      end
-
-      describe 'ensured token' do
-        subject { described_class.new.send("ensure_#{token_field}") }
-
-        it { is_expected.to be_a String }
-        it { is_expected.not_to be_blank }
-      end
-
-      describe 'ensured! token' do
-        subject { described_class.new.send("ensure_#{token_field}!") }
-
-        it 'persists new token' do
-          expect(subject).to eq described_class.current[token_field]
-        end
-      end
-    end
-
-    context 'token is generated' do
-      before do
-        subject.send("reset_#{token_field}!")
-      end
-
-      it 'persists a new token' do
-        expect(subject.send(:read_attribute, token_field)).to be_a String
+      def has_attribute?(_)
+        true
       end
     end
   end
 
-  describe 'setting new token' do
-    subject { described_class.new.send("set_#{token_field}", '0123456789') }
+  let(:options) { {} }
 
-    it { is_expected.to eq '0123456789' }
+  let(:test_class) do
+    Class.new(base_class).tap do |klass|
+      klass.send(:add_authentication_token_field, field, options)
+    end
   end
 
-  describe 'multiple token fields' do
+  subject(:instance) { test_class.new }
+
+  describe 'setting same token field multiple times' do
+    let(:test_class) do
+      Class.new(base_class).tap do |klass|
+        klass.send(:add_authentication_token_field, field, options)
+        klass.send(:add_authentication_token_field, field, options)
+      end
+    end
+
+    it 'raises error' do
+      expect { test_class.new }.to raise_error(ArgumentError)
+    end
+  end
+
+  describe '.encrypted_token_authenticatable_fields' do
+    subject(:token_authenticatable_fields) { test_class.encrypted_token_authenticatable_fields }
+
+    it { is_expected.to be_empty }
+
+    context 'with encrypted: true' do
+      let(:options) { { encrypted: true } }
+
+      it { is_expected.to contain_exactly(field) }
+    end
+
+    context 'with digest: true' do
+      let(:options) { { digest: true } }
+
+      it { is_expected.to be_empty }
+    end
+  end
+
+  describe '.token_authenticatable_fields' do
+    subject(:token_authenticatable_fields) { test_class.token_authenticatable_fields }
+
+    it { is_expected.to contain_exactly(field) }
+
+    context 'with encrypted: true' do
+      let(:options) { { encrypted: true } }
+
+      it { is_expected.to contain_exactly(field) }
+    end
+
+    context 'with digest: true' do
+      let(:options) { { digest: true } }
+
+      it { is_expected.to contain_exactly(field) }
+    end
+  end
+
+  describe '.token_authenticatable_sensitive_fields' do
+    subject(:token_authenticatable_fields) { test_class.token_authenticatable_sensitive_fields }
+
+    it { is_expected.to contain_exactly(field.to_sym, digest_field.to_sym) }
+
+    context 'with encrypted: true' do
+      let(:options) { { encrypted: true } }
+
+      it { is_expected.to contain_exactly(field.to_sym, encrypted_field.to_sym) }
+    end
+
+    context 'with digest: true' do
+      let(:options) { { digest: true } }
+
+      it { is_expected.to contain_exactly(field.to_sym, digest_field.to_sym) }
+    end
+
+    context 'with expires_at option' do
+      let(:options) { { expires_at: -> { Time.current } } }
+
+      it { is_expected.to contain_exactly(field.to_sym, digest_field.to_sym) }
+    end
+  end
+
+  describe 'dynamic methods' do
+    let(:strategy) { instance_double(Authn::TokenField::Base, sensitive_fields: []) }
+
     before do
-      described_class.send(:add_authentication_token_field, :yet_another_token)
+      allow(Authn::TokenField::Base)
+        .to receive(:fabricate).with(anything, field, options)
+        .and_return(strategy)
     end
 
-    describe '.token_fields' do
-      subject { described_class.authentication_token_fields }
-      it { is_expected.to include(:runners_registration_token, :yet_another_token) }
+    describe '#<field>' do
+      it 'delegates to strategy' do
+        expect(strategy).to receive(:get_token).with(instance)
+
+        instance.public_send(field)
+      end
+    end
+
+    describe '#set_<field>' do
+      it 'delegates to strategy' do
+        expect(strategy).to receive(:set_token).with(instance, 'foo')
+
+        instance.public_send(:"set_#{field}", 'foo')
+      end
+    end
+
+    describe '#ensure_<field>' do
+      it 'delegates to strategy' do
+        expect(strategy).to receive(:ensure_token).with(instance)
+
+        instance.public_send(:"ensure_#{field}")
+      end
+    end
+
+    describe '#ensure_<field>!' do
+      it 'delegates to strategy' do
+        expect(strategy).to receive(:ensure_token!).with(instance)
+
+        instance.public_send(:"ensure_#{field}!")
+      end
+    end
+
+    describe '#reset_<field>!' do
+      it 'delegates to strategy' do
+        expect(strategy).to receive(:reset_token!).with(instance)
+
+        instance.public_send(:"reset_#{field}!")
+      end
+    end
+
+    describe '#<field>_matches?' do
+      it 'delegates to strategy' do
+        instance.public_send(:"#{field}=", 'foo')
+
+        expect(instance.public_send(:"#{field}_matches?", 'bar')).to be(false)
+      end
+    end
+
+    describe '#<field>_expires_at' do
+      it 'delegates to strategy' do
+        expect(strategy).to receive(:expires_at).with(instance)
+
+        instance.public_send(:"#{field}_expires_at")
+      end
+    end
+
+    describe '#<field>_expired?' do
+      it 'delegates to strategy' do
+        expect(strategy).to receive(:expired?).with(instance)
+
+        instance.public_send(:"#{field}_expired?")
+      end
+    end
+
+    describe '#<field>_with_expiration' do
+      it 'delegates to strategy' do
+        expect(strategy).to receive(:token_with_expiration).with(instance)
+
+        instance.public_send(:"#{field}_with_expiration")
+      end
     end
   end
 end

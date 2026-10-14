@@ -1,3 +1,8 @@
+import $ from 'jquery';
+import { uuids } from '~/lib/utils/uuids';
+import { sanitize } from '~/lib/dompurify';
+import { __ } from '~/locale';
+
 /**
  * This class overrides the browser's validation error bubbles, displaying custom
  * error messages for invalid fields instead. To begin validating any form, add the
@@ -51,16 +56,24 @@
 
 const errorMessageClass = 'gl-field-error';
 const inputErrorClass = 'gl-field-error-outline';
+const validInputHintClass = '.gl-field-hint-valid';
 const errorAnchorSelector = '.gl-field-error-anchor';
 const ignoreInputSelector = '.gl-field-error-ignore';
 
-class GlFieldError {
+export default class GlFieldError {
   constructor({ input, formErrors }) {
     this.inputElement = $(input);
     this.inputDomElement = this.inputElement.get(0);
     this.form = formErrors;
-    this.errorMessage = this.inputElement.attr('title') || 'This field is required.';
-    this.fieldErrorElement = $(`<p class='${errorMessageClass} hide'>${this.errorMessage}</p>`);
+    this.errorMessage = this.inputElement.attr('title') || __('This field is required.');
+    // eslint-disable-next-line prefer-destructuring
+    this.errorMessageId = uuids()[0];
+    this.fieldErrorElement = $(
+      `<p
+        id=${this.errorMessageId}
+        class='${errorMessageClass} hidden'
+      >${sanitize(this.errorMessage)}</p>`,
+    );
 
     this.state = {
       valid: false,
@@ -77,6 +90,7 @@ class GlFieldError {
 
     // hidden when injected into DOM
     errorAnchor.after(this.fieldErrorElement);
+    // eslint-disable-next-line @gitlab/no-global-event-off
     this.inputElement.off('invalid').on('invalid', this.handleInvalidSubmit.bind(this));
     this.scopedSiblings = this.safelySelectSiblings();
   }
@@ -111,11 +125,13 @@ class GlFieldError {
     this.state.empty = currentValue === '';
     this.state.submitted = true;
     this.renderValidity();
-    this.form.focusOnFirstInvalid.apply(this.form);
+    this.form.focusInvalid.apply(this.form);
 
     // For UX, wait til after first invalid submission to check each keyup
-    this.inputElement.off('keyup.fieldValidator')
-      .on('keyup.fieldValidator', this.updateValidity.bind(this));
+    // eslint-disable-next-line @gitlab/no-global-event-off
+    this.inputElement
+      .off('input.fieldValidator')
+      .on('input.fieldValidator', this.updateValidity.bind(this));
   }
 
   /* Get or set current input value */
@@ -144,8 +160,10 @@ class GlFieldError {
 
   renderInvalid() {
     this.inputElement.addClass(inputErrorClass);
-    this.scopedSiblings.hide();
-    return this.fieldErrorElement.show();
+    this.inputElement.attr('aria-describedby', this.errorMessageId);
+    this.scopedSiblings.addClass('hidden');
+    this.inputElement.parents('.form-group').find(validInputHintClass).addClass('hidden');
+    return this.fieldErrorElement.removeClass('hidden');
   }
 
   renderClear() {
@@ -155,10 +173,8 @@ class GlFieldError {
       this.accessCurrentValue(trimmedInput);
     }
     this.inputElement.removeClass(inputErrorClass);
-    this.scopedSiblings.hide();
-    this.fieldErrorElement.hide();
+    this.inputElement.removeAttr('aria-describedby');
+    this.scopedSiblings.addClass('hidden');
+    this.fieldErrorElement.addClass('hidden');
   }
 }
-
-window.gl = window.gl || {};
-window.gl.GlFieldError = GlFieldError;

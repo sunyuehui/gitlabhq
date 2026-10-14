@@ -1,9 +1,7 @@
-- disable_initialization = local_assigns.fetch(:disable_initialization, false)
-#commit-pipeline-table-view{ data: { disable_initialization: disable_initialization,
-  endpoint: endpoint,
-  "help-page-path" => help_page_path('ci/quick_start/README'),
+#commit-pipeline-table-view{ data: { endpoint: endpoint,
+  graphql_path: api_graphql_path,
+  new_pipeline_path: new_project_pipeline_path(@project),
+  project_full_path: @project.full_path,
+  commit_sha: @commit&.id,
+  "project-id": @project.id,
 } }
-
-- content_for :page_specific_javascripts do
-  = page_specific_javascript_bundle_tag('common_vue')
-  = page_specific_javascript_bundle_tag('commit_pipelines')

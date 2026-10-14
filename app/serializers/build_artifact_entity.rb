@@ -1,30 +1,31 @@
+# frozen_string_literal: true
+
 class BuildArtifactEntity < Grape::Entity
   include RequestAwareEntity
+  include GitlabRoutingHelper
 
-  expose :name do |job|
-    job.name
+  alias_method :artifact, :object
+
+  expose :name do |artifact|
+    "#{artifact.job.name}:#{artifact.file_type}"
   end
 
-  expose :artifacts_expired?, as: :expired
-  expose :artifacts_expire_at, as: :expire_at
+  expose :file_type
 
-  expose :path do |job|
-    download_project_job_artifacts_path(project, job)
-  end
+  expose :expire_at
+  expose :expired?, as: :expired
 
-  expose :keep_path, if: -> (*) { job.has_expiring_artifacts? } do |job|
-    keep_project_job_artifacts_path(project, job)
-  end
-
-  expose :browse_path do |job|
-    browse_project_job_artifacts_path(project, job)
+  expose :path do |artifact|
+    fast_download_project_job_artifacts_path(
+      project,
+      artifact.job,
+      file_type: artifact.file_type
+    )
   end
 
   private
 
-  alias_method :job, :object
-
   def project
-    job.project
+    options[:project] || artifact.project
   end
 end

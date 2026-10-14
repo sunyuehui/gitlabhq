@@ -1,5 +1,8 @@
+# frozen_string_literal: true
+
 module ResolvableDiscussion
   extend ActiveSupport::Concern
+  include ::Gitlab::Utils::StrongMemoize
 
   included do
     # A number of properties of this `Discussion`, like `first_note` and `resolvable?`, are memoized.
@@ -20,41 +23,53 @@ module ResolvableDiscussion
       :last_note
     )
 
-    delegate :potentially_resolvable?, to: :first_note
+    delegate :potentially_resolvable?,
+      :noteable_id,
+      :noteable_type,
+      to: :first_note
 
-    delegate  :resolved_at,
-              :resolved_by,
+    delegate :resolved_at,
+      :resolved_by,
+      to: :last_resolved_note,
+      allow_nil: true
+  end
 
-              to: :last_resolved_note,
-              allow_nil: true
+  def resolved_by_push?
+    !!last_resolved_note&.resolved_by_push?
   end
 
   def resolvable?
-    return @resolvable if @resolvable.present?
-
-    @resolvable = potentially_resolvable? && notes.any?(&:resolvable?)
+    strong_memoize(:resolvable) do
+      potentially_resolvable? && notes.any?(&:resolvable?)
+    end
   end
 
   def resolved?
-    return @resolved if @resolved.present?
-
-    @resolved = resolvable? && notes.none?(&:to_be_resolved?)
+    strong_memoize(:resolved) do
+      resolvable? && notes.none?(&:to_be_resolved?)
+    end
   end
 
   def first_note
-    @first_note ||= notes.first
+    strong_memoize(:first_note) do
+      notes.first
+    end
   end
 
   def first_note_to_resolve
     return unless resolvable?
 
-    @first_note_to_resolve ||= notes.find(&:to_be_resolved?)
+    strong_memoize(:first_note_to_resolve) do
+      notes.find(&:to_be_resolved?)
+    end
   end
 
   def last_resolved_note
     return unless resolved?
 
-    @last_resolved_note ||= resolved_notes.sort_by(&:resolved_at).last
+    strong_memoize(:last_resolved_note) do
+      resolved_notes.max_by(&:resolved_at)
+    end
   end
 
   def resolved_notes
@@ -65,12 +80,8 @@ module ResolvableDiscussion
     resolvable? && !resolved?
   end
 
-  def can_resolve?(current_user)
-    return false unless current_user
-    return false unless resolvable?
-
-    current_user == self.noteable.author ||
-      current_user.can?(:resolve_note, self.project)
+  def can_resolve?(user)
+    resolvable? && Ability.allowed?(user, :resolve_note, first_note)
   end
 
   def resolve!(current_user)
@@ -82,7 +93,13 @@ module ResolvableDiscussion
   def unresolve!
     return unless resolvable?
 
-    update { |notes| notes.unresolve! }
+    update(&:unresolve!)
+  end
+
+  def clear_memoized_values
+    self.class.memoized_values.each do |name|
+      clear_memoization(name)
+    end
   end
 
   private
@@ -94,10 +111,10 @@ module ResolvableDiscussion
     yield(notes_relation)
 
     # Set the notes array to the updated notes
-    @notes = notes_relation.fresh.to_a
+    @notes = notes_relation.order_created_at_id_asc.to_a # rubocop:disable Gitlab/ModuleWithInstanceVariables
 
-    self.class.memoized_values.each do |var|
-      instance_variable_set(:"@#{var}", nil)
-    end
+    noteable.broadcast_notes_changed
+
+    clear_memoized_values
   end
 end

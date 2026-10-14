@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module View
     module Presenter
@@ -8,7 +10,7 @@ module Gitlab
         end
 
         def fabricate!
-          presenter_class.new(subject, attributes)
+          presenter_class.new(subject, **attributes)
         end
 
         private
@@ -16,7 +18,7 @@ module Gitlab
         attr_reader :subject, :attributes
 
         def presenter_class
-          "#{subject.class.name}Presenter".constantize
+          attributes.delete(:presenter_class) { "#{subject.class.name}Presenter".constantize }
         end
       end
     end

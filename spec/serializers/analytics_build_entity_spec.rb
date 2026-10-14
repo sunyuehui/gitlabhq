@@ -1,20 +1,22 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe AnalyticsBuildEntity do
+RSpec.describe AnalyticsBuildEntity, feature_category: :continuous_integration do
   let(:entity) do
     described_class.new(build, request: double)
   end
 
   context 'build with an author' do
-    let(:user) { create(:user) }
+    let(:user) { build_stubbed(:user) }
     let(:started_at) { 2.hours.ago }
     let(:finished_at) { 1.hour.ago }
-    let(:build) { create(:ci_build, author: user, started_at: started_at, finished_at: finished_at) }
+    let(:build) { build_stubbed(:ci_build, author: user, started_at: started_at, finished_at: finished_at) }
 
     subject { entity.as_json }
 
     around do |example|
-      Timecop.freeze { example.run }
+      freeze_time { example.run }
     end
 
     it 'contains the URL' do
@@ -23,6 +25,14 @@ describe AnalyticsBuildEntity do
 
     it 'contains the author' do
       expect(subject).to include(:author)
+    end
+
+    it 'contains the project path' do
+      expect(subject).to include(:project_path)
+    end
+
+    it 'contains the namespace full path' do
+      expect(subject).to include(:namespace_full_path)
     end
 
     it 'does not contain sensitive information' do
@@ -35,7 +45,7 @@ describe AnalyticsBuildEntity do
     end
 
     it 'contains the duration' do
-      expect(subject[:total_time]).to eq(hours: 1 )
+      expect(subject[:total_time]).to eq(hours: 1)
     end
 
     context 'no started at or finished at date' do

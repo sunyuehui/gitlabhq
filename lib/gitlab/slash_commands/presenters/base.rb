@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module SlashCommands
     module Presenters
@@ -15,6 +17,8 @@ module Gitlab
         end
 
         private
+
+        attr_reader :resource
 
         def header_with_list(header, items)
           message = [header]
@@ -57,19 +61,61 @@ module Gitlab
           response
         end
 
-        # Convert Markdown to slacks format
         def format(string)
-          Slack::Notifier::LinkFormatter.format(string)
+          SlackMarkdownSanitizer.format_links(string)
+        end
+
+        # User-controlled text rendered with mrkdwn must not carry link markup.
+        def strip_markup(string)
+          SlackMarkdownSanitizer.sanitize(string)
         end
 
         def resource_url
           url_for(
             [
-              @resource.project.namespace.becomes(Namespace),
-              @resource.project,
-              @resource
+              resource.project,
+              resource
             ]
           )
+        end
+
+        def project_link
+          "[#{strip_markup(project.full_name)}](#{project.web_url})"
+        end
+
+        def author_profile_link
+          "[#{author.to_reference}](#{url_for(author)})"
+        end
+
+        def response_message(custom_pretext: pretext)
+          {
+            attachments: [
+              {
+                title: "#{strip_markup(issue.title)} · #{issue.to_reference}",
+                title_link: resource_url,
+                author_name: strip_markup(author.name),
+                author_icon: author.avatar_url(only_path: false),
+                fallback: strip_markup(fallback_message),
+                pretext: custom_pretext,
+                text: text,
+                color: color(resource),
+                fields: fields,
+                mrkdwn_in: fields_with_markdown
+              }
+            ]
+          }
+        end
+
+        def pretext
+          ''
+        end
+
+        def text
+          ''
+        end
+
+        def fields_with_markdown
+          %i[title pretext fields]
         end
       end
     end

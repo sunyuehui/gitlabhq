@@ -1,37 +1,13 @@
 .info-well {
-  background: $gray-light;
-  color: $gl-text-color;
-  border: 1px solid $border-color;
-  border-radius: $border-radius-default;
-  margin-bottom: $gl-padding;
-
-  .well-segment {
-    padding: $gl-padding;
-
-    &:not(:last-of-type) {
-      border-bottom: 1px solid $well-inner-border;
-    }
-
-    &.branch-info {
-      .commit-sha,
-      .commit-info {
-        margin-left: 4px;
-      }
-
-      .ref-name {
-        font-size: 12px;
-      }
-    }
-
-    &.admin-well h4 {
-      border-bottom: 1px solid $border-color;
-      padding-bottom: 8px;
-    }
-  }
+  @apply gl-bg-subtle;
+  @apply gl-text-default;
+  @apply gl-border;
+  @apply gl-border-section;
+  @apply gl-rounded-lg;
 
   .icon-container {
     display: inline-block;
-    margin-right: 8px;
+    margin: 0 0.5rem 0 0.25rem;
 
     svg {
       position: relative;
@@ -43,34 +19,17 @@
     &.commit-icon {
       svg {
         path {
-          fill: $gl-text-color;
+          @apply gl-fill-icon-default;
         }
       }
     }
   }
 
-  .label.label-gray {
-    background-color: $well-expand-item;
+  .branches {
+    display: inline;
   }
-}
 
-.light-well {
-  background-color: $gray-light;
-  padding: 15px;
-}
-
-.dark-well {
-  background-color: $gray-normal;
-
-  .btn {
-    width: 100%;
-  }
-}
-
-.well-centered {
-  h1 {
-    font-weight: normal;
-    text-align: center;
-    font-size: 48px;
+  svg {
+    vertical-align: text-top;
   }
 }

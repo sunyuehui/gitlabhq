@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
@@ -7,19 +9,27 @@ module Gitlab
       #
       class SuccessWarning < Status::Extended
         def text
-          s_('CiStatusText|passed')
+          s_('CiStatusText|Warning')
         end
 
         def label
           s_('CiStatusLabel|passed with warnings')
         end
 
+        def status_tooltip
+          label
+        end
+
         def icon
-          'icon_status_warning'
+          'status_warning'
+        end
+
+        def name
+          'SUCCESS_WITH_WARNINGS'
         end
 
         def group
-          'success_with_warnings'
+          'success-with-warnings'
         end
 
         def self.matches?(subject, user)

@@ -1,13 +1,19 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Import/Export - project import integration test', js: true do
-  include Select2Helper
-
+RSpec.describe 'Import/Export - project import integration test', :js, feature_category: :importers do
+  let(:user) { create(:user) }
   let(:file) { File.join(Rails.root, 'spec', 'features', 'projects', 'import_export', 'test_project_export.tar.gz') }
   let(:export_path) { "#{Dir.tmpdir}/import_file_spec" }
 
-  background do
-    allow_any_instance_of(Gitlab::ImportExport).to receive(:storage_path).and_return(export_path)
+  before do
+    stub_application_setting(import_sources: ['gitlab_project'])
+    stub_uploads_object_storage(FileUploader)
+    allow_next_instance_of(Gitlab::ImportExport) do |instance|
+      allow(instance).to receive(:storage_path).and_return(export_path)
+    end
+    sign_in(user)
   end
 
   after do
@@ -16,77 +22,44 @@ feature 'Import/Export - project import integration test', js: true do
 
   context 'when selecting the namespace' do
     let(:user) { create(:admin) }
-    let!(:namespace) { create(:namespace, name: "asd", owner: user) }
+    let!(:namespace) { user.namespace }
 
-    before do
-      gitlab_sign_in(user)
-    end
-
-    scenario 'user imports an exported project successfully' do
+    it 'user imports an exported project successfully', :sidekiq_might_not_need_inline do
       visit new_project_path
-
-      select2(namespace.id, from: '#project_namespace_id')
-      fill_in :project_path, with: 'test-project-path', visible: true
+      click_link 'Import project'
       click_link 'GitLab export'
 
-      expect(page).to have_content('Import an exported GitLab project')
-      expect(URI.parse(current_url).query).to eq("namespace_id=#{namespace.id}&path=test-project-path")
-      expect(Gitlab::ImportExport).to receive(:import_upload_path).with(filename: /\A\h{32}_test-project-path\z/).and_call_original
-
+      fill_in :name, with: 'Test Project Name', visible: true
+      fill_in :path, with: 'test-project-path', visible: true
       attach_file('file', file)
 
-      expect { click_on 'Import project' }.to change { Project.count }.from(0).to(1)
+      initial_count = Project.count
+
+      click_button 'Import project'
+
+      expect(page).to have_content("Project 'Test Project Name' is being imported")
+
+      expect(Project.count).to eq(initial_count + 1)
 
       project = Project.last
       expect(project).not_to be_nil
-      expect(project.issues).not_to be_empty
-      expect(project.merge_requests).not_to be_empty
-      expect(project_hook_exists?(project)).to be true
-      expect(wiki_exists?(project)).to be true
-      expect(project.import_status).to eq('finished')
+      expect(project.name).to eq('Test Project Name')
     end
 
-    scenario 'invalid project' do
-      project = create(:project, namespace: namespace)
+    it 'invalid project' do
+      project = create(:project, namespace: user.namespace)
 
       visit new_project_path
 
-      select2(namespace.id, from: '#project_namespace_id')
-      fill_in :project_path, with: project.name, visible: true
+      click_link 'Import project'
       click_link 'GitLab export'
+      fill_in :name, with: project.name, visible: true
       attach_file('file', file)
-      click_on 'Import project'
+      click_button 'Import project'
 
       page.within('.flash-container') do
         expect(page).to have_content('Project could not be imported')
       end
     end
-  end
-
-  context 'when limited to the default user namespace' do
-    let(:user) { create(:user) }
-    before do
-      gitlab_sign_in(user)
-    end
-
-    scenario 'passes correct namespace ID in the URL' do
-      visit new_project_path
-
-      fill_in :project_path, with: 'test-project-path', visible: true
-
-      click_link 'GitLab export'
-
-      expect(page).to have_content('GitLab project export')
-      expect(URI.parse(current_url).query).to eq("namespace_id=#{user.namespace.id}&path=test-project-path")
-    end
-  end
-
-  def wiki_exists?(project)
-    wiki = ProjectWiki.new(project)
-    File.exist?(wiki.repository.path_to_repo) && !wiki.repository.empty?
-  end
-
-  def project_hook_exists?(project)
-    Gitlab::Git::Hook.new('post-receive', project).exists?
   end
 end

@@ -1,8 +1,10 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Artifact file', :js do
+RSpec.describe 'Artifact file', :js, feature_category: :job_artifacts do
   let(:project) { create(:project, :public) }
-  let(:pipeline) { create(:ci_empty_pipeline, project: project) }
+  let(:pipeline) { create(:ci_pipeline, project: project) }
   let(:build) { create(:ci_build, :artifacts, pipeline: pipeline) }
 
   def visit_file(path)
@@ -39,7 +41,6 @@ feature 'Artifact file', :js do
 
   context 'JPG file' do
     before do
-      page.driver.browser.url_blacklist = []
       visit_file('rails_sample.jpg')
 
       wait_for_requests
@@ -72,7 +73,7 @@ feature 'Artifact file', :js do
     end
 
     it "redirects to new URL" do
-      expect(page.current_path).to eq(file_url)
+      expect(page).to have_current_path(file_url, ignore_query: true)
     end
   end
 end

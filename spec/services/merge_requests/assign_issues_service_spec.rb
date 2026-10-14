@@ -1,21 +1,19 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe MergeRequests::AssignIssuesService do
-  let(:user) { create(:user) }
-  let(:project) { create(:project, :public, :repository) }
+RSpec.describe MergeRequests::AssignIssuesService, feature_category: :code_review_workflow do
+  let_it_be(:user) { create(:user) }
+  let_it_be_with_reload(:project) { create(:project, :public, :repository, developers: user) }
   let(:issue) { create(:issue, project: project) }
   let(:merge_request) { create(:merge_request, :simple, source_project: project, author: user, description: "fixes #{issue.to_reference}") }
-  let(:service) { described_class.new(project, user, merge_request: merge_request) }
-
-  before do
-    project.team << [user, :developer]
-  end
+  let(:service) { described_class.new(project: project, current_user: user, params: { merge_request: merge_request }) }
 
   it 'finds unassigned issues fixed in merge request' do
     expect(service.assignable_issues.map(&:id)).to include(issue.id)
   end
 
-  it 'ignores issues the user cannot update assignee on' do
+  it 'ignores issues the user cannot update assignee on', :sidekiq_inline do
     project.team.truncate
 
     expect(service.assignable_issues).to be_empty
@@ -35,10 +33,14 @@ describe MergeRequests::AssignIssuesService do
 
   it 'accepts precomputed data for closes_issues' do
     issue2 = create(:issue, project: project)
-    service2 = described_class.new(project,
-                                   user,
-                                   merge_request: merge_request,
-                                   closes_issues: [issue, issue2])
+    service2 = described_class.new(
+      project: project,
+      current_user: user,
+      params: {
+        merge_request: merge_request,
+        closes_issues: [issue, issue2]
+      }
+    )
 
     expect(service2.assignable_issues.count).to eq 2
   end
@@ -50,10 +52,12 @@ describe MergeRequests::AssignIssuesService do
   it 'ignores external issues' do
     external_issue = ExternalIssue.new('JIRA-123', project)
     service = described_class.new(
-      project,
-      user,
-      merge_request: merge_request,
-      closes_issues: [external_issue]
+      project: project,
+      current_user: user,
+      params: {
+        merge_request: merge_request,
+        closes_issues: [external_issue]
+      }
     )
 
     expect(service.assignable_issues.count).to eq 0

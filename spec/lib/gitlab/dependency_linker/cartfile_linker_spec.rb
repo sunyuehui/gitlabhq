@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::CartfileLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::CartfileLinker do
   describe '.support?' do
     it 'supports Cartfile' do
       expect(described_class.support?('Cartfile')).to be_truthy
@@ -52,7 +54,7 @@ describe Gitlab::DependencyLinker::CartfileLinker do
     subject { Gitlab::Highlight.highlight(file_name, file_content) }
 
     def link(name, url)
-      %{<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>}
+      %(<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>)
     end
 
     it 'links dependencies' do

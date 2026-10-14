@@ -1,135 +1,182 @@
+# frozen_string_literal: true
+
 module API
-  class Boards < Grape::API
+  class Boards < ::API::Base
+    include BoardsResponses
     include PaginationParams
+
+    prepend_mod_with('API::BoardsResponses') # rubocop: disable Cop/InjectEnterpriseEditionModule
+
+    feature_category :planning_views
+    urgency :low
 
     before { authenticate! }
 
-    params do
-      requires :id, type: String, desc: 'The ID of a project'
+    helpers do
+      def board_parent
+        user_project
+      end
     end
-    resource :projects, requirements: { id: %r{[^/]+} } do
-      desc 'Get all project boards' do
-        detail 'This feature was introduced in 8.13'
-        success Entities::Board
-      end
-      params do
-        use :pagination
-      end
-      get ':id/boards' do
-        authorize!(:read_board, user_project)
-        present paginate(user_project.boards), with: Entities::Board
-      end
 
-      params do
-        requires :board_id, type: Integer, desc: 'The ID of a board'
-      end
-      segment ':id/boards/:board_id' do
-        helpers do
-          def project_board
-            board = user_project.boards.first
-
-            if params[:board_id] == board.id
-              board
-            else
-              not_found!('Board')
-            end
-          end
-
-          def board_lists
-            project_board.lists.destroyable
-          end
-        end
-
-        desc 'Get the lists of a project board' do
-          detail 'Does not include `done` list. This feature was introduced in 8.13'
-          success Entities::List
+    params do
+      requires :id, types: [String, Integer], desc: 'ID or URL-encoded path of the project.'
+    end
+    resource :projects, requirements: ::API::NAMESPACE_OR_PROJECT_REQUIREMENTS do
+      segment ':id/boards' do
+        desc 'List all project issue boards' do
+          detail 'Lists all issue boards in a specified project.'
+          success Entities::Board
+          tags ['boards']
         end
         params do
           use :pagination
         end
+        route_setting :authorization, permissions: :read_issue_board, boundary_type: :project
+        get '/' do
+          authorize!(:read_issue_board, user_project)
+          present paginate(board_parent.boards.with_associations), with: Entities::Board
+        end
+
+        desc 'Retrieve an issue board' do
+          detail 'Retrieves a specified issue board in a project.'
+          success Entities::Board
+          tags ['boards']
+        end
+        params do
+          requires :board_id, type: Integer, desc: 'ID of the board.'
+        end
+        route_setting :authorization, permissions: :read_issue_board, boundary_type: :project
+        get '/:board_id' do
+          authorize!(:read_issue_board, user_project)
+          present board, with: Entities::Board
+        end
+
+        desc 'Create an issue board' do
+          detail 'Creates an issue board in a specified project.'
+          success Entities::Board
+          tags ['boards']
+        end
+        params do
+          requires :name, type: String, desc: 'The board name'
+        end
+        route_setting :authorization, permissions: :create_issue_board, boundary_type: :project
+        post '/' do
+          authorize!(:admin_issue_board, board_parent)
+
+          create_board
+        end
+
+        desc 'Update an issue board' do
+          detail 'Updates a specified issue board in a project.'
+          success Entities::Board
+          tags ['boards']
+        end
+        params do
+          requires :board_id, type: Integer, desc: 'ID of the board.'
+          use :update_params
+        end
+        route_setting :authorization, permissions: :update_issue_board, boundary_type: :project
+        put '/:board_id' do
+          authorize!(:admin_issue_board, board_parent)
+
+          update_board
+        end
+
+        desc 'Delete an issue board' do
+          detail 'Deletes a specified issue board in a project.'
+          success Entities::Board
+          tags ['boards']
+        end
+        params do
+          requires :board_id, type: Integer, desc: 'ID of the board.'
+        end
+        route_setting :authorization, permissions: :delete_issue_board, boundary_type: :project
+        delete '/:board_id' do
+          authorize!(:admin_issue_board, board_parent)
+
+          delete_board
+        end
+      end
+
+      params do
+        requires :board_id, type: Integer, desc: 'ID of the board.'
+      end
+      segment ':id/boards/:board_id' do
+        desc 'List all board lists in an issue board' do
+          detail 'Lists all lists in a specified issue board. Does not include `open` and `closed` lists.'
+          success Entities::List
+          tags ['boards']
+        end
+        params do
+          use :pagination
+        end
+        route_setting :authorization, permissions: :read_issue_board_list, boundary_type: :project
         get '/lists' do
-          authorize!(:read_board, user_project)
+          authorize!(:read_issue_board, user_project)
           present paginate(board_lists), with: Entities::List
         end
 
-        desc 'Get a list of a project board' do
-          detail 'This feature was introduced in 8.13'
+        desc 'Retrieve a board list' do
+          detail 'Retrieves a specified list from an issue board.'
           success Entities::List
+          tags ['boards']
         end
         params do
-          requires :list_id, type: Integer, desc: 'The ID of a list'
+          requires :list_id, type: Integer, desc: "ID of the board's list."
         end
+        route_setting :authorization, permissions: :read_issue_board_list, boundary_type: :project
         get '/lists/:list_id' do
-          authorize!(:read_board, user_project)
+          authorize!(:read_issue_board, user_project)
           present board_lists.find(params[:list_id]), with: Entities::List
         end
 
-        desc 'Create a new board list' do
-          detail 'This feature was introduced in 8.13'
+        desc 'Create an issue board list' do
+          detail 'Creates an issue board list.'
           success Entities::List
+          tags ['boards']
         end
         params do
-          requires :label_id, type: Integer, desc: 'The ID of an existing label'
+          use :list_creation_params
         end
+        route_setting :authorization, permissions: :create_issue_board_list, boundary_type: :project
         post '/lists' do
-          unless available_labels.exists?(params[:label_id])
-            render_api_error!({ error: 'Label not found!' }, 400)
-          end
+          authorize!(:admin_issue_board_list, user_project)
 
-          authorize!(:admin_list, user_project)
-
-          service = ::Boards::Lists::CreateService.new(user_project, current_user,
-            { label_id: params[:label_id] })
-
-          list = service.execute(project_board)
-
-          if list.valid?
-            present list, with: Entities::List
-          else
-            render_validation_error!(list)
-          end
+          create_list
         end
 
-        desc 'Moves a board list to a new position' do
-          detail 'This feature was introduced in 8.13'
+        desc 'Update position of a board list' do
+          detail 'Updates the position of a specified list from an issue board.'
           success Entities::List
+          tags ['boards']
         end
         params do
-          requires :list_id,  type: Integer, desc: 'The ID of a list'
-          requires :position, type: Integer, desc: 'The position of the list'
+          requires :list_id,  type: Integer, desc: "ID of the board's list."
+          requires :position, type: Integer, desc: 'Position of the list.'
         end
+        route_setting :authorization, permissions: :update_issue_board_list, boundary_type: :project
         put '/lists/:list_id' do
-          list = project_board.lists.movable.find(params[:list_id])
-
-          authorize!(:admin_list, user_project)
-
-          service = ::Boards::Lists::MoveService.new(user_project, current_user,
-              { position: params[:position] })
-
-          if service.execute(list)
-            present list, with: Entities::List
-          else
-            render_api_error!({ error: "List could not be moved!" }, 400)
-          end
-        end
-
-        desc 'Delete a board list' do
-          detail 'This feature was introduced in 8.13'
-          success Entities::List
-        end
-        params do
-          requires :list_id, type: Integer, desc: 'The ID of a board list'
-        end
-        delete "/lists/:list_id" do
-          authorize!(:admin_list, user_project)
-
           list = board_lists.find(params[:list_id])
 
-          service = ::Boards::Lists::DestroyService.new(user_project, current_user)
+          authorize!(:admin_issue_board_list, user_project)
 
-          unless service.execute(list)
-            render_api_error!({ error: 'List could not be deleted!' }, 400)
-          end
+          move_list(list)
+        end
+
+        desc 'Delete a list from an issue board' do
+          detail 'Deletes a specified list from an issue board.'
+          success Entities::List
+          tags ['boards']
+        end
+        params do
+          requires :list_id, type: Integer, desc: "ID of the board's list."
+        end
+        route_setting :authorization, permissions: :delete_issue_board_list, boundary_type: :project
+        delete "/lists/:list_id" do
+          authorize!(:admin_issue_board_list, user_project)
+          list = board_lists.find(params[:list_id])
+
+          destroy_list(list)
         end
       end
     end

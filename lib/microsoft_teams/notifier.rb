@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module MicrosoftTeams
   class Notifier
     def initialize(webhook)
@@ -9,15 +11,15 @@ module MicrosoftTeams
       result = false
 
       begin
-        response = HTTParty.post(
+        response = Integrations::Clients::HTTP.post(
           @webhook.to_str,
           headers: @header,
-          body: body(options)
+          body: body(**options)
         )
 
         result = true if response
-      rescue HTTParty::Error, StandardError => error
-        Rails.logger.info("#{self.class.name}: Error while connecting to #{@webhook}: #{error.message}")
+      rescue Gitlab::HTTP::Error, StandardError => error
+        Gitlab::AppLogger.info("#{self.class.name}: Error while connecting to #{@webhook}: #{error.message}")
       end
 
       result
@@ -25,22 +27,33 @@ module MicrosoftTeams
 
     private
 
-    def body(options = {})
-      result = { 'sections' => [] }
+    def body(activity:, title: nil, attachments: nil)
+      body = [
+        {
+          type: "TextBlock",
+          text: title,
+          weight: "bolder",
+          size: "medium"
+        }
+      ]
 
-      result['title'] = options[:title]
-      result['summary'] = options[:pretext]
-      result['sections'] << MicrosoftTeams::Activity.new(options[:activity]).prepare
+      body << ::MicrosoftTeams::Activity.new(**activity).prepare
 
-      attachments = options[:attachments]
       unless attachments.blank?
-        result['sections'] << {
-          'title' => 'Details',
-          'facts' => [{ 'name' => 'Attachments', 'value' => attachments }]
+        body << {
+          type: "TextBlock",
+          text: attachments,
+          wrap: true
         }
       end
 
-      result.to_json
+      {
+        type: "message",
+        'attachments' => [
+          contentType: "application/vnd.microsoft.card.adaptive",
+          content: { type: "AdaptiveCard", msteams: { width: "Full" }, version: "1.0", body: body }
+        ]
+      }.to_json
     end
   end
 end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module QuickActions
     # This class takes an array of commands that should be extracted from a
@@ -7,10 +9,38 @@ module Gitlab
     # extractor = Gitlab::QuickActions::Extractor.new([:open, :assign, :labels])
     # ```
     class Extractor
-      attr_reader :command_definitions
+      INLINE_CODE_REGEX = %r{
+        (?<inline_code>
+          # Inline code on separate rows:
+          # `
+          # Anything, including `/cmd arg` which are ignored by this filter
+          # `
 
-      def initialize(command_definitions)
+          `.+?`
+        )
+      }mix
+
+      HTML_BLOCK_REGEX = %r{
+        (?<html>
+          # HTML block:
+          # <tag>
+          # Anything, including `/cmd arg` which are ignored by this filter
+          # </tag>
+
+          ^<[^>]+?>\n
+          .+?
+          \n<\/[^>]+?>$
+        )
+      }mix
+
+      EXCLUSION_REGEX = %r{#{INLINE_CODE_REGEX} | #{HTML_BLOCK_REGEX}}mix
+
+      attr_reader :command_definitions, :keep_actions
+
+      def initialize(command_definitions, keep_actions: false)
         @command_definitions = command_definitions
+        @commands_regex = {}
+        @keep_actions = keep_actions
       end
 
       # Extracts commands from content and return an array of commands.
@@ -19,8 +49,8 @@ module Gitlab
       #   ['command1'],
       #   ['command3', 'arg1 arg2'],
       # ]
-      # The command and the arguments are stripped.
-      # The original command text is removed from the given `content`.
+      # The original command text and arguments are removed from the given `content`,
+      # unless `keep_actions` is true.
       #
       # Usage:
       # ```
@@ -28,30 +58,114 @@ module Gitlab
       # msg = %(hello\n/labels ~foo ~"bar baz"\nworld)
       # commands = extractor.extract_commands(msg) #=> [['labels', '~foo ~"bar baz"']]
       # msg #=> "hello\nworld"
+      #
+      # extractor = Gitlab::QuickActions::Extractor.new([:open, :assign, :labels], keep_actions: true)
+      # msg = %(hello\n/labels ~foo ~"bar baz"\nworld)
+      # commands = extractor.extract_commands(msg) #=> [['labels', '~foo ~"bar baz"']]
+      # msg #=> "hello\n/labels ~foo ~"bar baz"\n\nworld"
       # ```
-      def extract_commands(content, opts = {})
+      def extract_commands(content, only: nil)
         return [content, []] unless content
 
-        content = content.dup
+        perform_regex(content, only: only)
+      end
 
-        commands = []
+      # Encloses quick action commands into code span markdown
+      # avoiding them being executed, for example, when sent via email
+      # to GitLab service desk.
+      # Example: /label ~label1 becomes `/label ~label1`
+      def redact_commands(content)
+        return "" unless content
 
-        content.delete!("\r")
-        content.gsub!(commands_regex(opts)) do
-          if $~[:cmd]
-            commands << [$~[:cmd], $~[:arg]].reject(&:blank?)
-            ''
-          else
-            $~[0]
-          end
-        end
+        content, _ = perform_regex(content, redact: true)
 
-        content, commands = perform_substitutions(content, commands)
-
-        [content.strip, commands]
+        content
       end
 
       private
+
+      def perform_regex(content, only: nil, redact: false)
+        names     = command_names(limit_to_commands: only).map(&:to_s)
+        sub_names = substitution_names.map(&:to_s)
+        commands  = []
+        content   = content.dup
+        content.delete!("\r")
+
+        # use a markdown based pipeline to grab possible paragraphs that might
+        # contain quick actions. This ensures they are not in HTML blocks, quote blocks,
+        # or code blocks.
+        possible_paragraphs = Banzai.render_result(content, { pipeline: :quick_action })[:quick_action_paragraphs]
+
+        if possible_paragraphs.present?
+          content_lines = content.lines
+
+          # Each paragraph that possibly contains quick actions must be searched. In order
+          # to use the `sourcepos` information, we need to convert into individual lines,
+          # and then replace the specific lines.
+          possible_paragraphs.each do |possible|
+            endpos = possible[:end_line]
+            endpos += 1 if content_lines[endpos + 1] == "\n"
+
+            paragraph = content_lines[possible[:start_line]..endpos].join
+
+            paragraph.gsub!(commands_regex(names: names, sub_names: sub_names)) do
+              command, output = if $~[:substitution]
+                                  process_substitutions($~)
+                                else
+                                  process_commands($~, redact)
+                                end
+
+              commands << command
+              output
+            end
+
+            content_lines.fill('', possible[:start_line]..endpos)
+            content_lines[possible[:start_line]] = paragraph
+          end
+
+          content = content_lines.join
+        end
+
+        [content.rstrip, commands.reject(&:empty?)]
+      end
+
+      def process_commands(matched_text, redact)
+        output = matched_text[0]
+        command = []
+
+        if matched_text[:cmd]
+          command = [matched_text[:cmd].downcase, matched_text[:arg]].reject(&:blank?)
+          output = ''
+
+          if redact
+            output = "`/#{matched_text[:cmd]}#{' ' + matched_text[:arg] if matched_text[:arg]}`"
+            output += "\n" if matched_text[0].include?("\n")
+          elsif keep_actions
+            # put the command in a new paragraph, but without introducing newlines
+            # so that each command is in its own line, while also preserving sourcemaps
+            # of the content that follows.
+            output = ActionController::Base.helpers.simple_format(matched_text[0].chomp)
+            output += "\n" if matched_text[0].ends_with?("\n")
+          end
+        end
+
+        [command, output]
+      end
+
+      def process_substitutions(matched_text)
+        output = matched_text[0]
+        command = []
+
+        if matched_text[:substitution]
+          cmd = matched_text[:substitution].downcase
+          command = [cmd, matched_text[:arg]].reject(&:blank?)
+
+          substitution = substitution_definitions.find { |definition| definition.all_names.include?(cmd.to_sym) }
+          output = substitution.perform_substitution(self, output) if substitution
+        end
+
+        [command, output]
+      end
 
       # Builds a regular expression to match known commands.
       # First match group captures the command name and
@@ -60,84 +174,59 @@ module Gitlab
       # It looks something like:
       #
       #   /^\/(?<cmd>close|reopen|...)(?:( |$))(?<arg>[^\/\n]*)(?:\n|$)/
-      def commands_regex(opts)
-        names = command_names(opts).map(&:to_s)
-
-        @commands_regex ||= %r{
-            (?<code>
-              # Code blocks:
-              # ```
-              # Anything, including `/cmd arg` which are ignored by this filter
-              # ```
-
-              ^```
-              .+?
-              \n```$
-            )
-          |
-            (?<html>
-              # HTML block:
-              # <tag>
-              # Anything, including `/cmd arg` which are ignored by this filter
-              # </tag>
-
-              ^<[^>]+?>\n
-              .+?
-              \n<\/[^>]+?>$
-            )
-          |
-            (?<html>
-              # Quote block:
-              # >>>
-              # Anything, including `/cmd arg` which are ignored by this filter
-              # >>>
-
-              ^>>>
-              .+?
-              \n>>>$
-            )
+      def commands_regex(names:, sub_names:)
+        @commands_regex[names] ||= %r{
+            #{EXCLUSION_REGEX}
           |
             (?:
-              # Command not in a blockquote, blockcode, or HTML tag:
+              # Command such as:
               # /close
 
               ^\/
-              (?<cmd>#{Regexp.union(names)})
+              (?<cmd>#{Regexp.new(Regexp.union(names).source, Regexp::IGNORECASE)})
               (?:
                 [ ]
                 (?<arg>[^\n]*)
               )?
-              (?:\n|$)
+              (?:\s*\n|$)
             )
-        }mx
+          |
+            (?:
+              # Substitution such as:
+              # /shrug
+
+              ^\/
+              (?<substitution>#{Regexp.new(Regexp.union(sub_names).source, Regexp::IGNORECASE)})
+              (?:
+                [ ]
+                (?<arg>[^\n]*)
+              )?
+              (?:\s*\n|$)
+            )
+        }mix
       end
 
-      def perform_substitutions(content, commands)
-        return unless content
-
-        substitution_definitions = self.command_definitions.select do |definition|
-          definition.is_a?(Gitlab::QuickActions::SubstitutionDefinition)
-        end
-
-        substitution_definitions.each do |substitution|
-          match_data = substitution.match(content)
-          if match_data
-            command = [substitution.name.to_s]
-            command << match_data[1] unless match_data[1].empty?
-            commands << command
-          end
-          content = substitution.perform_substitution(self, content)
-        end
-
-        [content, commands]
-      end
-
-      def command_names(opts)
+      def command_names(limit_to_commands:)
         command_definitions.flat_map do |command|
           next if command.noop?
 
+          if limit_to_commands && (command.all_names & limit_to_commands).empty?
+            next
+          end
+
           command.all_names
         end.compact
+      end
+
+      def substitution_names
+        substitution_definitions.flat_map { |command| command.all_names }
+          .compact
+      end
+
+      def substitution_definitions
+        @substition_definitions ||= command_definitions.select do |command|
+          command.is_a?(Gitlab::QuickActions::SubstitutionDefinition)
+        end
       end
     end
   end

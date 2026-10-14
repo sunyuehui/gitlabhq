@@ -1,29 +1,4 @@
-require './spec/support/sidekiq'
-
-def create_group_with_parents(user, full_path)
-  parent_path = nil
-  group = nil
-
-  until full_path.blank?
-    path, _, full_path = full_path.partition('/')
-
-    if parent_path
-      parent = Group.find_by_full_path(parent_path)
-
-      parent_path += '/'
-      parent_path += path
-
-      group = Groups::CreateService.new(user, path: path, parent_id: parent.id).execute
-    else
-      parent_path = path
-
-      group = Group.find_by_full_path(parent_path) ||
-        Groups::CreateService.new(user, path: path).execute
-    end
-  end
-
-  group
-end
+require './spec/support/sidekiq_middleware'
 
 Sidekiq::Testing.inline! do
   Gitlab::Seeder.quiet do
@@ -42,13 +17,17 @@ Sidekiq::Testing.inline! do
         'https://android.googlesource.com/platform/hardware/bsp/kernel/common/v4.4.git'
       ]
 
-      user = User.admins.first
+      user = Gitlab::DatabaseImporters::AdminOrganizationImporter.seeded_admin
 
       project_urls.each_with_index do |url, i|
         full_path = url.sub('https://android.googlesource.com/', '')
         full_path = full_path.sub(/\.git\z/, '')
         full_path, _, project_path = full_path.rpartition('/')
-        group = Group.find_by_full_path(full_path) || create_group_with_parents(user, full_path)
+        group = Sidekiq::Worker.skipping_transaction_check do
+          Group.find_by_full_path(full_path) || Groups::NestedCreateService.new(
+            user, group_path: full_path, organization_id: user.organization.id
+          ).execute
+        end
 
         params = {
           import_url: url,

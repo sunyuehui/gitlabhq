@@ -1,362 +1,246 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe GroupsController do
-  let(:user) { create(:user) }
-  let(:group) { create(:group, :public) }
-  let(:project) { create(:project, namespace: group) }
-  let!(:group_member) { create(:group_member, group: group, user: user) }
+require 'spec_helper'
 
-  describe 'GET #index' do
-    context 'as a user' do
-      it 'redirects to Groups Dashboard' do
-        sign_in(user)
+RSpec.describe GroupsController, factory_default: :keep, feature_category: :code_review_workflow do
+  include ExternalAuthorizationServiceHelpers
+  include AdminModeHelper
+  include Namespaces::DeletableHelper
+  include ActionView::Helpers::TagHelper
+  include SafeFormatHelper
 
-        get :index
+  let_it_be(:group_organization) { current_organization }
+  let_it_be_with_refind(:group) { create_default(:group, :public, organization: group_organization) }
+  let_it_be_with_refind(:project) { create(:project, namespace: group) }
+  let_it_be(:user) { create(:user) }
+  let_it_be(:admin_with_admin_mode) { create(:admin) }
+  let_it_be(:admin_without_admin_mode) { create(:admin) }
+  let_it_be(:group_member) { create(:group_member, group: group, user: user) }
+  let_it_be_with_reload(:owner) { group.add_owner(create(:user)).user }
+  let_it_be(:maintainer) { group.add_maintainer(create(:user)).user }
+  let_it_be_with_reload(:developer) { group.add_developer(create(:user)).user }
+  let_it_be(:guest) { group.add_guest(create(:user)).user }
 
-        expect(response).to redirect_to(dashboard_groups_path)
-      end
-    end
-
-    context 'as a guest' do
-      it 'redirects to Explore Groups' do
-        get :index
-
-        expect(response).to redirect_to(explore_groups_path)
-      end
-    end
+  before_all do
+    group_organization.users = User.all
   end
 
-  describe 'GET #subgroups', :nested_groups do
-    let!(:public_subgroup) { create(:group, :public, parent: group) }
-    let!(:private_subgroup) { create(:group, :private, parent: group) }
+  before do
+    enable_admin_mode!(admin_with_admin_mode)
+  end
 
-    context 'as a user' do
+  describe 'POST #export' do
+    context 'when the user does not have permission to export the group' do
+      before do
+        sign_in(guest)
+      end
+
+      it 'returns an error' do
+        post :export, params: { id: group.to_param }
+
+        expect(response).to have_gitlab_http_status(:not_found)
+      end
+    end
+
+    context 'when the user has permission to export the group' do
       before do
         sign_in(user)
       end
 
-      it 'shows all subgroups' do
-        get :subgroups, id: group.to_param
+      it 'triggers the export job' do
+        expect(GroupExportWorker).to receive(:perform_async).with(user.id, group.id, { 'exported_by_admin' => false })
 
-        expect(assigns(:nested_groups)).to contain_exactly(public_subgroup, private_subgroup)
+        post :export, params: { id: group.to_param }
       end
 
-      context 'being member of private subgroup' do
-        it 'shows public and private subgroups the user is member of' do
-          group_member.destroy!
-          private_subgroup.add_guest(user)
+      it 'redirects to the edit page' do
+        post :export, params: { id: group.to_param }
 
-          get :subgroups, id: group.to_param
-
-          expect(assigns(:nested_groups)).to contain_exactly(public_subgroup, private_subgroup)
-        end
+        expect(response).to have_gitlab_http_status(:found)
       end
     end
 
-    context 'as a guest' do
-      it 'shows the public subgroups' do
-        get :subgroups, id: group.to_param
-
-        expect(assigns(:nested_groups)).to contain_exactly(public_subgroup)
-      end
-    end
-  end
-
-  describe 'GET #issues' do
-    let(:issue_1) { create(:issue, project: project) }
-    let(:issue_2) { create(:issue, project: project) }
-
-    before do
-      create_list(:award_emoji, 3, awardable: issue_2)
-      create_list(:award_emoji, 2, awardable: issue_1)
-      create_list(:award_emoji, 2, :downvote, awardable: issue_2)
-
-      sign_in(user)
-    end
-
-    context 'sorting by votes' do
-      it 'sorts most popular issues' do
-        get :issues, id: group.to_param, sort: 'upvotes_desc'
-        expect(assigns(:issues)).to eq [issue_2, issue_1]
+    context 'when user is admin' do
+      before do
+        sign_in(admin_with_admin_mode)
       end
 
-      it 'sorts least popular issues' do
-        get :issues, id: group.to_param, sort: 'downvotes_desc'
-        expect(assigns(:issues)).to eq [issue_2, issue_1]
-      end
-    end
-  end
+      it 'triggers the export job, and passes `exported_by_admin` correctly in the `params` hash' do
+        expect(GroupExportWorker).to receive(:perform_async).with(admin_with_admin_mode.id, group.id, { 'exported_by_admin' => true })
 
-  describe 'GET #merge_requests' do
-    let(:merge_request_1) { create(:merge_request, source_project: project) }
-    let(:merge_request_2) { create(:merge_request, :simple, source_project: project) }
-
-    before do
-      create_list(:award_emoji, 3, awardable: merge_request_2)
-      create_list(:award_emoji, 2, awardable: merge_request_1)
-      create_list(:award_emoji, 2, :downvote, awardable: merge_request_2)
-
-      sign_in(user)
-    end
-
-    context 'sorting by votes' do
-      it 'sorts most popular merge requests' do
-        get :merge_requests, id: group.to_param, sort: 'upvotes_desc'
-        expect(assigns(:merge_requests)).to eq [merge_request_2, merge_request_1]
-      end
-
-      it 'sorts least popular merge requests' do
-        get :merge_requests, id: group.to_param, sort: 'downvotes_desc'
-        expect(assigns(:merge_requests)).to eq [merge_request_2, merge_request_1]
-      end
-    end
-  end
-
-  describe 'DELETE #destroy' do
-    context 'as another user' do
-      it 'returns 404' do
-        sign_in(create(:user))
-
-        delete :destroy, id: group.to_param
-
-        expect(response.status).to eq(404)
+        post :export, params: { id: group.to_param }
       end
     end
 
-    context 'as the group owner' do
+    context 'when the endpoint receives requests above the rate limit' do
       before do
         sign_in(user)
+
+        allow(Gitlab::ApplicationRateLimiter).to receive(:throttled?)
+          .with(:group_export, scope: anything).and_return(true)
       end
 
-      it 'schedules a group destroy' do
-        Sidekiq::Testing.fake! do
-          expect { delete :destroy, id: group.to_param }.to change(GroupDestroyWorker.jobs, :size).by(1)
-        end
-      end
+      it 'throttles the endpoint' do
+        post :export, params: { id: group.to_param }
 
-      it 'redirects to the root path' do
-        delete :destroy, id: group.to_param
-
-        expect(response).to redirect_to(root_path)
+        expect(response.body).to eq('This endpoint has been requested too many times. Try again later.')
+        expect(response).to have_gitlab_http_status :too_many_requests
       end
     end
   end
 
-  describe 'PUT update' do
+  describe 'GET #download_export' do
+    let(:admin) { create(:admin) }
+    let(:export_file) { fixture_file_upload('spec/fixtures/group_export.tar.gz') }
+
     before do
+      enable_admin_mode!(admin)
+    end
+
+    context 'when there is a file available to download' do
+      before do
+        sign_in(admin)
+        create(:import_export_upload, group: group, export_file: export_file, user: admin)
+      end
+
+      it 'sends the file with import-compatible download headers' do
+        get :download_export, params: { id: group.to_param }
+
+        expect(response.body).to eq export_file.tempfile.read
+        expect(response.header['Content-Disposition']).to include('group_export.tar.gz')
+        expect(response.header['Content-Type']).to eq('application/octet-stream')
+      end
+    end
+
+    context 'when the file is no longer present on disk' do
+      before do
+        sign_in(admin)
+
+        create(:import_export_upload, group: group, export_file: export_file, user: admin)
+        group.export_file(admin).file.delete
+      end
+
+      it 'returns not found' do
+        get :download_export, params: { id: group.to_param }
+
+        expect(flash[:alert]).to include('file containing the export is not available yet')
+        expect(response).to redirect_to(edit_group_path(group))
+      end
+    end
+
+    context 'when there is no file available to download' do
+      before do
+        sign_in(admin)
+      end
+
+      it 'returns not found' do
+        get :download_export, params: { id: group.to_param }
+
+        expect(flash[:alert])
+          .to eq 'Group export link has expired. Please generate a new export from your group settings.'
+
+        expect(response).to redirect_to(edit_group_path(group))
+      end
+    end
+
+    context 'when the user does not have the required permissions' do
+      before do
+        sign_in(guest)
+      end
+
+      it 'returns not_found' do
+        get :download_export, params: { id: group.to_param }
+
+        expect(response).to have_gitlab_http_status(:not_found)
+      end
+    end
+
+    context 'when the endpoint receives requests above the rate limit' do
+      before do
+        sign_in(admin)
+
+        allow(Gitlab::ApplicationRateLimiter).to receive(:throttled?)
+          .with(:group_download_export, scope: { user: admin, group: group }).and_return(true)
+      end
+
+      it 'throttles the endpoint' do
+        get :download_export, params: { id: group.to_param }
+
+        expect(response.body).to eq('This endpoint has been requested too many times. Try again later.')
+        expect(response).to have_gitlab_http_status :too_many_requests
+      end
+    end
+  end
+
+  describe 'external authorization' do
+    before do
+      group.add_owner(user)
       sign_in(user)
     end
 
-    it 'updates the path successfully' do
-      post :update, id: group.to_param, group: { path: 'new_path' }
+    describe "GET #activity as JSON" do
+      include DesignManagementTestHelpers
 
-      expect(response).to have_http_status(302)
-      expect(controller).to set_flash[:notice]
-    end
+      let(:other_project) { create(:project, :public, group: group) }
 
-    it 'does not update the path on error' do
-      allow_any_instance_of(Group).to receive(:move_dir).and_raise(Gitlab::UpdatePathError)
-      post :update, id: group.to_param, group: { path: 'new_path' }
-
-      expect(assigns(:group).errors).not_to be_empty
-      expect(assigns(:group).path).not_to eq('new_path')
-    end
-  end
-
-  describe '#ensure_canonical_path' do
-    before do
-      sign_in(user)
-    end
-
-    context 'for a GET request' do
-      context 'when requesting groups at the root path' do
-        before do
-          allow(request).to receive(:original_fullpath).and_return("/#{group_full_path}")
-          get :show, id: group_full_path
-        end
-
-        context 'when requesting the canonical path with different casing' do
-          let(:group_full_path) { group.to_param.upcase }
-
-          it 'redirects to the correct casing' do
-            expect(response).to redirect_to(group)
-            expect(controller).not_to set_flash[:notice]
-          end
-        end
-
-        context 'when requesting a redirected path' do
-          let(:redirect_route) { group.redirect_routes.create(path: 'old-path') }
-          let(:group_full_path) { redirect_route.path }
-
-          it 'redirects to the canonical path' do
-            expect(response).to redirect_to(group)
-            expect(controller).to set_flash[:notice].to(group_moved_message(redirect_route, group))
-          end
-
-          context 'when the old group path is a substring of the scheme or host' do
-            let(:redirect_route) { group.redirect_routes.create(path: 'http') }
-
-            it 'does not modify the requested host' do
-              expect(response).to redirect_to(group)
-              expect(controller).to set_flash[:notice].to(group_moved_message(redirect_route, group))
-            end
-          end
-
-          context 'when the old group path is substring of groups' do
-            # I.e. /groups/oups should not become /grfoo/oups
-            let(:redirect_route) { group.redirect_routes.create(path: 'oups') }
-
-            it 'does not modify the /groups part of the path' do
-              expect(response).to redirect_to(group)
-              expect(controller).to set_flash[:notice].to(group_moved_message(redirect_route, group))
-            end
-          end
-        end
+      def get_activity
+        get :activity, params: { format: :json, id: group.to_param }
       end
 
-      context 'when requesting groups under the /groups path' do
-        context 'when requesting the canonical path' do
-          context 'non-show path' do
-            context 'with exactly matching casing' do
-              it 'does not redirect' do
-                get :issues, id: group.to_param
+      before do
+        enable_design_management
+        issue = create(:issue, project: project)
+        create(:event, :created, project: project, target: issue)
+        create(:design_event, project: project)
+        create(:design_event, project: other_project)
 
-                expect(response).not_to have_http_status(301)
-              end
-            end
+        sign_in(user)
 
-            context 'with different casing' do
-              it 'redirects to the correct casing' do
-                get :issues, id: group.to_param.upcase
+        request.cookies[:event_filter] = 'all'
+      end
 
-                expect(response).to redirect_to(issues_group_path(group.to_param))
-                expect(controller).not_to set_flash[:notice]
-              end
-            end
-          end
+      it 'returns count' do
+        get_activity
 
-          context 'show path' do
-            context 'with exactly matching casing' do
-              it 'does not redirect' do
-                get :show, id: group.to_param
+        expect(json_response['count']).to eq(3)
+      end
 
-                expect(response).not_to have_http_status(301)
-              end
-            end
+      # Guards against silent drift: the permitted list in event_projects_finder_params is
+      # hand-maintained, so a dropped or wrongly-typed key would stop filtering without error.
+      it 'forwards every permitted filter to the project finder', :aggregate_failures do
+        scalar_filters = {
+          visibility_level: '20', topic: 'topic', topic_id: '1', personal: 'true', search: 'q',
+          non_archived: 'true', archived: 'true', owned: 'true', non_public: 'true',
+          min_access_level: '30', starred: 'true', with_issues_enabled: 'true',
+          with_merge_requests_enabled: 'true', namespace_path: 'g', include_pending_delete: 'true',
+          id_after: '1', id_before: '9', marked_for_deletion_on: '2026-01-01',
+          aimed_for_deletion: 'true', not_aimed_for_deletion: 'true',
+          last_activity_after: '2026-01-01', last_activity_before: '2026-02-01',
+          repository_storage: 'default', language_name: 'Ruby', active: 'true',
+          last_repository_check_failed: 'true', with_security_reports: 'true',
+          include_hidden: 'true', duo_licensed_feature: 'x',
+          filter_expired_saml_session_projects: 'true', name: 'n',
+          minimum_search_length: '3', search_namespaces: 'true',
+          updated_before: '2026-02-01', updated_after: '2026-01-01'
+        }
+        array_filters = {
+          full_paths: ['g/p'], plans: ['ultimate'], feature_available: ['x'],
+          custom_attributes: { 'k' => 'v' }
+        }
 
-            context 'with different casing' do
-              it 'redirects to the correct casing at the root path' do
-                get :show, id: group.to_param.upcase
-
-                expect(response).to redirect_to(group)
-                expect(controller).not_to set_flash[:notice]
-              end
-            end
-          end
+        captured = nil
+        allow(GroupProjectsFinder).to receive(:new).and_wrap_original do |original, **kwargs|
+          captured = kwargs[:params]
+          original.call(**kwargs)
         end
 
-        context 'when requesting a redirected path' do
-          let(:redirect_route) { group.redirect_routes.create(path: 'old-path') }
+        get :activity, params: { format: :json, id: group.to_param }
+                         .merge(scalar_filters).merge(array_filters)
 
-          it 'redirects to the canonical path' do
-            get :issues, id: redirect_route.path
-
-            expect(response).to redirect_to(issues_group_path(group.to_param))
-            expect(controller).to set_flash[:notice].to(group_moved_message(redirect_route, group))
-          end
-
-          context 'when the old group path is a substring of the scheme or host' do
-            let(:redirect_route) { group.redirect_routes.create(path: 'http') }
-
-            it 'does not modify the requested host' do
-              get :issues, id: redirect_route.path
-
-              expect(response).to redirect_to(issues_group_path(group.to_param))
-              expect(controller).to set_flash[:notice].to(group_moved_message(redirect_route, group))
-            end
-          end
-
-          context 'when the old group path is substring of groups' do
-            # I.e. /groups/oups should not become /grfoo/oups
-            let(:redirect_route) { group.redirect_routes.create(path: 'oups') }
-
-            it 'does not modify the /groups part of the path' do
-              get :issues, id: redirect_route.path
-
-              expect(response).to redirect_to(issues_group_path(group.to_param))
-              expect(controller).to set_flash[:notice].to(group_moved_message(redirect_route, group))
-            end
-          end
-
-          context 'when the old group path is substring of groups plus the new path' do
-            # I.e. /groups/oups/oup should not become /grfoos
-            let(:redirect_route) { group.redirect_routes.create(path: 'oups/oup') }
-
-            it 'does not modify the /groups part of the path' do
-              get :issues, id: redirect_route.path
-
-              expect(response).to redirect_to(issues_group_path(group.to_param))
-              expect(controller).to set_flash[:notice].to(group_moved_message(redirect_route, group))
-            end
-          end
-        end
+        captured = captured.to_h.symbolize_keys
+        scalar_filters.each { |key, value| expect(captured[key]).to eq(value) }
+        array_filters.each { |key, value| expect(captured[key]).to eq(value) }
       end
     end
-
-    context 'for a POST request' do
-      context 'when requesting the canonical path with different casing' do
-        it 'does not 404' do
-          post :update, id: group.to_param.upcase, group: { path: 'new_path' }
-
-          expect(response).not_to have_http_status(404)
-        end
-
-        it 'does not redirect to the correct casing' do
-          post :update, id: group.to_param.upcase, group: { path: 'new_path' }
-
-          expect(response).not_to have_http_status(301)
-        end
-      end
-
-      context 'when requesting a redirected path' do
-        let(:redirect_route) { group.redirect_routes.create(path: 'old-path') }
-
-        it 'returns not found' do
-          post :update, id: redirect_route.path, group: { path: 'new_path' }
-
-          expect(response).to have_http_status(404)
-        end
-      end
-    end
-
-    context 'for a DELETE request' do
-      context 'when requesting the canonical path with different casing' do
-        it 'does not 404' do
-          delete :destroy, id: group.to_param.upcase
-
-          expect(response).not_to have_http_status(404)
-        end
-
-        it 'does not redirect to the correct casing' do
-          delete :destroy, id: group.to_param.upcase
-
-          expect(response).not_to have_http_status(301)
-        end
-      end
-
-      context 'when requesting a redirected path' do
-        let(:redirect_route) { group.redirect_routes.create(path: 'old-path') }
-
-        it 'returns not found' do
-          delete :destroy, id: redirect_route.path
-
-          expect(response).to have_http_status(404)
-        end
-      end
-    end
-  end
-
-  def group_moved_message(redirect_route, group)
-    "Group '#{redirect_route.path}' was moved to '#{group.full_path}'. Please update any links and bookmarks that may still have the old path."
   end
 end

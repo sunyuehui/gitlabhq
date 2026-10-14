@@ -1,22 +1,43 @@
-<template>
-  <div class="output">
-    <prompt />
-    <div v-html="rawCode"></div>
-  </div>
-</template>
-
 <script>
 import Prompt from '../prompt.vue';
 
 export default {
+  name: 'OutputHtml',
+  components: {
+    Prompt,
+  },
   props: {
+    count: {
+      type: Number,
+      required: true,
+    },
     rawCode: {
       type: String,
       required: true,
     },
+    index: {
+      type: Number,
+      required: true,
+    },
   },
-  components: {
-    prompt: Prompt,
+  computed: {
+    showOutput() {
+      return this.index === 0;
+    },
   },
 };
 </script>
+
+<template>
+  <div class="output">
+    <prompt type="Out" :count="count" :show-output="showOutput" />
+    <iframe
+      sandbox
+      :srcdoc="rawCode"
+      frameborder="0"
+      scrolling="auto"
+      width="100%"
+      class="gl-overflow-auto"
+    ></iframe>
+  </div>
+</template>

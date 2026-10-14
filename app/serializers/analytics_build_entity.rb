@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class AnalyticsBuildEntity < Grape::Entity
   include RequestAwareEntity
   include EntityDateHelper
@@ -7,6 +9,13 @@ class AnalyticsBuildEntity < Grape::Entity
   expose :ref, as: :branch
   expose :short_sha
   expose :author, using: UserEntity
+  expose :project_path do |build|
+    build.project.path
+  end
+
+  expose :namespace_full_path do |build|
+    build.project.namespace.full_path
+  end
 
   expose :started_at, as: :date do |build|
     interval_in_words(build[:started_at])

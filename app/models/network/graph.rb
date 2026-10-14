@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 module Network
   class Graph
-    attr_reader :days, :commits, :map, :notes, :repo
+    attr_reader :days, :commits, :map, :repo
 
     def self.max_count
       @max_count ||= 650
@@ -15,32 +17,19 @@ module Network
 
       @commits = collect_commits
       @days = index_commits
-      @notes = collect_notes
     end
 
     protected
 
-    def collect_notes
-      h = Hash.new(0)
-
-      @project
-        .notes
-        .where('noteable_type = ?', 'Commit')
-        .group('notes.commit_id')
-        .select('notes.commit_id, count(notes.id) as note_count')
-        .each do |item|
-          h[item.commit_id] = item.note_count.to_i
-        end
-
-      h
-    end
-
     # Get commits from repository
     #
     def collect_commits
-      find_commits(count_to_display_commit_in_center).map do |commit|
+      # https://gitlab.com/gitlab-org/gitlab-foss/issues/58013
+      Gitlab::GitalyClient.allow_n_plus_1_calls do
         # Decorate with app/model/network/commit.rb
-        Network::Commit.new(commit)
+        list_commits(count_to_display_commit_in_center).map do |commit|
+          Network::Commit.new(commit)
+        end
       end
     end
 
@@ -73,13 +62,33 @@ module Network
       days
     end
 
+    # TODO: `skip` is not a valid parameter for `ListCommitsRequest` RPC
+    # Issue: https://gitlab.com/gitlab-org/gitlab/-/issues/481720
+
     # Skip count that the target commit is displayed in center.
     def count_to_display_commit_in_center
+      offset = calculate_offset
+
+      if self.class.max_count / 2 < offset
+        # get max index that commit is displayed in the center.
+        offset - (self.class.max_count / 2)
+      else
+        0
+      end
+    end
+
+    def calculate_offset
+      unless @filter_ref
+        return @project.repository.count_commits(revisions: ['--branches', '--tags'],
+          after: @commit.date)
+      end
+
       offset = -1
       skip = 0
       while offset == -1
-        tmp_commits = find_commits(skip)
-        if tmp_commits.size > 0
+        tmp_commits = list_commits(skip)
+
+        if tmp_commits.present?
           index = tmp_commits.index do |c|
             c.id == @commit.id
           end
@@ -96,24 +105,28 @@ module Network
         end
       end
 
-      if self.class.max_count / 2 < offset
-        # get max index that commit is displayed in the center.
-        offset - self.class.max_count / 2
-      else
-        0
-      end
+      offset
     end
 
-    def find_commits(skip = 0)
-      opts = {
-        max_count: self.class.max_count,
-        skip: skip,
-        order: :date
-      }
+    def list_commits(skip = 0)
+      Gitlab::SafeRequestStore.fetch([@project, :network_graph_commits, skip]) do
+        opts = {
+          revisions: %w[--tags --branches],
+          pagination_params: { limit: self.class.max_count },
+          reverse: false,
+          order: :date,
+          skip: skip
+        }
 
-      opts[:ref] = @commit.id if @filter_ref
+        if @filter_ref
+          opts[:ref] = @commit.id
+          opts[:before] = @commit.committed_date
+        else
+          opts[:ref] = @ref
+        end
 
-      Gitlab::Git::Commit.find_all(@repo.raw_repository, opts)
+        Gitlab::Git::Commit.list_all(@repo.raw_repository, opts)
+      end
     end
 
     def commits_sort_by_ref
@@ -152,14 +165,14 @@ module Network
     end
 
     def find_free_parent_space(range, space_base, space_step, space_default)
-      if is_overlap?(range, space_default)
+      if overlap?(range, space_default)
         find_free_space(range, space_step, space_base, space_default)
       else
         space_default
       end
     end
 
-    def is_overlap?(range, overlap_space)
+    def overlap?(range, overlap_space)
       range.each do |i|
         if i != range.first &&
             i != range.last &&
@@ -206,7 +219,7 @@ module Network
 
       # Visit branching chains
       leaves.each do |l|
-        parents = l.parents(@map).select {|p| p.space.zero?}
+        parents = l.parents(@map).select { |p| p.space == 0 }
         parents.each do |p|
           place_chain(p, l.time)
         end
@@ -216,11 +229,12 @@ module Network
     def get_space_base(leaves)
       space_base = 1
       parents = leaves.last.parents(@map)
-      if parents.size > 0
+      if parents.present?
         if parents.first.space > 0
           space_base = parents.first.space
         end
       end
+
       space_base
     end
 
@@ -260,14 +274,14 @@ module Network
     def take_left_leaves(raw_commit)
       commit = @map[raw_commit.id]
       leaves = []
-      leaves.push(commit) if commit.space.zero?
+      leaves.push(commit) if commit.space == 0
 
       loop do
-        return leaves if commit.parents(@map).count.zero?
+        return leaves if commit.parents(@map).count == 0
 
         commit = commit.parents(@map).first
 
-        return leaves unless commit.space.zero?
+        return leaves unless commit.space == 0
 
         leaves.push(commit)
       end

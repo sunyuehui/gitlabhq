@@ -1,4 +1,18 @@
-class RedirectRoute < ActiveRecord::Base
+# frozen_string_literal: true
+
+class RedirectRoute < ApplicationRecord
+  include CaseSensitivity
+  include Cells::Claimable
+
+  cells_claims_attribute :path, type: CLAIMS_CLAIM_TYPE::CLAIM_TYPE_REDIRECT_ROUTE
+
+  cells_claims_metadata subject_type: CLAIMS_SUBJECT_TYPE::NAMESPACE,
+    # We don't just use :namespace_id here, because it's updated by
+    # the trigger trigger_sync_redirect_routes_namespace_id, and
+    # we have to load it again from the database to get the value.
+    # See https://gitlab.com/gitlab-org/gitlab/-/issues/583759
+    subject_key: -> { self.class.where(id: id).pick(:namespace_id) }
+
   belongs_to :source, polymorphic: true # rubocop:disable Cop/PolymorphicAssociations
 
   validates :source, presence: true
@@ -8,12 +22,10 @@ class RedirectRoute < ActiveRecord::Base
     presence: true,
     uniqueness: { case_sensitive: false }
 
-  scope :matching_path_and_descendants, -> (path) do
-    wheres = if Gitlab::Database.postgresql?
-               'LOWER(redirect_routes.path) = LOWER(?) OR LOWER(redirect_routes.path) LIKE LOWER(?)'
-             else
-               'redirect_routes.path = ? OR redirect_routes.path LIKE ?'
-             end
+  scope :for_source_type, ->(source_type) { where(source_type: source_type) }
+  scope :by_paths, ->(paths) { where(path: [paths]) }
+  scope :matching_path_and_descendants, ->(path) do
+    wheres = 'LOWER(redirect_routes.path) = LOWER(?) OR LOWER(redirect_routes.path) LIKE LOWER(?)'
 
     where(wheres, path, "#{sanitize_sql_like(path)}/%")
   end

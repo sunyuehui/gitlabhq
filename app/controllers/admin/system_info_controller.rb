@@ -1,14 +1,22 @@
+# frozen_string_literal: true
+
 class Admin::SystemInfoController < Admin::ApplicationController
-  EXCLUDED_MOUNT_OPTIONS = [
-    'nobrowse',
-    'read-only',
-    'ro'
+  feature_category :not_owned # rubocop:todo Gitlab/AvoidFeatureCategoryNotOwned
+  authorize! :read_admin_system_information, only: [:show]
+
+  EXCLUDED_MOUNT_OPTIONS = %w[
+    nobrowse
+    read-only
+    ro
   ].freeze
 
   EXCLUDED_MOUNT_TYPES = [
     'autofs',
     'binfmt_misc',
+    'bpf',
     'cgroup',
+    'cgroup2',
+    'configfs',
     'debugfs',
     'devfs',
     'devpts',
@@ -30,8 +38,16 @@ class Admin::SystemInfoController < Admin::ApplicationController
   ].freeze
 
   def show
-    @cpus = Vmstat.cpu rescue nil
-    @memory = Vmstat.memory rescue nil
+    @cpus = begin
+      Vmstat.cpu
+    rescue StandardError
+      nil
+    end
+    @memory = begin
+      Vmstat.memory
+    rescue StandardError
+      nil
+    end
     mounts = Sys::Filesystem.mounts
 
     @disks = []
@@ -45,9 +61,9 @@ class Admin::SystemInfoController < Admin::ApplicationController
         disk = Sys::Filesystem.stat(mount.mount_point)
         @disks.push({
           bytes_total: disk.bytes_total,
-          bytes_used:  disk.bytes_used,
-          disk_name:   mount.name,
-          mount_path:  disk.path
+          bytes_used: disk.bytes_used,
+          disk_name: mount.name,
+          mount_path: disk.path
         })
       rescue Sys::Filesystem::Error
       end

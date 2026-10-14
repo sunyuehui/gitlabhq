@@ -1,9 +1,11 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
-describe Gitlab::MarkupHelper do
+require 'fast_spec_helper'
+
+RSpec.describe Gitlab::MarkupHelper do
   describe '#markup?' do
-    %w(textile rdoc org creole wiki
-       mediawiki rst adoc ad asciidoc mdown md markdown).each do |type|
+    %w[textile rdoc org creole wiki
+      mediawiki rst adoc ad asciidoc mdown md markdown].each do |type|
       it "returns true for #{type} files" do
         expect(described_class.markup?("README.#{type}")).to be_truthy
       end
@@ -15,7 +17,7 @@ describe Gitlab::MarkupHelper do
   end
 
   describe '#gitlab_markdown?' do
-    %w(mdown mkd mkdn md markdown).each do |type|
+    %w[mdown mkd mkdn md markdown].each do |type|
       it "returns true for #{type} files" do
         expect(described_class.gitlab_markdown?("README.#{type}")).to be_truthy
       end
@@ -27,7 +29,7 @@ describe Gitlab::MarkupHelper do
   end
 
   describe '#asciidoc?' do
-    %w(adoc ad asciidoc ADOC).each do |type|
+    %w[adoc ad asciidoc ADOC].each do |type|
       it "returns true for #{type} files" do
         expect(described_class.asciidoc?("README.#{type}")).to be_truthy
       end

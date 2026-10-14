@@ -1,71 +1,129 @@
+# frozen_string_literal: true
+
 class Projects::TagsController < Projects::ApplicationController
   include SortingHelper
+  include HandlesGitalyErrors
+
+  prepend_before_action(only: [:index]) { authenticate_sessionless_user!(:rss, permission: :read_code) }
 
   # Authorize
   before_action :require_non_empty_project
-  before_action :authorize_download_code!
-  before_action :authorize_push_code!, only: [:new, :create]
-  before_action :authorize_admin_project!, only: [:destroy]
+  before_action :authorize_read_code!
+  before_action :authorize_admin_tag!, only: [:new, :create, :destroy]
+  before_action -> { check_rate_limit!(:tags_create, scope: { project: project }, redirect_back: true) },
+    only: [:create]
+
+  feature_category :source_code_management
+  urgency :low, [:new, :show, :index]
 
   def index
-    params[:sort] = params[:sort].presence || sort_value_recently_updated
+    # ProjectPolicy#foundational_flows_available? reads the cascading duo_foundational_flows_enabled
+    # setting, which fires extra queries beyond the default 100 threshold.
+    Gitlab::QueryLimiting.disable!('https://gitlab.com/gitlab-org/gitlab/-/work_items/600660', new_threshold: 101)
 
-    @sort = params[:sort]
-    @tags = TagsFinder.new(@repository, params).execute
-    @tags = Kaminari.paginate_array(@tags).page(params[:page])
+    tags_params = params
+      .permit(:search, :sort, :per_page, :page_token, :page)
+      .with_defaults(sort: sort_value_recently_updated)
+
+    @sort = tags_params[:sort]
+    @search = tags_params[:search]
+
+    @tags = TagsFinder.new(@repository, tags_params).execute
+
+    @tags = Kaminari.paginate_array(@tags).page(tags_params[:page])
+
+    TagsFinder.batch_load_tag_signature_data(@tags)
 
     tag_names = @tags.map(&:name)
-    @tags_pipelines = @project.pipelines.latest_successful_for_refs(tag_names)
-    @releases = project.releases.where(tag: tag_names)
+
+    @releases = ReleasesFinder.new(project, current_user, tag: tag_names).execute
+    @tag_pipeline_statuses =
+      Ci::CommitStatusesFinder.new(@project, @repository, current_user, @tags, ref_type: :tags).execute
+
+    respond_to do |format|
+      format.html
+      format.atom { render layout: 'xml' }
+    end
   end
 
+  # rubocop: disable CodeReuse/ActiveRecord
   def show
-    @tag = @repository.find_tag(params[:id])
+    @tag = @repository.find_tag(id_param)
 
     return render_404 unless @tag
 
-    @release = @project.releases.find_or_initialize_by(tag: @tag.name)
+    @release = @project.releases.find_by(tag: @tag.name)
     @commit = @repository.commit(@tag.dereferenced_target)
+
+    @pipeline_status = Ci::CommitStatusesFinder
+      .new(@project, @repository, current_user, [@tag], ref_type: :tags)
+      .execute[@tag.name]
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def create
-    result = Tags::CreateService.new(@project, current_user)
-      .execute(params[:tag_name], params[:ref], params[:message], params[:release_description])
+    evidence_pipeline = find_evidence_pipeline
+    tag_params = tag_create_params
+
+    result = ::Tags::CreateService.new(@project, current_user)
+      .execute(tag_params[:tag_name], tag_params[:ref], tag_params[:message])
 
     if result[:status] == :success
+      # TODO: remove this with the release creation moved to it's own form https://gitlab.com/gitlab-org/gitlab/-/issues/214245
+      if tag_params[:release_description].present?
+        release_params = {
+          tag: tag_params[:tag_name],
+          name: tag_params[:tag_name],
+          description: tag_params[:release_description],
+          evidence_pipeline: evidence_pipeline
+        }
+
+        Releases::CreateService
+          .new(@project, current_user, release_params)
+          .execute
+      end
+
       @tag = result[:tag]
 
       redirect_to project_tag_path(@project, @tag.name)
     else
       @error = result[:message]
-      @message = params[:message]
-      @release_description = params[:release_description]
+      @message = tag_params[:message]
+      @release_description = tag_params[:release_description]
       render action: 'new'
     end
   end
 
   def destroy
-    result = Tags::DestroyService.new(project, current_user).execute(params[:id])
+    result = ::Tags::DestroyService.new(project, current_user).execute(id_param)
 
-    respond_to do |format|
-      if result[:status] == :success
-        format.html do
-          redirect_to project_tags_path(@project), status: 303
-        end
+    flash_type = result[:status] == :error ? :alert : :notice
+    flash[flash_type] = result[:message]
 
-        format.js
-      else
-        @error = result[:message]
-
-        format.html do
-          redirect_to project_tags_path(@project),
-            alert: @error, status: 303
-        end
-
-        format.js do
-          render status: :unprocessable_entity
-        end
-      end
+    # When deleting from an individual tag's show page, redirect to index to avoid 404
+    # otherwise, redirect to pre-sorted list or the default tags list
+    if request.referer&.include?(project_tag_path(@project, id_param))
+      redirect_to project_tags_path(@project), status: :see_other
+    else
+      redirect_back_or_default(default: project_tags_path(@project), options: { status: :see_other })
     end
+  end
+
+  private
+
+  def id_param
+    params.permit(:id)[:id]
+  end
+
+  def tag_create_params
+    params.permit(:tag_name, :ref, :message, :release_description)
+  end
+
+  # TODO: remove this with the release creation moved to it's own form https://gitlab.com/gitlab-org/gitlab/-/issues/214245
+  def find_evidence_pipeline
+    evidence_pipeline_sha = @project.repository.commit(params.permit(:ref)[:ref])&.sha
+    return unless evidence_pipeline_sha
+
+    @project.ci_pipelines.for_sha(evidence_pipeline_sha).last
   end
 end

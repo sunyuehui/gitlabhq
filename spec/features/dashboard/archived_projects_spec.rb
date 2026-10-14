@@ -1,17 +1,24 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-RSpec.describe 'Dashboard Archived Project' do
-  let(:user) { create :user }
-  let(:project) { create :project}
-  let(:archived_project) { create(:project, :archived) }
+RSpec.describe 'Dashboard Archived Project', :js, :with_current_organization, feature_category: :groups_and_projects do
+  include GlFilteredSearchHelpers
+  let_it_be(:user) { create(:user, organization: current_organization) }
+  let_it_be(:project) { create :project }
+  let_it_be(:archived_project) { create(:project, :archived) }
+  let_it_be(:archived_project_2) { create(:project, :archived) }
+
+  before_all do
+    project.add_maintainer(user)
+    archived_project.add_maintainer(user)
+    archived_project_2.add_maintainer(user)
+  end
 
   before do
-    project.team << [user, :master]
-    archived_project.team << [user, :master]
-
     sign_in(user)
 
-    visit dashboard_projects_path
+    visit member_dashboard_projects_path
   end
 
   it 'renders non archived projects' do
@@ -19,25 +26,26 @@ RSpec.describe 'Dashboard Archived Project' do
     expect(page).not_to have_link(archived_project.name)
   end
 
-  it 'renders all projects' do
-    click_link 'Show archived projects'
+  it 'renders only archived projects' do
+    click_link 'Inactive'
 
-    expect(page).to have_link(project.name)
+    expect(page).to have_content(archived_project.name)
+    expect(page).not_to have_content(project.name)
+  end
+
+  it 'searches archived projects', :js do
+    click_link 'Inactive'
+
+    expect(page).to have_link(archived_project.name)
+    expect(page).to have_link(archived_project_2.name)
+
+    search(archived_project.name)
+
+    expect(page).not_to have_link(archived_project_2.name)
     expect(page).to have_link(archived_project.name)
   end
 
-  it 'searchs archived projects', :js do
-    click_button 'Last updated'
-    click_link 'Show archived projects'
-
-    expect(page).to have_link(project.name)
-    expect(page).to have_link(archived_project.name)
-
-    fill_in 'project-filter-form-field', with: archived_project.name
-
-    find('#project-filter-form-field').native.send_keys :return
-
-    expect(page).not_to have_link(project.name)
-    expect(page).to have_link(archived_project.name)
+  def search(term)
+    gl_filtered_search_set_input(term, submit: true)
   end
 end

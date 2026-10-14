@@ -1,43 +1,73 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-feature 'Mini Pipeline Graph in Commit View', :js do
-  let(:user) { create(:user) }
+require 'spec_helper'
+
+RSpec.describe 'Mini Pipeline Graph in Commit View', :js, feature_category: :source_code_management do
   let(:project) { create(:project, :public, :repository) }
 
-  before do
-    sign_in(user)
-  end
-
-  context 'when commit has pipelines' do
+  context 'when commit has pipelines and feature flag is enabled' do
     let(:pipeline) do
-      create(:ci_empty_pipeline,
-              project: project,
-              ref: project.default_branch,
-              sha: project.commit.sha)
+      create(
+        :ci_pipeline,
+        status: :running,
+        project: project,
+        ref: project.default_branch,
+        sha: project.commit.sha
+      )
     end
 
-    let(:build) do
-      create(:ci_build, pipeline: pipeline)
-    end
+    let(:ci_stage) { create(:ci_stage, pipeline: pipeline, name: 'test') }
+    let(:build) { create(:ci_build, pipeline: pipeline, status: :running, ci_stage: ci_stage) }
 
     before do
       build.run
       visit project_commit_path(project, project.commit.id)
+      wait_for_requests
     end
 
-    it 'should display a mini pipeline graph' do
-      expect(page).to have_selector('.mr-widget-pipeline-graph')
+    it 'displays the graphql pipeline stage' do
+      expect(page).to have_selector('[data-testid="pipeline-mini-graph-dropdown"]')
+
+      build.drop
+    end
+  end
+
+  context 'when commit has pipelines and feature flag is disabled', :js do
+    let(:pipeline) do
+      create(
+        :ci_pipeline,
+        status: :running,
+        project: project,
+        ref: project.default_branch,
+        sha: project.commit.sha
+      )
     end
 
-    it 'should show the builds list when stage is clicked' do
-      first('.mini-pipeline-graph-dropdown-toggle').click
+    let(:build) { create(:ci_build, pipeline: pipeline, status: :running) }
+
+    before do
+      build.run
+      visit project_commit_path(project, project.commit.id)
+      wait_for_requests
+    end
+
+    it 'display icon with status' do
+      expect(page).to have_selector('[data-testid="status_running_borderless-icon"]')
+    end
+
+    it 'displays a mini pipeline graph' do
+      expect(page).to have_selector('[data-testid="pipeline-summary-pipeline-mini-graph"]')
+
+      find_by_testid('pipeline-mini-graph-dropdown-toggle').click
 
       wait_for_requests
 
-      page.within '.js-builds-dropdown-list' do
-        expect(page).to have_selector('.ci-status-icon-running')
-        expect(page).to have_content(build.stage)
+      within_testid('pipeline-mini-graph-dropdown') do
+        expect(page).to have_selector('[data-testid="status_running_borderless-icon"]')
+        expect(page).to have_content(build.stage_name)
       end
+
+      build.drop
     end
   end
 
@@ -46,8 +76,8 @@ feature 'Mini Pipeline Graph in Commit View', :js do
       visit project_commit_path(project, project.commit.id)
     end
 
-    it 'should not display a mini pipeline graph' do
-      expect(page).not_to have_selector('.mr-widget-pipeline-graph')
+    it 'does not display a mini pipeline graph' do
+      expect(page).not_to have_selector('[data-testid="pipeline-mini-graph"]')
     end
   end
 end

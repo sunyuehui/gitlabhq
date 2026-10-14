@@ -1,59 +1,50 @@
-class StuckCiJobsWorker
-  include Sidekiq::Worker
+# frozen_string_literal: true
+
+class StuckCiJobsWorker # rubocop:disable Scalability/IdempotentWorker
+  include ApplicationWorker
+  include ExclusiveLeaseGuard
+
+  # rubocop:disable Scalability/CronWorkerContext
+  # This is an instance-wide cleanup query, so there's no meaningful
+  # scope to consider this in the context of.
   include CronjobQueue
 
-  EXCLUSIVE_LEASE_KEY = 'stuck_ci_builds_worker_lease'.freeze
+  # rubocop:enable Scalability/CronWorkerContext
 
-  BUILD_RUNNING_OUTDATED_TIMEOUT = 1.hour
-  BUILD_PENDING_OUTDATED_TIMEOUT = 1.day
-  BUILD_PENDING_STUCK_TIMEOUT = 1.hour
+  data_consistency :always
+
+  feature_category :continuous_integration
+
+  MINUTES_BETWEEN_RUNS = 60 # how often this worker is run via cron
 
   def perform
-    return unless try_obtain_lease
+    perform_staggered_work
 
-    Rails.logger.info "#{self.class}: Cleaning stuck builds"
-
-    drop :running, BUILD_RUNNING_OUTDATED_TIMEOUT
-    drop :pending, BUILD_PENDING_OUTDATED_TIMEOUT
-    drop_stuck :pending, BUILD_PENDING_STUCK_TIMEOUT
-
-    remove_lease
+    try_obtain_lease do
+      Ci::StuckBuilds::DropPendingService.new.execute
+    end
   end
 
   private
 
-  def try_obtain_lease
-    @uuid = Gitlab::ExclusiveLease.new(EXCLUSIVE_LEASE_KEY, timeout: 30.minutes).try_obtain
-  end
+  def perform_staggered_work
+    delayed_workers = [
+      Ci::StuckBuilds::DropRunningWorker,
+      Ci::StuckBuilds::DropScheduledWorker,
+      Ci::StuckBuilds::DropCancelingWorker
+    ]
 
-  def remove_lease
-    Gitlab::ExclusiveLease.cancel(EXCLUSIVE_LEASE_KEY, @uuid)
-  end
+    # We run this worker every hour and want to stagger the load on the builds table
+    # cron job interval / number of workers or services executed
+    interval = (MINUTES_BETWEEN_RUNS / (delayed_workers.size + 1))
 
-  def drop(status, timeout)
-    search(status, timeout) do |build|
-      drop_build :outdated, build, status, timeout
+    delayed_workers.each_with_index do |worker, index|
+      run_at = (index + 1) * interval
+      worker.perform_in(run_at.minutes)
     end
   end
 
-  def drop_stuck(status, timeout)
-    search(status, timeout) do |build|
-      return unless build.stuck?
-      drop_build :stuck, build, status, timeout
-    end
-  end
-
-  def search(status, timeout)
-    builds = Ci::Build.where(status: status).where('ci_builds.updated_at < ?', timeout.ago)
-    builds.joins(:project).merge(Project.without_deleted).includes(:tags, :runner, project: :namespace).find_each(batch_size: 50).each do |build|
-      yield(build)
-    end
-  end
-
-  def drop_build(type, build, status, timeout)
-    Rails.logger.info "#{self.class}: Dropping #{type} build #{build.id} for runner #{build.runner_id} (status: #{status}, timeout: #{timeout})"
-    Gitlab::OptimisticLocking.retry_lock(build, 3) do |b|
-      b.drop
-    end
+  def lease_timeout
+    30.minutes
   end
 end

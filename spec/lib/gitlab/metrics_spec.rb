@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Metrics do
+RSpec.describe Gitlab::Metrics, :prometheus, feature_category: :scalability do
   include StubENV
 
   describe '.settings' do
@@ -9,99 +11,36 @@ describe Gitlab::Metrics do
     end
   end
 
-  describe '.enabled?' do
-    it 'returns a boolean' do
-      expect(described_class.enabled?).to be_in([true, false])
-    end
-  end
-
-  describe '.prometheus_metrics_enabled_unmemoized' do
-    subject { described_class.send(:prometheus_metrics_enabled_unmemoized) }
-
-    context 'prometheus metrics enabled in config' do
-      before do
-        allow(described_class).to receive(:current_application_settings).and_return(prometheus_metrics_enabled: true)
-      end
-
-      context 'when metrics folder is present' do
-        before do
-          allow(described_class).to receive(:metrics_folder_present?).and_return(true)
-        end
-
-        it 'metrics are enabled' do
-          expect(subject).to eq(true)
-        end
-      end
-
-      context 'when metrics folder is missing' do
-        before do
-          allow(described_class).to receive(:metrics_folder_present?).and_return(false)
-        end
-
-        it 'metrics are disabled' do
-          expect(subject).to eq(false)
-        end
-      end
-    end
-  end
-
   describe '.prometheus_metrics_enabled?' do
-    it 'returns a boolean' do
-      expect(described_class.prometheus_metrics_enabled?).to be_in([true, false])
-    end
-  end
+    subject { described_class.prometheus_metrics_enabled? }
 
-  describe '.influx_metrics_enabled?' do
-    it 'returns a boolean' do
-      expect(described_class.influx_metrics_enabled?).to be_in([true, false])
-    end
-  end
+    it { is_expected.to be_in([true, false]) }
 
-  describe '.submit_metrics' do
-    it 'prepares and writes the metrics to InfluxDB' do
-      connection = double(:connection)
-      pool       = double(:pool)
+    context 'when Gitlab::CurrentSettings.prometheus_metrics_enabled is enabled' do
+      before do
+        allow(Gitlab::CurrentSettings).to receive(:prometheus_metrics_enabled).and_return(true)
+        Labkit::Metrics::Client.enable!
+      end
 
-      expect(pool).to receive(:with).and_yield(connection)
-      expect(connection).to receive(:write_points).with(an_instance_of(Array))
-      expect(described_class).to receive(:pool).and_return(pool)
-
-      described_class.submit_metrics([{ 'series' => 'kittens', 'tags' => {} }])
-    end
-  end
-
-  describe '.prepare_metrics' do
-    it 'returns a Hash with the keys as Symbols' do
-      metrics = described_class
-        .prepare_metrics([{ 'values' => {}, 'tags' => {} }])
-
-      expect(metrics).to eq([{ values: {}, tags: {} }])
+      it { is_expected.to be true }
     end
 
-    it 'escapes tag values' do
-      metrics = described_class.prepare_metrics([
-        { 'values' => {}, 'tags' => { 'foo' => 'bar=' } }
-      ])
+    context 'when Gitlab::CurrentSettings.prometheus_metrics_enabled is false' do
+      before do
+        allow(Gitlab::CurrentSettings).to receive(:prometheus_metrics_enabled).and_return(false)
+        Labkit::Metrics::Client.enable!
+      end
 
-      expect(metrics).to eq([{ values: {}, tags: { 'foo' => 'bar\\=' } }])
+      it { is_expected.to be false }
     end
 
-    it 'drops empty tags' do
-      metrics = described_class.prepare_metrics([
-        { 'values' => {}, 'tags' => { 'cats' => '', 'dogs' => nil } }
-      ])
+    context 'when metrics are disabled' do
+      before do
+        allow(Gitlab::CurrentSettings).to receive(:prometheus_metrics_enabled).and_return(true)
+        Labkit::Metrics::Client.disable!
+      end
 
-      expect(metrics).to eq([{ values: {}, tags: {} }])
-    end
-  end
-
-  describe '.escape_value' do
-    it 'escapes an equals sign' do
-      expect(described_class.escape_value('foo=')).to eq('foo\\=')
-    end
-
-    it 'casts values to Strings' do
-      expect(described_class.escape_value(10)).to eq('10')
+      it { is_expected.to be false }
     end
   end
 
@@ -115,7 +54,7 @@ describe Gitlab::Metrics do
     end
 
     context 'with a transaction' do
-      let(:transaction) { Gitlab::Metrics::Transaction.new }
+      let(:transaction) { Gitlab::Metrics::WebTransaction.new({}) }
 
       before do
         allow(described_class).to receive(:current_transaction)
@@ -123,14 +62,9 @@ describe Gitlab::Metrics do
       end
 
       it 'adds a metric to the current transaction' do
-        expect(transaction).to receive(:increment)
-          .with('foo_real_time', a_kind_of(Numeric))
+        expect(transaction).to receive(:observe).with(:gitlab_foo_real_duration_seconds, a_kind_of(Numeric))
 
-        expect(transaction).to receive(:increment)
-          .with('foo_cpu_time', a_kind_of(Numeric))
-
-        expect(transaction).to receive(:increment)
-          .with('foo_call_count', 1)
+        expect(transaction).to receive(:observe).with(:gitlab_foo_cpu_duration_seconds, a_kind_of(Numeric))
 
         described_class.measure(:foo) { 10 }
       end
@@ -143,58 +77,47 @@ describe Gitlab::Metrics do
     end
   end
 
-  describe '.tag_transaction' do
-    context 'without a transaction' do
-      it 'does nothing' do
-        expect_any_instance_of(Gitlab::Metrics::Transaction)
-          .not_to receive(:add_tag)
-
-        described_class.tag_transaction(:foo, 'bar')
-      end
-    end
-
-    context 'with a transaction' do
-      let(:transaction) { Gitlab::Metrics::Transaction.new }
-
-      it 'adds the tag to the transaction' do
-        expect(described_class).to receive(:current_transaction)
-          .and_return(transaction)
-
-        expect(transaction).to receive(:add_tag)
-          .with(:foo, 'bar')
-
-        described_class.tag_transaction(:foo, 'bar')
-      end
-    end
-  end
-
-  describe '.action=' do
-    context 'without a transaction' do
-      it 'does nothing' do
-        expect_any_instance_of(Gitlab::Metrics::Transaction)
-          .not_to receive(:action=)
-
-        described_class.action = 'foo'
-      end
-    end
-
-    context 'with a transaction' do
-      it 'sets the action of a transaction' do
-        trans = Gitlab::Metrics::Transaction.new
-
-        expect(described_class).to receive(:current_transaction)
-          .and_return(trans)
-
-        expect(trans).to receive(:action=).with('foo')
-
-        described_class.action = 'foo'
-      end
-    end
-  end
-
   describe '#series_prefix' do
     it 'returns a String' do
       expect(described_class.series_prefix).to be_an_instance_of(String)
+    end
+  end
+
+  describe '.record_status_for_duration?' do
+    using RSpec::Parameterized::TableSyntax
+
+    where(:status, :should_record) do
+      100  | false
+      200  | true
+      401  | true
+      nil  | false
+      500  | false
+      503 | false
+      'nothing' | false
+    end
+
+    with_them do
+      specify { expect(described_class.record_duration_for_status?(status)).to be(should_record) }
+      specify { expect(described_class.record_duration_for_status?(status.to_s)).to be(should_record) }
+    end
+  end
+
+  describe '.server_error?' do
+    using RSpec::Parameterized::TableSyntax
+
+    where(:status, :should_record) do
+      100   | false
+      200   | false
+      401   | false
+      500   | true
+      503   | true
+      nil   | false
+      'nothing' | false
+    end
+
+    with_them do
+      specify { expect(described_class.server_error?(status)).to be(should_record) }
+      specify { expect(described_class.server_error?(status.to_s)).to be(should_record) }
     end
   end
 
@@ -210,7 +133,7 @@ describe Gitlab::Metrics do
 
     context 'with a transaction' do
       it 'adds an event' do
-        transaction = Gitlab::Metrics::Transaction.new
+        transaction = Gitlab::Metrics::WebTransaction.new({})
 
         expect(transaction).to receive(:add_event).with(:meow)
 
@@ -224,7 +147,7 @@ describe Gitlab::Metrics do
 
   shared_examples 'prometheus metrics API' do
     describe '#counter' do
-      subject { described_class.counter(:couter, 'doc') }
+      subject { described_class.counter(:counter, 'doc') }
 
       describe '#increment' do
         it 'successfully calls #increment without arguments' do
@@ -275,38 +198,33 @@ describe Gitlab::Metrics do
   context 'prometheus metrics disabled' do
     before do
       allow(described_class).to receive(:prometheus_metrics_enabled?).and_return(false)
+      Labkit::Metrics::Client.disable!
     end
 
     it_behaves_like 'prometheus metrics API'
 
-    describe '#null_metric' do
-      subject { described_class.provide_metric(:test) }
-
-      it { is_expected.to be_a(Gitlab::Metrics::NullMetric) }
-    end
-
     describe '#counter' do
       subject { described_class.counter(:counter, 'doc') }
 
-      it { is_expected.to be_a(Gitlab::Metrics::NullMetric) }
+      it { is_expected.to eq(described_class.null_metric) }
     end
 
     describe '#summary' do
       subject { described_class.summary(:summary, 'doc') }
 
-      it { is_expected.to be_a(Gitlab::Metrics::NullMetric) }
+      it { is_expected.to eq(described_class.null_metric) }
     end
 
     describe '#gauge' do
       subject { described_class.gauge(:gauge, 'doc') }
 
-      it { is_expected.to be_a(Gitlab::Metrics::NullMetric) }
+      it { is_expected.to eq(described_class.null_metric) }
     end
 
     describe '#histogram' do
       subject { described_class.histogram(:histogram, 'doc') }
 
-      it { is_expected.to be_a(Gitlab::Metrics::NullMetric) }
+      it { is_expected.to eq(described_class.null_metric) }
     end
   end
 
@@ -316,38 +234,91 @@ describe Gitlab::Metrics do
     before do
       stub_const('Prometheus::Client::Multiprocdir', metrics_multiproc_dir)
       allow(described_class).to receive(:prometheus_metrics_enabled?).and_return(true)
+      Labkit::Metrics::Client.enable!
     end
 
     it_behaves_like 'prometheus metrics API'
 
-    describe '#null_metric' do
-      subject { described_class.provide_metric(:test) }
-
-      it { is_expected.to be_nil }
-    end
-
     describe '#counter' do
       subject { described_class.counter(:name, 'doc') }
 
-      it { is_expected.not_to be_a(Gitlab::Metrics::NullMetric) }
+      it { is_expected.not_to eq(described_class.null_metric) }
     end
 
     describe '#summary' do
       subject { described_class.summary(:name, 'doc') }
 
-      it { is_expected.not_to be_a(Gitlab::Metrics::NullMetric) }
+      it { is_expected.not_to eq(described_class.null_metric) }
     end
 
     describe '#gauge' do
       subject { described_class.gauge(:name, 'doc') }
 
-      it { is_expected.not_to be_a(Gitlab::Metrics::NullMetric) }
+      it { is_expected.not_to eq(described_class.null_metric) }
     end
 
     describe '#histogram' do
       subject { described_class.histogram(:name, 'doc') }
 
-      it { is_expected.not_to be_a(Gitlab::Metrics::NullMetric) }
+      it { is_expected.not_to eq(described_class.null_metric) }
+    end
+  end
+
+  describe '.initialize_slis!', feature_category: :error_budgets do
+    let!(:puma_slis) do
+      [
+        Gitlab::Metrics::RequestsRackMiddleware,
+        Gitlab::Metrics::GlobalSearchSlis,
+        Gitlab::Metrics::Middleware::PathTraversalCheck
+      ]
+    end
+
+    let!(:sidekiq_slis) do
+      [
+        Gitlab::Metrics::Lfs,
+        Gitlab::Metrics::LooseForeignKeysSlis
+      ]
+    end
+
+    context 'when puma runtime' do
+      it "initializes only puma SLIs" do
+        allow(Gitlab::Runtime).to receive_messages(puma?: true, sidekiq?: false)
+
+        expect(Gitlab::Metrics::SliConfig.enabled_slis).to include(*puma_slis)
+        expect(Gitlab::Metrics::SliConfig.enabled_slis).not_to include(*sidekiq_slis)
+        expect(Gitlab::Metrics::SliConfig.enabled_slis).to all(receive(:initialize_slis!))
+
+        described_class.initialize_slis!
+      end
+    end
+
+    context 'when sidekiq runtime' do
+      it "initializes only sidekiq SLIs" do
+        allow(Gitlab::Runtime).to receive_messages(puma?: false, sidekiq?: true)
+
+        expect(Gitlab::Metrics::SliConfig.enabled_slis).not_to include(*puma_slis)
+        expect(Gitlab::Metrics::SliConfig.enabled_slis).to include(*sidekiq_slis)
+        expect(Gitlab::Metrics::SliConfig.enabled_slis).to all(receive(:initialize_slis!))
+
+        described_class.initialize_slis!
+      end
+    end
+  end
+
+  describe '.preload_sli_modules!', feature_category: :error_budgets do
+    let(:loaded_files) { [] }
+
+    before do
+      allow(described_class).to receive(:require_dependency) { |file| loaded_files << file }
+    end
+
+    it 'does not load SLI modules from the ee directory when running as FOSS', :aggregate_failures do
+      allow(GitlabEdition).to receive(:extensions).and_return([])
+
+      described_class.preload_sli_modules!
+
+      expect(loaded_files).to include(Rails.root.join('lib/gitlab/metrics/loose_foreign_keys_slis.rb').to_s)
+      expect(loaded_files).to all(start_with(Rails.root.join('lib').to_s))
     end
   end
 end

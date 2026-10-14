@@ -1,10 +1,11 @@
-/* global Flash */
+import { createAlert } from '~/alert';
+import { __ } from '~/locale';
+import Ajax from './droplab/plugins/ajax';
+import Filter from './droplab/plugins/filter';
+import DropdownUtils from './dropdown_utils';
+import FilteredSearchDropdown from './filtered_search_dropdown';
 
-import Ajax from '~/droplab/plugins/ajax';
-import Filter from '~/droplab/plugins/filter';
-import './filtered_search_dropdown';
-
-class DropdownNonUser extends gl.FilteredSearchDropdown {
+export default class DropdownNonUser extends FilteredSearchDropdown {
   constructor(options = {}) {
     const { input, endpoint, symbol, preprocessing } = options;
     super(options);
@@ -16,13 +17,13 @@ class DropdownNonUser extends gl.FilteredSearchDropdown {
         loadingTemplate: this.loadingTemplate,
         preprocessing,
         onError() {
-          /* eslint-disable no-new */
-          new Flash('An error occured fetching the dropdown data.');
-          /* eslint-enable no-new */
+          createAlert({
+            message: __('An error occurred fetching the dropdown data.'),
+          });
         },
       },
       Filter: {
-        filterFunction: gl.DropdownUtils.filterWithSymbol.bind(null, this.symbol, input),
+        filterFunction: DropdownUtils.filterWithSymbol.bind(null, this.symbol, input),
         template: 'title',
       },
     };
@@ -31,21 +32,16 @@ class DropdownNonUser extends gl.FilteredSearchDropdown {
   itemClicked(e) {
     super.itemClicked(e, (selected) => {
       const title = selected.querySelector('.js-data-value').innerText.trim();
-      return `${this.symbol}${gl.DropdownUtils.getEscapedText(title)}`;
+      return `${this.symbol}${DropdownUtils.getEscapedText(title)}`;
     });
   }
 
   renderContent(forceShowList = false) {
-    this.droplab
-      .changeHookList(this.hookId, this.dropdown, [Ajax, Filter], this.config);
+    this.droplab.changeHookList(this.hookId, this.dropdown, [Ajax, Filter], this.config);
     super.renderContent(forceShowList);
   }
 
   init() {
-    this.droplab
-      .addHook(this.input, this.dropdown, [Ajax, Filter], this.config).init();
+    this.droplab.addHook(this.input, this.dropdown, [Ajax, Filter], this.config).init();
   }
 }
-
-window.gl = window.gl || {};
-gl.DropdownNonUser = DropdownNonUser;

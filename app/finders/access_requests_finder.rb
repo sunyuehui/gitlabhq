@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class AccessRequestsFinder
   attr_accessor :source
 
@@ -7,8 +9,8 @@ class AccessRequestsFinder
     @source = source
   end
 
-  def execute(*args)
-    execute!(*args)
+  def execute(...)
+    execute!(...)
   rescue Gitlab::Access::AccessDeniedError
     []
   end
@@ -16,12 +18,12 @@ class AccessRequestsFinder
   def execute!(current_user)
     raise Gitlab::Access::AccessDeniedError unless can_see_access_requests?(current_user)
 
-    source.requesters
+    source.namespace_requesters
   end
 
   private
 
   def can_see_access_requests?(current_user)
-    source && Ability.allowed?(current_user, :"admin_#{source.class.to_s.underscore}", source)
+    source && Ability.allowed?(current_user, :read_member_access_request, source)
   end
 end

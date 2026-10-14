@@ -1,6 +1,8 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-describe Gitlab::DependencyLinker::ComposerJsonLinker do
+require 'spec_helper'
+
+RSpec.describe Gitlab::DependencyLinker::ComposerJsonLinker do
   describe '.support?' do
     it 'supports composer.json' do
       expect(described_class.support?('composer.json')).to be_truthy
@@ -38,7 +40,8 @@ describe Gitlab::DependencyLinker::ComposerJsonLinker do
             "mockery/mockery": "0.9.*",
             "phpunit/phpunit": "~4.0",
             "symfony/css-selector": "2.8.*|3.0.*",
-            "symfony/dom-crawler": "2.8.*|3.0.*"
+            "symfony/dom-crawler": "2.8.*|3.0.*",
+            "drupal/bootstrap": "3.x-dev"
           }
         }
       CONTENT
@@ -47,11 +50,11 @@ describe Gitlab::DependencyLinker::ComposerJsonLinker do
     subject { Gitlab::Highlight.highlight(file_name, file_content) }
 
     def link(name, url)
-      %{<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>}
+      %(<a href="#{url}" rel="nofollow noreferrer noopener" target="_blank">#{name}</a>)
     end
 
-    it 'links the module name' do
-      expect(subject).to include(link('laravel/laravel', 'https://packagist.org/packages/laravel/laravel'))
+    it 'does not link the module name' do
+      expect(subject).not_to include(link('laravel/laravel', 'https://packagist.org/packages/laravel/laravel'))
     end
 
     it 'links the homepage' do

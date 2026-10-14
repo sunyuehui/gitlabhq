@@ -1,49 +1,120 @@
-# Issue closing pattern
+---
+stage: AI Coding
+group: Code Review
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+description: Instance administrators can configure a custom issue closing pattern for their GitLab instance.
+title: Issue closing pattern
+---
 
->**Note:**
-This is the administration documentation.
-There is a separate [user documentation] on issue closing pattern.
+{{< details >}}
 
-When a commit or merge request resolves one or more issues, it is possible to
-automatically have these issues closed when the commit or merge request lands
-in the project's default branch.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab Self-Managed
+
+{{< /details >}}
+
+> [!note]
+> For user documentation about issue closing patterns, see
+> [Closing issues automatically](../user/project/issues/managing_issues.md#closing-issues-automatically).
+
+When a commit or merge request resolves one or more issues, GitLab can close those issues when the
+commit or merge request lands in the project's default branch. The
+[default issue closing pattern](../user/project/issues/managing_issues.md#default-closing-pattern)
+covers a wide range of words, and administrators can configure the word list as needed.
 
 ## Change the issue closing pattern
 
-In order to change the pattern you need to have access to the server that GitLab
-is installed on.
+To change the default issue closing pattern to suit your needs:
 
-The default pattern can be located in [gitlab.yml.example] under the
-"Automatic issue closing" section.
+{{< tabs >}}
 
-> **Tip:**
-You are advised to use http://rubular.com to test the issue closing pattern.
-Because Rubular doesn't understand `%{issue_ref}`, you can replace this by
-`#\d+` when testing your patterns, which matches only local issue references like `#123`.
+{{< tab title="Linux package (Omnibus)" >}}
 
-**For Omnibus installations**
+1. Edit `/etc/gitlab/gitlab.rb` and change the `gitlab_rails['gitlab_issue_closing_pattern']`
+   value:
 
-1. Open `/etc/gitlab/gitlab.rb` with your editor.
-1. Change the value of `gitlab_rails['issue_closing_pattern']` to a regular
-   expression of your liking:
+   ```ruby
+   gitlab_rails['gitlab_issue_closing_pattern'] = /<regular_expression>/.source
+   ```
 
-    ```ruby
-    gitlab_rails['issue_closing_pattern'] = "((?:[Cc]los(?:e[sd]|ing)|[Ff]ix(?:e[sd]|ing)?) +(?:(?:issues? +)?%{issue_ref}(?:(?:, *| +and +)?))+)"
-    ```
-1. [Reconfigure] GitLab for the changes to take effect.
+1. Save the file and reconfigure GitLab:
 
-**For installations from source**
+   ```shell
+   sudo gitlab-ctl reconfigure
+   ```
 
-1. Open `gitlab.yml` with your editor.
-1. Change the value of `issue_closing_pattern`:
+{{< /tab >}}
 
-    ```yaml
-    issue_closing_pattern: "((?:[Cc]los(?:e[sd]|ing)|[Ff]ix(?:e[sd]|ing)?) +(?:(?:issues? +)?%{issue_ref}(?:(?:, *| +and +)?))+)"
-    ```
+{{< tab title="Helm chart (Kubernetes)" >}}
 
-1. [Restart] GitLab for the changes to take effect.
+1. Export the Helm values:
 
-[gitlab.yml.example]: https://gitlab.com/gitlab-org/gitlab-ce/blob/master/config/gitlab.yml.example
-[reconfigure]: restart_gitlab.md#omnibus-gitlab-reconfigure
-[restart]: restart_gitlab.md#installations-from-source
-[user documentation]: ../user/project/issues/automatic_issue_closing.md
+   ```shell
+   helm get values gitlab > gitlab_values.yaml
+   ```
+
+1. Edit `gitlab_values.yaml` and change the `issueClosingPattern` value:
+
+   ```yaml
+   global:
+     appConfig:
+       issueClosingPattern: "<regular_expression>"
+   ```
+
+1. Save the file and apply the new values:
+
+   ```shell
+   helm upgrade -f gitlab_values.yaml gitlab gitlab/gitlab
+   ```
+
+{{< /tab >}}
+
+{{< tab title="Docker" >}}
+
+1. Edit `docker-compose.yml` and change the `gitlab_rails['gitlab_issue_closing_pattern']`
+   value:
+
+   ```yaml
+   version: "3.6"
+   services:
+     gitlab:
+       environment:
+         GITLAB_OMNIBUS_CONFIG: |
+           gitlab_rails['gitlab_issue_closing_pattern'] = /<regular_expression>/.source
+   ```
+
+1. Save the file and restart GitLab:
+
+   ```shell
+   docker compose up -d
+   ```
+
+{{< /tab >}}
+
+{{< tab title="Self-compiled (source)" >}}
+
+1. Edit `/home/git/gitlab/config/gitlab.yml` and change the `issue_closing_pattern` value:
+
+   ```yaml
+   production: &base
+     gitlab:
+       issue_closing_pattern: "<regular_expression>"
+   ```
+
+1. Save the file and restart GitLab:
+
+   ```shell
+   # For systems running systemd
+   sudo systemctl restart gitlab.target
+
+   # For systems running SysV init
+   sudo service gitlab restart
+   ```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+To test the issue closing pattern, use [Rubular](https://rubular.com).
+Rubular does not understand `%{issue_ref}`. When you test your patterns,
+replace this string with `#\d+`, which matches only local issue references like `#123`.

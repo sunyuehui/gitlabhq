@@ -1,14 +1,24 @@
-/* eslint-disable class-methods-use-this */
-/* global Flash */
-import _ from 'underscore';
-import Cookies from 'js-cookie';
+/* eslint-disable class-methods-use-this, @gitlab/require-i18n-strings */
+
+import $ from 'jquery';
+import { uniq, escape } from 'lodash-es';
+import { PanelBreakpointInstance } from '~/panel_breakpoint_instance';
+import { getEmojiScoreWithIntent } from '~/emoji/utils';
+import { scrollToElement } from '~/lib/utils/scroll_utils';
+import * as Emoji from '~/emoji';
+import { dispose, fixTitle } from '~/tooltips';
+import { createAlert } from '~/alert';
+import {
+  EMOJI_THUMBS_UP,
+  EMOJI_THUMBS_DOWN,
+  FREQUENTLY_USED_EMOJIS_STORAGE_KEY,
+} from '~/emoji/constants';
+import axios from './lib/utils/axios_utils';
+import { isInVueNoteablePage } from './lib/utils/dom_utils';
+import { __ } from './locale';
 
 const animationEndEventString = 'animationend webkitAnimationEnd MSAnimationEnd oAnimationEnd';
 const transitionEndEventString = 'transitionend webkitTransitionEnd oTransitionEnd MSTransitionEnd';
-const requestAnimationFrame = window.requestAnimationFrame ||
-  window.webkitRequestAnimationFrame ||
-  window.mozRequestAnimationFrame ||
-  window.setTimeout;
 
 const FROM_SENTENCE_REGEX = /(?:, and | and |, )/; // For separating lists produced by ruby's Array#toSentence
 
@@ -23,20 +33,36 @@ const categoryLabelMap = {
   flags: 'Flags',
 };
 
-class AwardsHandler {
+const IS_VISIBLE = 'is-visible';
+const IS_RENDERED = 'is-rendered';
+
+export class AwardsHandler {
   constructor(emoji) {
     this.emoji = emoji;
     this.eventListeners = [];
+    this.toggleButtonSelector = '.js-add-award';
+    this.menuClass = 'js-award-emoji-menu';
+  }
+
+  bindEvents() {
+    const $parentEl = this.targetContainerEl ? $(this.targetContainerEl) : $(document);
     // If the user shows intent let's pre-build the menu
-    this.registerEventListener('one', $(document), 'mouseenter focus', '.js-add-award', 'mouseenter focus', () => {
-      const $menu = $('.emoji-menu');
-      if ($menu.length === 0) {
-        requestAnimationFrame(() => {
-          this.createEmojiMenu();
-        });
-      }
-    });
-    this.registerEventListener('on', $(document), 'click', '.js-add-award', (e) => {
+    this.registerEventListener(
+      'one',
+      $parentEl,
+      'mouseenter focus',
+      this.toggleButtonSelector,
+      'mouseenter focus',
+      () => {
+        const $menu = $(`.${this.menuClass}`);
+        if ($menu.length === 0) {
+          requestAnimationFrame(() => {
+            this.createEmojiMenu();
+          });
+        }
+      },
+    );
+    this.registerEventListener('on', $parentEl, 'click', this.toggleButtonSelector, (e) => {
       e.stopPropagation();
       e.preventDefault();
       this.showEmojiMenu($(e.currentTarget));
@@ -44,22 +70,24 @@ class AwardsHandler {
 
     this.registerEventListener('on', $('html'), 'click', (e) => {
       const $target = $(e.target);
-      if (!$target.closest('.emoji-menu-content').length) {
+      if (!$target.closest(`.${this.menuClass}`).length) {
         $('.js-awards-block.current').removeClass('current');
-      }
-      if (!$target.closest('.emoji-menu').length) {
-        if ($('.emoji-menu').is(':visible')) {
-          $('.js-add-award.is-active').removeClass('is-active');
-          $('.emoji-menu').removeClass('is-visible');
+        if ($(`.${this.menuClass}`).is(':visible')) {
+          $(`${this.toggleButtonSelector}.is-active`).removeClass('is-active');
+          this.hideMenuElement($(`.${this.menuClass}`));
         }
       }
     });
-    this.registerEventListener('on', $(document), 'click', '.js-emoji-btn', (e) => {
+
+    const emojiButtonSelector = `.js-awards-block .js-emoji-btn, .${this.menuClass} .js-emoji-btn`;
+    this.registerEventListener('on', $parentEl, 'click', emojiButtonSelector, (e) => {
       e.preventDefault();
       const $target = $(e.currentTarget);
       const $glEmojiElement = $target.find('gl-emoji');
       const $spriteIconElement = $target.find('.icon');
-      const emojiName = ($glEmojiElement.length ? $glEmojiElement : $spriteIconElement).data('name');
+      const emojiName = ($glEmojiElement.length ? $glEmojiElement : $spriteIconElement).data(
+        'name',
+      );
 
       $target.closest('.js-awards-block').addClass('current');
       this.addAward(this.getVotesBlock(), this.getAwardUrl(), emojiName);
@@ -81,34 +109,30 @@ class AwardsHandler {
       $addBtn.closest('.js-awards-block').addClass('current');
     }
 
-    const $menu = $('.emoji-menu');
-    const $thumbsBtn = $menu.find('[data-name="thumbsup"], [data-name="thumbsdown"]').parent();
-    const $userAuthored = this.isUserAuthored($addBtn);
+    const $menu = $(`.${this.menuClass}`);
     if ($menu.length) {
       if ($menu.is('.is-visible')) {
         $addBtn.removeClass('is-active');
-        $menu.removeClass('is-visible');
+        this.hideMenuElement($menu);
         $('.js-emoji-menu-search').blur();
       } else {
         $addBtn.addClass('is-active');
         this.positionMenu($menu, $addBtn);
-        $menu.addClass('is-visible');
+        this.showMenuElement($menu);
         $('.js-emoji-menu-search').focus();
       }
     } else {
       $addBtn.addClass('is-loading is-active');
       this.createEmojiMenu(() => {
-        const $createdMenu = $('.emoji-menu');
+        const $createdMenu = $(`.${this.menuClass}`);
         $addBtn.removeClass('is-loading');
         this.positionMenu($createdMenu, $addBtn);
         return setTimeout(() => {
-          $createdMenu.addClass('is-visible');
+          this.showMenuElement($createdMenu);
           $('.js-emoji-menu-search').focus();
         }, 200);
       });
     }
-
-    $thumbsBtn.toggleClass('disabled', $userAuthored);
   }
 
   // Create the emoji menu with the first category of emojis.
@@ -130,12 +154,12 @@ class AwardsHandler {
     let frequentlyUsedCatgegory = '';
     if (frequentlyUsedEmojis.length > 0) {
       frequentlyUsedCatgegory = this.renderCategory('Frequently used', frequentlyUsedEmojis, {
-        menuListClass: 'frequent-emojis',
+        frequentEmojis: true,
       });
     }
 
     const emojiMenuMarkup = `
-      <div class="emoji-menu">
+      <div class="emoji-menu ${this.menuClass}">
         <input type="text" name="emoji-menu-search" value="" class="js-emoji-menu-search emoji-search search-input form-control" placeholder="Search emoji" />
 
         <div class="emoji-menu-content">
@@ -145,7 +169,9 @@ class AwardsHandler {
       </div>
     `;
 
-    document.body.insertAdjacentHTML('beforeend', emojiMenuMarkup);
+    const targetEl = this.targetContainerEl ? this.targetContainerEl : document.body;
+    // eslint-disable-next-line no-unsanitized/method
+    targetEl.insertAdjacentHTML('beforeend', emojiMenuMarkup);
 
     this.addRemainingEmojiMenuCategories();
     this.setupSearch();
@@ -164,67 +190,88 @@ class AwardsHandler {
 
     // Avoid the jank and render the remaining categories separately
     // This will take more time, but makes UI more responsive
-    const menu = document.querySelector('.emoji-menu');
+    const menu = document.querySelector(`.${this.menuClass}`);
     const emojiContentElement = menu.querySelector('.emoji-menu-content');
     const remainingCategories = Object.keys(categoryMap).slice(1);
     const allCategoriesAddedPromise = remainingCategories.reduce(
       (promiseChain, categoryNameKey) =>
-        promiseChain.then(() =>
-          new Promise((resolve) => {
-            const emojisInCategory = categoryMap[categoryNameKey];
-            const categoryMarkup = this.renderCategory(
-              categoryLabelMap[categoryNameKey],
-              emojisInCategory,
-            );
-            requestAnimationFrame(() => {
-              emojiContentElement.insertAdjacentHTML('beforeend', categoryMarkup);
-              resolve();
-            });
-          }),
-      ),
+        promiseChain.then(
+          () =>
+            new Promise((resolve) => {
+              const emojisInCategory = categoryMap[categoryNameKey];
+              const categoryMarkup = this.renderCategory(
+                categoryLabelMap[categoryNameKey],
+                emojisInCategory,
+              );
+              requestAnimationFrame(() => {
+                // eslint-disable-next-line no-unsanitized/method
+                emojiContentElement.insertAdjacentHTML('beforeend', categoryMarkup);
+                resolve();
+              });
+            }),
+        ),
       Promise.resolve(),
     );
 
-    allCategoriesAddedPromise.then(() => {
-      // Used for tests
-      // We check for the menu in case it was destroyed in the meantime
-      if (menu) {
-        menu.dispatchEvent(new CustomEvent('build-emoji-menu-finish'));
-      }
-    }).catch((err) => {
-      emojiContentElement.insertAdjacentHTML('beforeend', '<p>We encountered an error while adding the remaining categories</p>');
-      throw new Error(`Error occurred in addRemainingEmojiMenuCategories: ${err.message}`);
-    });
+    allCategoriesAddedPromise
+      .then(() => {
+        // Used for tests
+        // We check for the menu in case it was destroyed in the meantime
+        if (menu) {
+          menu.dispatchEvent(new CustomEvent('build-emoji-menu-finish'));
+        }
+      })
+      .catch((err) => {
+        emojiContentElement.insertAdjacentHTML(
+          'beforeend',
+          '<p>We encountered an error while adding the remaining categories</p>',
+        );
+        throw new Error(`Error occurred in addRemainingEmojiMenuCategories: ${err.message}`);
+      });
   }
 
   renderCategory(name, emojiList, opts = {}) {
     return `
       <h5 class="emoji-menu-title">
-        ${name}
+        ${escape(name)}
       </h5>
-      <ul class="clearfix emoji-menu-list ${opts.menuListClass || ''}">
-        ${emojiList.map(emojiName => `
+      <ul class="gl-clearfix emoji-menu-list ${opts.frequentEmojis ? 'frequent-emojis' : ''}">
+        ${emojiList
+          .map(
+            (emojiName) => `
           <li class="emoji-menu-list-item">
-            <button class="emoji-menu-btn text-center js-emoji-btn" type="button">
+            <button class="emoji-menu-btn !gl-text-center js-emoji-btn" type="button">
               ${this.emoji.glEmojiTag(emojiName, {
                 sprite: true,
               })}
             </button>
           </li>
-        `).join('\n')}
+        `,
+          )
+          .join('\n')}
       </ul>
     `;
   }
 
   positionMenu($menu, $addBtn) {
+    if (this.targetContainerEl) {
+      return $menu.css({
+        top: `${$addBtn.outerHeight()}px`,
+      });
+    }
+
     const position = $addBtn.data('position');
     // The menu could potentially be off-screen or in a hidden overflow element
     // So we position the element absolute in the body
     const css = {
       top: `${$addBtn.offset().top + $addBtn.outerHeight()}px`,
     };
-    if (position === 'right') {
-      css.left = `${($addBtn.offset().left - $menu.outerWidth()) + 20}px`;
+    // for smaller breakpoints, we position the element on center
+    const breakpoint = PanelBreakpointInstance.getBreakpointSize();
+    if (['xs', 'sm'].includes(breakpoint)) {
+      css.left = '5%';
+    } else if (position === 'right') {
+      css.left = `${$addBtn.offset().left - $menu.outerWidth() + 20}px`;
       $menu.addClass('is-aligned-right');
     } else {
       css.left = `${$addBtn.offset().left}px`;
@@ -233,24 +280,44 @@ class AwardsHandler {
     return $menu.css(css);
   }
 
-  addAward(votesBlock, awardUrl, emoji, checkMutuality, callback) {
+  // eslint-disable-next-line max-params
+  addAward(votesBlock, awardUrl, emoji, callback) {
+    const isMainAwardsBlock = votesBlock.closest('.js-noteable-awards').length;
+
+    if (isInVueNoteablePage() && !isMainAwardsBlock) {
+      const id = votesBlock.attr('id').replace('note_', '');
+
+      this.hideMenuElement($(`.${this.menuClass}`));
+
+      $(`${this.toggleButtonSelector}.is-active`).removeClass('is-active');
+      const toggleAwardEvent = new CustomEvent('toggleAward', {
+        detail: {
+          awardName: emoji,
+          noteId: id,
+        },
+      });
+
+      document.querySelector('.js-vue-notes-event').dispatchEvent(toggleAwardEvent);
+    }
+
     const normalizedEmoji = this.emoji.normalizeEmojiName(emoji);
-    const $emojiButton = this.findEmojiIcon(votesBlock, normalizedEmoji).parent();
+    const $emojiButton = this.findEmojiIcon(votesBlock, normalizedEmoji).closest('button');
+
     this.postEmoji($emojiButton, awardUrl, normalizedEmoji, () => {
-      this.addAwardToEmojiBar(votesBlock, normalizedEmoji, checkMutuality);
+      this.addAwardToEmojiBar(votesBlock, normalizedEmoji);
       return typeof callback === 'function' ? callback() : undefined;
     });
-    $('.emoji-menu').removeClass('is-visible');
-    $('.js-add-award.is-active').removeClass('is-active');
+
+    this.hideMenuElement($(`.${this.menuClass}`));
+
+    return $(`${this.toggleButtonSelector}.is-active`).removeClass('is-active');
   }
 
-  addAwardToEmojiBar(votesBlock, emoji, checkForMutuality) {
-    if (checkForMutuality || checkForMutuality === null) {
-      this.checkMutuality(votesBlock, emoji);
-    }
+  addAwardToEmojiBar(votesBlock, emoji) {
+    const $votesBlock = $(votesBlock);
     this.addEmojiToFrequentlyUsedList(emoji);
     const normalizedEmoji = this.emoji.normalizeEmojiName(emoji);
-    const $emojiButton = this.findEmojiIcon(votesBlock, normalizedEmoji).parent();
+    const $emojiButton = this.findEmojiIcon($votesBlock, normalizedEmoji).closest('button');
     if ($emojiButton.length > 0) {
       if (this.isActive($emojiButton)) {
         this.decrementCounter($emojiButton, normalizedEmoji);
@@ -258,16 +325,24 @@ class AwardsHandler {
         const counter = $emojiButton.find('.js-counter');
         counter.text(parseInt(counter.text(), 10) + 1);
         $emojiButton.addClass('active');
-        this.addYouToUserList(votesBlock, normalizedEmoji);
+        this.addYouToUserList($votesBlock, normalizedEmoji);
         this.animateEmoji($emojiButton);
       }
     } else {
-      votesBlock.removeClass('hidden');
-      this.createEmoji(votesBlock, normalizedEmoji);
+      $votesBlock.removeClass('hidden');
+      this.createEmoji($votesBlock, normalizedEmoji);
     }
   }
 
   getVotesBlock() {
+    if (isInVueNoteablePage()) {
+      const $el = $(`${this.toggleButtonSelector}.is-active`).closest('.note.timeline-entry');
+
+      if ($el.length) {
+        return $el;
+      }
+    }
+
     const currentBlock = $('.js-awards-block.current');
     let resultantVotesBlock = currentBlock;
     if (currentBlock.length === 0) {
@@ -278,27 +353,11 @@ class AwardsHandler {
   }
 
   getAwardUrl() {
-    return this.getVotesBlock().data('award-url');
-  }
-
-  checkMutuality(votesBlock, emoji) {
-    const awardUrl = this.getAwardUrl();
-    if (emoji === 'thumbsup' || emoji === 'thumbsdown') {
-      const mutualVote = emoji === 'thumbsup' ? 'thumbsdown' : 'thumbsup';
-      const $emojiButton = votesBlock.find(`[data-name="${mutualVote}"]`).parent();
-      const isAlreadyVoted = $emojiButton.hasClass('active');
-      if (isAlreadyVoted) {
-        this.addAward(votesBlock, awardUrl, mutualVote, false);
-      }
-    }
+    return this.getVotesBlock().data('awardUrl');
   }
 
   isActive($emojiButton) {
     return $emojiButton.hasClass('active');
-  }
-
-  isUserAuthored($button) {
-    return $button.hasClass('js-user-authored');
   }
 
   decrementCounter($emojiButton, emoji) {
@@ -307,8 +366,8 @@ class AwardsHandler {
     if (counterNumber > 1) {
       counter.text(counterNumber - 1);
       this.removeYouFromUserList($emojiButton);
-    } else if (emoji === 'thumbsup' || emoji === 'thumbsdown') {
-      $emojiButton.tooltip('destroy');
+    } else if (emoji === EMOJI_THUMBS_UP || emoji === EMOJI_THUMBS_DOWN) {
+      dispose($emojiButton);
       counter.text('0');
       this.removeYouFromUserList($emojiButton);
       if ($emojiButton.parents('.note').length) {
@@ -321,7 +380,8 @@ class AwardsHandler {
   }
 
   removeEmoji($emojiButton) {
-    $emojiButton.tooltip('destroy');
+    dispose($emojiButton);
+
     $emojiButton.remove();
     const $votesBlock = this.getVotesBlock();
     if ($votesBlock.find('.js-emoji-btn').length === 0) {
@@ -349,39 +409,49 @@ class AwardsHandler {
     const originalTitle = this.getAwardTooltip(awardBlock);
     const authors = originalTitle.split(FROM_SENTENCE_REGEX);
     authors.splice(authors.indexOf('You'), 1);
-    return awardBlock
+
+    awardBlock
       .closest('.js-emoji-btn')
       .removeData('title')
       .removeAttr('data-title')
       .removeAttr('data-original-title')
-      .attr('title', this.toSentence(authors))
-      .tooltip('fixTitle');
+      .attr('title', this.toSentence(authors));
+
+    fixTitle(awardBlock);
+
+    return awardBlock;
   }
 
   addYouToUserList(votesBlock, emoji) {
-    const awardBlock = this.findEmojiIcon(votesBlock, emoji).parent();
+    const awardBlock = this.findEmojiIcon(votesBlock, emoji).closest('button');
     const origTitle = this.getAwardTooltip(awardBlock);
     let users = [];
     if (origTitle) {
       users = origTitle.trim().split(FROM_SENTENCE_REGEX);
     }
     users.unshift('You');
-    return awardBlock
-      .attr('title', this.toSentence(users))
-      .tooltip('fixTitle');
+
+    awardBlock.attr('title', this.toSentence(users));
+
+    fixTitle(awardBlock);
+
+    return awardBlock;
   }
 
   createAwardButtonForVotesBlock(votesBlock, emojiName) {
     const buttonHtml = `
-      <button class="btn award-control js-emoji-btn has-tooltip active" title="You" data-placement="bottom">
+      <button class="gl-button btn btn-default award-control js-emoji-btn has-tooltip active" title="You">
         ${this.emoji.glEmojiTag(emojiName)}
         <span class="award-control-text js-counter">1</span>
       </button>
     `;
     const $emojiButton = $(buttonHtml);
-    $emojiButton.insertBefore(votesBlock.find('.js-award-holder')).find('.emoji-icon').data('name', emojiName);
+    $emojiButton
+      .insertBefore(votesBlock.find('.js-award-holder'))
+      .find('.emoji-icon')
+      .data('name', emojiName);
     this.animateEmoji($emojiButton);
-    $('.award-control').tooltip();
+
     votesBlock.removeClass('current');
   }
 
@@ -395,7 +465,7 @@ class AwardsHandler {
   }
 
   createEmoji(votesBlock, emoji) {
-    if ($('.emoji-menu').length) {
+    if ($(`.${this.menuClass}`).length) {
       this.createAwardButtonForVotesBlock(votesBlock, emoji);
     }
     this.createEmojiMenu(() => {
@@ -403,58 +473,53 @@ class AwardsHandler {
     });
   }
 
+  // eslint-disable-next-line max-params
   postEmoji($emojiButton, awardUrl, emoji, callback) {
-    if (this.isUserAuthored($emojiButton)) {
-      this.userAuthored($emojiButton);
-    } else {
-      $.post(awardUrl, {
+    axios
+      .post(awardUrl, {
         name: emoji,
-      }, (data) => {
+      })
+      .then(({ data }) => {
         if (data.ok) {
           callback();
         }
-      }).fail(() => new Flash('Something went wrong on our end.'));
-    }
+      })
+      .catch(() =>
+        createAlert({
+          message: __('Something went wrong on our end.'),
+        }),
+      );
   }
 
   findEmojiIcon(votesBlock, emoji) {
     return votesBlock.find(`.js-emoji-btn [data-name="${emoji}"]`);
   }
 
-  userAuthored($emojiButton) {
-    const oldTitle = this.getAwardTooltip($emojiButton);
-    const newTitle = 'You cannot vote on your own issue, MR and note';
-    gl.utils.updateTooltipTitle($emojiButton, newTitle).tooltip('show');
-    // Restore tooltip back to award list
-    return setTimeout(() => {
-      $emojiButton.tooltip('hide');
-      gl.utils.updateTooltipTitle($emojiButton, oldTitle);
-    }, 2800);
-  }
-
   scrollToAwards() {
-    const options = {
-      scrollTop: $('.awards').offset().top - 110,
-    };
-    return $('body, html').animate(options, 200);
+    scrollToElement('.awards', { offset: -110 });
   }
 
   addEmojiToFrequentlyUsedList(emoji) {
     if (this.emoji.isEmojiNameValid(emoji)) {
-      this.frequentlyUsedEmojis = _.uniq(this.getFrequentlyUsedEmojis().concat(emoji));
-      Cookies.set('frequently_used_emojis', this.frequentlyUsedEmojis.join(','), { expires: 365 });
+      this.frequentlyUsedEmojis = uniq(this.getFrequentlyUsedEmojis().concat(emoji));
+      localStorage.setItem(FREQUENTLY_USED_EMOJIS_STORAGE_KEY, this.frequentlyUsedEmojis.join(','));
     }
   }
 
   getFrequentlyUsedEmojis() {
-    return this.frequentlyUsedEmojis || (() => {
-      const frequentlyUsedEmojis = _.uniq((Cookies.get('frequently_used_emojis') || '').split(','));
-      this.frequentlyUsedEmojis = frequentlyUsedEmojis.filter(
-        inputName => this.emoji.isEmojiNameValid(inputName),
-      );
+    return (
+      this.frequentlyUsedEmojis ||
+      (() => {
+        const frequentlyUsedEmojis = uniq(
+          (localStorage.getItem(FREQUENTLY_USED_EMOJIS_STORAGE_KEY) || '').split(','),
+        );
+        this.frequentlyUsedEmojis = frequentlyUsedEmojis.filter((inputName) =>
+          this.emoji.isEmojiNameValid(inputName),
+        );
 
-      return this.frequentlyUsedEmojis;
-    })();
+        return this.frequentlyUsedEmojis;
+      })()
+    );
   }
 
   setupSearch() {
@@ -465,7 +530,7 @@ class AwardsHandler {
       this.searchEmojis(term);
     });
 
-    const $menu = $('.emoji-menu');
+    const $menu = $(`.${this.menuClass}`);
     this.registerEventListener('on', $menu, transitionEndEventString, (e) => {
       if (e.target === e.currentTarget) {
         // Clear the search
@@ -492,27 +557,88 @@ class AwardsHandler {
     }
   }
 
+  getEmojiScore(emojis, value) {
+    const elem = $(value).find('[data-name]').get(0);
+    const emoji = emojis.filter((x) => x.emoji.name === elem.dataset.name)[0];
+    elem.dataset.score = emoji.score;
+
+    return emoji.score;
+  }
+
+  sortEmojiElements(emojis, $elements) {
+    const scores = new WeakMap();
+
+    return $elements.sort((a, b) => {
+      let aScore = scores.get(a);
+      let bScore = scores.get(b);
+
+      if (!aScore) {
+        aScore = this.getEmojiScore(emojis, a);
+        scores.set(a, aScore);
+      }
+
+      if (!bScore) {
+        bScore = this.getEmojiScore(emojis, b);
+        scores.set(b, bScore);
+      }
+
+      return aScore - bScore;
+    });
+  }
+
   findMatchingEmojiElements(query) {
-    const emojiMatches = this.emoji.filterEmojiNamesByAlias(query);
+    const matchingEmoji = this.emoji
+      .searchEmoji(query)
+      .map((x) => ({ ...x, score: getEmojiScoreWithIntent(x.emoji.name, x.score) }));
+    const matchingEmojiNames = matchingEmoji.map((x) => x.emoji.name);
     const $emojiElements = $('.emoji-menu-list:not(.frequent-emojis) [data-name]');
-    const $matchingElements = $emojiElements
-      .filter((i, elm) => emojiMatches.indexOf(elm.dataset.name) >= 0);
-    return $matchingElements.closest('li').clone();
+    const $matchingElements = $emojiElements.filter(
+      (i, elm) => matchingEmojiNames.indexOf(elm.dataset.name) >= 0,
+    );
+    return this.sortEmojiElements(matchingEmoji, $matchingElements.closest('li').clone());
+  }
+
+  /* showMenuElement and hideMenuElement are performance optimizations. We use
+   * opacity to show/hide the emoji menu, because we can animate it. But opacity
+   * leaves hidden elements in the render tree, which is unacceptable given the number
+   * of emoji elements in the emoji menu (5k+). To get the best of both worlds, we separately
+   * apply IS_RENDERED to add/remove the menu from the render tree and IS_VISIBLE to animate
+   * the menu being opened and closed. */
+
+  showMenuElement($emojiMenu) {
+    $emojiMenu.addClass(IS_RENDERED);
+
+    // enqueues animation as a microtask, so it begins ASAP once IS_RENDERED added
+    return Promise.resolve().then(() => $emojiMenu.addClass(IS_VISIBLE));
+  }
+
+  hideMenuElement($emojiMenu) {
+    $emojiMenu.on(transitionEndEventString, (e) => {
+      if (e.currentTarget === e.target) {
+        // eslint-disable-next-line @gitlab/no-global-event-off
+        $emojiMenu.removeClass(IS_RENDERED).off(transitionEndEventString);
+      }
+    });
+
+    $emojiMenu.removeClass(IS_VISIBLE);
   }
 
   destroy() {
     this.eventListeners.forEach((entry) => {
       entry.element.off.call(entry.element, ...entry.args);
     });
-    $('.emoji-menu').remove();
+    $(`.${this.menuClass}`).remove();
   }
 }
 
 let awardsHandlerPromise = null;
 export default function loadAwardsHandler(reload = false) {
   if (!awardsHandlerPromise || reload) {
-    awardsHandlerPromise = import(/* webpackChunkName: 'emoji' */ './emoji')
-      .then(Emoji => new AwardsHandler(Emoji));
+    awardsHandlerPromise = Emoji.initEmojiMap().then(() => {
+      const awardsHandler = new AwardsHandler(Emoji);
+      awardsHandler.bindEvents();
+      return awardsHandler;
+    });
   }
   return awardsHandlerPromise;
 }

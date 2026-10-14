@@ -1,45 +1,64 @@
-require 'uri'
+# frozen_string_literal: true
 
+# Generated HTML is transformed back to GFM by:
+# - app/assets/javascripts/content_editor/extensions/math_inline.js
+# - app/assets/javascripts/content_editor/extensions/code_block_highlight.js
 module Banzai
   module Filter
-    # HTML filter that adds class="code math" and removes the dollar sign in $`2+2`$.
-    #
     class MathFilter < HTML::Pipeline::Filter
-      # Attribute indicating inline or display math.
-      STYLE_ATTRIBUTE = 'data-math-style'.freeze
+      # HTML filter that adds any necessary classes to math html for rendering
+      # on the frontend
+      prepend Concerns::PipelineTimingCheck
+      include Concerns::ContextAccessors
+      include ::Gitlab::Utils::StrongMemoize
 
-      # Class used for tagging elements that should be rendered
-      TAG_CLASS = 'js-render-math'.freeze
+      CSS_MATH_STYLE = 'pre[data-math-style], pre[data-canonical-lang="math"], ' \
+        'code[data-math-style], span[data-math-style]'
+      XPATH_MATH_STYLE = Gitlab::Utils::Nokogiri.css_to_xpath(CSS_MATH_STYLE).freeze
+      TAG_CLASS = 'js-render-math'
+      LANG_ATTR = 'data-canonical-lang'
+      MATH_STYLE_ATTR = 'data-math-style'
 
-      INLINE_CLASSES = "code math #{TAG_CLASS}".freeze
-
-      DOLLAR_SIGN = '$'.freeze
+      RENDER_NODES_LIMIT = 1000
 
       def call
-        doc.css('code').each do |code|
-          closing = code.next
-          opening = code.previous
+        @nodes_count = 0
 
-          # We need a sibling before and after.
-          # They should end and start with $ respectively.
-          if closing && opening &&
-              closing.text? && opening.text? &&
-              closing.content.first == DOLLAR_SIGN &&
-              opening.content.last == DOLLAR_SIGN
-
-            code[:class] = INLINE_CLASSES
-            code[STYLE_ATTRIBUTE] = 'inline'
-            closing.content = closing.content[1..-1]
-            opening.content = opening.content[0..-2]
-          end
-        end
-
-        doc.css('pre.code.math').each do |el|
-          el[STYLE_ATTRIBUTE] = 'display'
-          el[:class] += " #{TAG_CLASS}"
-        end
+        process_existing
 
         doc
+      end
+
+      private
+
+      # Add necessary classes to existing math blocks
+      def process_existing
+        doc.xpath(XPATH_MATH_STYLE).each do |node|
+          break if render_nodes_limit_reached?(@nodes_count)
+
+          if node.name == 'pre' && node[LANG_ATTR] == 'math' && !node[MATH_STYLE_ATTR]
+            node.set_attribute(MATH_STYLE_ATTR, 'display')
+          end
+
+          node[:class] = TAG_CLASS
+
+          @nodes_count += 1
+        end
+      end
+
+      def render_nodes_limit_reached?(count)
+        count >= RENDER_NODES_LIMIT && math_rendering_limits_enabled?
+      end
+
+      def math_rendering_limits_enabled?
+        return true unless group && group.namespace_settings
+
+        group.namespace_settings.math_rendering_limits_enabled?
+      end
+      strong_memoize_attr :math_rendering_limits_enabled?
+
+      def group
+        project&.parent || super
       end
     end
   end

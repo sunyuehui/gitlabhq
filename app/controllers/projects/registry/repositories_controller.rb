@@ -1,29 +1,43 @@
+# frozen_string_literal: true
+
 module Projects
   module Registry
     class RepositoriesController < ::Projects::Registry::ApplicationController
+      include PackagesHelper
+      include ::Registry::ConnectionErrorsHandler
+
       before_action :authorize_update_container_image!, only: [:destroy]
-      before_action :ensure_root_container_repository!, only: [:index]
 
       def index
-        @images = project.container_repositories
+        respond_to do |format|
+          format.html { ensure_root_container_repository! }
+          format.json { render_404 }
+        end
+      end
+
+      # The show action renders index to allow frontend routing to work on page refresh
+      def show
+        render :index
       end
 
       def destroy
-        if image.destroy
-          redirect_to project_container_registry_index_path(@project),
-                      status: 302,
-                      notice: 'Image repository has been removed successfully!'
-        else
-          redirect_to project_container_registry_index_path(@project),
-                      status: 302,
-                      alert: 'Failed to remove image repository!'
+        image.delete_scheduled!
+
+        track_package_event(:delete_repository, :container)
+
+        respond_to do |format|
+          format.json { head :no_content }
         end
       end
 
       private
 
       def image
-        @image ||= project.container_repositories.find(params[:id])
+        @image ||= project.container_repositories.find(permitted_params[:id])
+      end
+
+      def permitted_params
+        params.permit(:id)
       end
 
       ##
@@ -32,10 +46,10 @@ module Projects
       # Needed to maintain a backwards compatibility.
       #
       def ensure_root_container_repository!
-        ContainerRegistry::Path.new(@project.full_path).tap do |path|
+        ::ContainerRegistry::Path.new(@project.full_path).tap do |path|
           break if path.has_repository?
 
-          ContainerRepository.build_from_path(path).tap do |repository|
+          ::ContainerRepository.build_from_path(path).tap do |repository|
             repository.save! if repository.has_tags?
           end
         end
@@ -43,3 +57,5 @@ module Projects
     end
   end
 end
+
+Projects::Registry::RepositoriesController.prepend_mod

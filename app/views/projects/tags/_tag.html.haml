@@ -1,37 +1,48 @@
-- commit = @repository.commit(tag.dereferenced_target)
+- commit = @repository.commit(tag.dereferenced_target) if tag.dereferenced_target.present?
 - release = @releases.find { |release| release.tag == tag.name }
-%li.flex-row
-  .row-main-content.str-truncated
-    = link_to project_tag_path(@project, tag.name), class: 'item-title ref-name' do
-      = icon('tag')
-      = tag.name
+- commit_status = @tag_pipeline_statuses[tag.name] if @tag_pipeline_statuses
+- pipeline = commit_status&.subject
+
+%li.gl-justify-between{ class: "@md/panel:!gl-flex !gl-items-start !gl-px-5", data: { testid: 'tag-row' } }
+  .gl-flex-auto
+    %h2.gl-inline.gl-m-0.gl-font-bold.gl-text-size-h2
+      = sprite_icon('tag', css_class: "gl-fill-icon-subtle")
+      = link_to tag.name, project_tag_path(@project, tag.name)
+      = clipboard_button(text: tag.name, title: _("Copy tag name"))
 
     - if protected_tag?(@project, tag)
-      %span.label.label-success
-        protected
-
-    - if tag.message.present?
-      &nbsp;
-      = strip_gpg_signature(tag.message)
+      = gl_badge_tag s_('TagsPage|protected'), variant: :neutral, class: 'gl-ml-2'
 
     - if commit
-      .block-truncated
+      .gl-truncate
         = render 'projects/branches/commit', commit: commit, project: @project
     - else
       %p
-        Cant find HEAD commit for this tag
-    - if release && release.description.present?
-      .description.prepend-top-default
-        .wiki
-          = markdown_field(release, :description)
+        = s_("TagsPage|Can't find HEAD commit for this tag")
 
-  .row-fixed-content.controls
-    = render 'projects/buttons/download', project: @project, ref: tag.name, pipeline: @tags_pipelines[tag.name]
+    - if release
+      = render 'release_link', project: @project, release: release
 
-    - if can?(current_user, :push_code, @project)
-      = link_to edit_project_tag_release_path(@project, tag.name), class: 'btn has-tooltip', title: "Edit release notes", data: { container: "body" } do
-        = icon("pencil")
+    - if tag.message.present?
+      %pre.wrap.gl-mt-3.gl-max-w-80
+        = strip_signature(tag.message)
 
-    - if can?(current_user, :admin_project, @project)
-      = link_to project_tag_path(@project, tag.name), class: "btn btn-remove remove-row has-tooltip #{protected_tag?(@project, tag) ? 'disabled' : ''}", title: "Delete tag", method: :delete, data: { confirm: "Deleting the '#{tag.name}' tag cannot be undone. Are you sure?", container: 'body' }, remote: true do
-        = icon("trash-o")
+  .gl-grow-0.gl-shrink-0.gl-flex.gl-flex-row.gl-items-center.gl-gap-3.gl-mt-2
+    - tag_signature = tag_view_signature(tag)
+    - if tag_signature.present?
+      = render partial: 'projects/commit/signature', object: tag_signature
+
+    - if commit_status
+
+      = render 'ci/status/icon', status: commit_status, option_css_classes: 'gl-inline-flex gl-align-middle'
+    - elsif @tag_pipeline_statuses && @tag_pipeline_statuses.any?
+      .gl-inline-flex.gl-align-middle
+        %svg.s24
+
+    - if can?(current_user, :admin_tag, @project)
+      = render 'edit_release_button', tag: tag, project: @project, release: release
+
+    = render 'projects/buttons/download', project: @project, ref: tag.name, ref_type: :tags, pipeline: pipeline
+
+    - if can?(current_user, :admin_tag, @project)
+      = render 'projects/buttons/remove_tag', project: @project, tag: tag

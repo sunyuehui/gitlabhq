@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module QuickActions
     module Dsl
@@ -17,18 +19,26 @@ module Gitlab
         # Allows to give a description to the next quick action.
         # This description is shown in the autocomplete menu.
         # It accepts a block that will be evaluated with the context given to
-        # `CommandDefintion#to_h`.
+        # `CommandDefinition#to_h`.
         #
         # Example:
         #
         #   desc do
-        #     "This is a dynamic description for #{noteable.to_ability_name}"
+        #     "This is a dynamic description for #{quick_action_target.to_ability_name}"
         #   end
         #   command :command_key do |arguments|
         #     # Awesome code block
         #   end
         def desc(text = '', &block)
-          @description = block_given? ? block : text
+          @description = block || text
+        end
+
+        def warning(text = '', &block)
+          @warning = block || text
+        end
+
+        def icon(string = '')
+          @icon = string
         end
 
         # Allows to define params for the next quick action.
@@ -41,7 +51,7 @@ module Gitlab
         #     # Awesome code block
         #   end
         def params(*params, &block)
-          @params = block_given? ? block : params
+          @params = block || params
         end
 
         # Allows to give an explanation of what the command will do when
@@ -51,20 +61,65 @@ module Gitlab
         # Example:
         #
         #   explanation do |arguments|
-        #     "Adds label(s) #{arguments.join(' ')}"
+        #     "Adds labels #{arguments.join(' ')}"
         #   end
         #   command :command_key do |arguments|
         #     # Awesome code block
         #   end
         def explanation(text = '', &block)
-          @explanation = block_given? ? block : text
+          @explanation = block || text
+        end
+
+        # Allows to provide a message about quick action execution result, success or failure.
+        # This message is shown after quick action execution and after saving the note.
+        #
+        # Example:
+        #
+        #   execution_message do |arguments|
+        #     "Added labels #{arguments.join(' ')}"
+        #   end
+        #   command :command_key do |arguments|
+        #     # Awesome code block
+        #   end
+        #
+        # Note: The execution_message won't be executed unless the condition block returns true.
+        #       execution_message block is executed always after the command block has run,
+        #       for this reason if the condition block doesn't return true after the command block has
+        #       run you need to set the @execution_message variable inside the command block instead as
+        #       shown in the following example.
+        #
+        # Example using instance variable:
+        #
+        #   command :command_key do |arguments|
+        #     # Awesome code block
+        #     @execution_message[:command_key] = 'command_key executed successfully'
+        #   end
+        #
+        def execution_message(text = '', &block)
+          @execution_message = block || text
+        end
+
+        # Allows to define type(s) that must be met in order for the command
+        # to be returned by `.command_names` & `.command_definitions`.
+        #
+        # It is being evaluated before the conditions block is being evaluated
+        #
+        # If no types are passed then any type is allowed as the check is simply skipped.
+        #
+        # Example:
+        #
+        #   types Commit, Issue, MergeRequest
+        #   command :command_key do |arguments|
+        #     # Awesome code block
+        #   end
+        def types(*types_list)
+          @types = types_list
         end
 
         # Allows to define conditions that must be met in order for the command
         # to be returned by `.command_names` & `.command_definitions`.
-        # It accepts a block that will be evaluated with the context given to
-        # `CommandDefintion#to_h`.
-        #
+        # It accepts a block that will be evaluated with the context
+        # of a QuickActions::InterpretService instance
         # Example:
         #
         #   condition do
@@ -81,7 +136,7 @@ module Gitlab
         # both to `command` and `explanation` blocks, instead of the raw
         # parameters.
         # It accepts a block that will be evaluated with the context given to
-        # `CommandDefintion#to_h`.
+        # `CommandDefinition#to_h`.
         #
         # Example:
         #
@@ -95,14 +150,25 @@ module Gitlab
           @parse_params_block = block
         end
 
-        # Registers a new command which is recognizeable from body of email or
+        def conditional_aliases_autocompletion(*aliases, &block)
+          @conditional_aliases = *aliases
+          @conditional_aliases_block = block
+        end
+
+        # Registers a new command which is recognizable from body of email or
         # comment.
         # It accepts aliases and takes a block.
+        #
+        # You can also set the @execution_message instance variable, on conflicts with
+        # execution_message method the instance variable has precedence.
         #
         # Example:
         #
         #   command :my_command, :alias_for_my_command do |arguments|
         #     # Awesome code block
+        #     @updates[:my_command] = 'foo'
+        #
+        #     @execution_message[:my_command] = 'my_command executed successfully'
         #   end
         def command(*command_names, &block)
           define_command(CommandDefinition, *command_names, &block)
@@ -134,11 +200,17 @@ module Gitlab
             name,
             aliases: aliases,
             description: @description,
+            warning: @warning,
+            icon: @icon,
             explanation: @explanation,
+            execution_message: @execution_message,
             params: @params,
             condition_block: @condition_block,
             parse_params_block: @parse_params_block,
-            action_block: block
+            action_block: block,
+            types: @types,
+            conditional_aliases: @conditional_aliases,
+            conditional_aliases_block: @conditional_aliases_block
           )
 
           self.command_definitions << definition
@@ -149,9 +221,15 @@ module Gitlab
 
           @description = nil
           @explanation = nil
+          @execution_message = nil
           @params = nil
           @condition_block = nil
+          @warning = nil
+          @icon = nil
           @parse_params_block = nil
+          @types = nil
+          @conditional_aliases = nil
+          @conditional_aliases_block = nil
         end
       end
     end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module BlobViewer
   class DependencyManager < Base
     include Auxiliary
@@ -27,10 +29,19 @@ module BlobViewer
 
     private
 
-    def package_name_from_json(key)
-      prepare!
+    def json_data
+      @json_data ||= begin
+        prepare!
+        Gitlab::Json.safe_parse(blob.data)
+      rescue StandardError
+        {}
+      end
+    end
 
-      JSON.parse(blob.data)[key] rescue nil
+    def fetch_from_json(...)
+      json_data.dig(...)
+    rescue TypeError
+      nil
     end
 
     def package_name_from_method_call(name)

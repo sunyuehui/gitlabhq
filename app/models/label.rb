@@ -1,40 +1,109 @@
-class Label < ActiveRecord::Base
-  include CacheMarkdownField
+# frozen_string_literal: true
+
+class Label < ApplicationRecord
+  include BaseLabel
   include Referable
   include Subscribable
+  include OptionallySearch
+  include Sortable
+  include FromUnion
+  include Presentable
+  include EachBatch
+  include BatchNullifyDependentAssociations
 
-  # Represents a "No Label" state used for filtering Issues and Merge
-  # Requests that have no label assigned.
-  LabelStruct = Struct.new(:title, :name)
-  None = LabelStruct.new('No Label', 'No Label')
-  Any = LabelStruct.new('Any Label', '')
+  DESCRIPTION_LENGTH_MAX = 512.kilobytes
 
-  cache_markdown_field :description, pipeline: :single_line
-
-  DEFAULT_COLOR = '#428BCA'.freeze
-
-  default_value_for :color, DEFAULT_COLOR
+  belongs_to :group
+  belongs_to :project
+  belongs_to :organization, class_name: 'Organizations::Organization'
 
   has_many :lists, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
   has_many :priorities, class_name: 'LabelPriority'
   has_many :label_links, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
+  has_many :resource_label_events, inverse_of: :label, dependent: :nullify # rubocop:disable Cop/ActiveRecordDependent -- Necessary to nullify in batches
   has_many :issues, through: :label_links, source: :target, source_type: 'Issue'
   has_many :merge_requests, through: :label_links, source: :target, source_type: 'MergeRequest'
 
-  before_validation :strip_whitespace_from_title_and_color
+  before_validation :ensure_single_parent_for_given_type
+  before_destroy :prevent_locked_label_destroy, :nullify_dependent_associations_in_batches, prepend: true
 
-  validates :color, color: true, allow_blank: false
+  after_save :unprioritize_all!, if: -> { saved_change_to_attribute?(:archived) && archived }
 
-  # Don't allow ',' for label titles
-  validates :title, presence: true, format: { with: /\A[^,]+\z/ }
+  validate :ensure_lock_on_merge_allowed
+  validates_with ExactlyOnePresentValidator, fields: [:project, :organization], associations: [:group], error_key: :parent
   validates :title, uniqueness: { scope: [:group_id, :project_id] }
-  validates :title, length: { maximum: 255 }
 
-  default_scope { order(title: :asc) }
+  # we validate the description against DESCRIPTION_LENGTH_MAX only for labels being created and on updates if
+  # the description changes to avoid breaking the existing labels which may have their descriptions longer
+  validates :description, bytesize: { maximum: -> { DESCRIPTION_LENGTH_MAX } }, if: :validate_description_length?
 
-  scope :templates, -> { where(template: true) }
+  default_scope { order(title: :asc) } # rubocop:disable Cop/DefaultScope
+
+  scope :templates, -> { where(template: true, type: [Label.name, nil]) }
+  scope :in_organization, ->(organization) { where(organization: organization) }
   scope :with_title, ->(title) { where(title: title) }
-  scope :on_project_boards, ->(project_id) { joins(lists: :board).merge(List.movable).where(boards: { project_id: project_id }) }
+  scope :with_lists_and_board, -> { joins(lists: :board).merge(List.movable) }
+  scope :with_lock_on_merge, -> { where(lock_on_merge: true) }
+  scope :on_project_boards, ->(project_id) { with_lists_and_board.where(boards: { project_id: project_id }) }
+  scope :on_board, ->(board_id) { with_lists_and_board.where(boards: { id: board_id }) }
+  scope :order_name_asc, -> { reorder(title: :asc) }
+  scope :order_name_desc, -> { reorder(title: :desc) }
+  scope :subscribed_by, ->(user_id) { joins(:subscriptions).where(subscriptions: { user_id: user_id, subscribed: true }) }
+  scope :with_preloaded_container, -> { preload(parent_container: :route) }
+  scope :archived, ->(archived) { where(archived: archived) }
+
+  scope :top_labels_by_target, ->(target_relation) {
+    label_id_column = arel_table[:id]
+
+    # Window aggregation to count labels
+    count_by_id = Arel::Nodes::Over.new(
+      Arel::Nodes::NamedFunction.new('count', [label_id_column]),
+      Arel::Nodes::Window.new.partition(label_id_column)
+    ).as('count_by_id')
+
+    select(arel_table[Arel.star], count_by_id)
+      .joins(:label_links)
+      .merge(LabelLink.where(target: target_relation))
+      .reorder(count_by_id: :desc)
+      .distinct
+  }
+
+  scope :for_targets, ->(target_relation) do
+    joins(:label_links)
+      .merge(LabelLink.where(target: target_relation))
+      .select(arel_table[Arel.star], LabelLink.arel_table[:target_id], LabelLink.arel_table[:target_type])
+      .with_preloaded_container
+  end
+
+  scope :sorted_by_similarity_desc, ->(search) do
+    order_expression = Gitlab::Database::SimilarityScore.build_expression(
+      search: search,
+      rules: [
+        { column: arel_table["title"], multiplier: 1 },
+        { column: arel_table["description"], multiplier: 0.2 }
+      ])
+
+    order = Gitlab::Pagination::Keyset::Order.build(
+      [
+        Gitlab::Pagination::Keyset::ColumnOrderDefinition.new(
+          attribute_name: 'similarity',
+          column_expression: order_expression,
+          order_expression: order_expression.desc,
+          order_direction: :desc,
+          add_to_projections: true
+        ),
+        Gitlab::Pagination::Keyset::ColumnOrderDefinition.new(
+          attribute_name: 'id',
+          order_expression: Label.arel_table[:id].desc
+        )
+      ])
+
+    order.apply_cursor_conditions(reorder(order))
+  end
+
+  def self.pluck_titles
+    pluck(:title)
+  end
 
   def self.prioritized(project)
     joins(:priorities)
@@ -64,6 +133,14 @@ class Label < ActiveRecord::Base
     joins(label_priorities)
   end
 
+  def self.optionally_subscribed_by(user_id)
+    if user_id
+      subscribed_by(user_id)
+    else
+      all
+    end
+  end
+
   alias_attribute :name, :title
 
   def self.reference_prefix
@@ -83,17 +160,32 @@ class Label < ActiveRecord::Base
       (#{Project.reference_pattern})?
       #{Regexp.escape(reference_prefix)}
       (?:
-        (?<label_id>\d+(?!\S\w)\b) | # Integer-based label ID, or
-        (?<label_name>
-          [A-Za-z0-9_\-\?\.&]+ | # String-based single-word label title, or
-          ".+?"                  # String-based multi-word label surrounded in quotes
-        )
+          (?<label_id>\d+(?!\S\w)\b)
+        | # Integer-based label ID, or
+          (?<label_name>
+              # String-based single-word label title, or
+              #{Gitlab::Regex.sep_by_1(/:{1,2}/, /[A-Za-z0-9_\-\?\.&]+/)}
+              (?<!\.|\?)
+            |
+              # String-based multi-word label surrounded in quotes
+              ".+?"
+          )
       )
     }x
   end
 
   def self.link_reference_pattern
     nil
+  end
+
+  def self.ids_on_board(board_id)
+    on_board(board_id).pluck(:label_id)
+  end
+
+  def self.on_project_board?(project_id, label_id)
+    return false if label_id.blank?
+
+    on_project_boards(project_id).where(id: label_id).exists?
   end
 
   def open_issues_count(user = nil)
@@ -116,6 +208,8 @@ class Label < ActiveRecord::Base
   end
 
   def prioritize!(project, value)
+    return if archived
+
     label_priority = priorities.find_or_initialize_by(project_id: project.id)
     label_priority.priority = value
     label_priority.save!
@@ -125,24 +219,20 @@ class Label < ActiveRecord::Base
     priorities.where(project: project).delete_all
   end
 
+  def unprioritize_all!
+    return if id.blank?
+
+    LabelPriority.where(label_id: id).delete_all
+  end
+
   def priority(project)
-    priorities.find_by(project: project).try(:priority)
-  end
+    priority = if priorities.loaded?
+                 priorities.first { |p| p.project == project }
+               else
+                 priorities.find_by(project: project)
+               end
 
-  def template?
-    template
-  end
-
-  def color
-    super || DEFAULT_COLOR
-  end
-
-  def text_color
-    LabelsHelper.text_color_for_bg(self.color)
-  end
-
-  def title=(value)
-    write_attribute(:title, sanitize_title(value)) if value.present?
+    priority.try(:priority)
   end
 
   ##
@@ -154,17 +244,17 @@ class Label < ActiveRecord::Base
   #
   #   Label.first.to_reference                                     # => "~1"
   #   Label.first.to_reference(format: :name)                      # => "~\"bug\""
-  #   Label.first.to_reference(project, target_project: same_namespace_project)    # => "gitlab-ce~1"
-  #   Label.first.to_reference(project, target_project: another_namespace_project) # => "gitlab-org/gitlab-ce~1"
+  #   Label.first.to_reference(project, target_container: same_namespace_project)    # => "gitlab-foss~1"
+  #   Label.first.to_reference(project, target_container: another_namespace_project) # => "gitlab-org/gitlab-foss~1"
   #
   # Returns a String
   #
-  def to_reference(from_project = nil, target_project: nil, format: :id, full: false)
+  def to_reference(from = nil, target_container: nil, format: :id, full: false)
     format_reference = label_format_reference(format)
     reference = "#{self.class.reference_prefix}#{format_reference}"
 
-    if from_project
-      "#{from_project.to_reference(target_project, full: full)}#{reference}"
+    if from
+      "#{from.to_reference_base(target_container, full: full)}#{reference}"
     else
       reference
     end
@@ -172,15 +262,61 @@ class Label < ActiveRecord::Base
 
   def as_json(options = {})
     super(options).tap do |json|
+      json[:type] = self.try(:type)
       json[:priority] = priority(options[:project]) if options.key?(:project)
+      json[:textColor] = text_color
     end
   end
 
   def hook_attrs
-    attributes
+    {
+      id: id,
+      title: title,
+      color: color,
+      project_id: project_id,
+      created_at: created_at,
+      updated_at: updated_at,
+      template: template,
+      description: description,
+      type: type,
+      group_id: group_id
+    }
+  end
+
+  def present(attributes = {})
+    super(**attributes.merge(presenter_class: ::LabelPresenter))
+  end
+
+  # TODO: Remove when sharding key NOT NULL constraint is validated
+  # This should not happen often, and will only happen once for any record
+  # https://gitlab.com/gitlab-org/gitlab/-/issues/558353
+  def refresh_markdown_cache
+    return super if sharding_key_columns.count { |s_column| self[s_column].present? } == 1
+
+    # Using model callbacks to get sharding key values
+    ensure_single_parent_for_given_type
+
+    sharding_key_changes = changes.select { |k, _| sharding_key_columns.include?(k.to_sym) }
+    sharding_key_updates = sharding_key_changes.transform_values(&:last)
+
+    super.merge(sharding_key_updates)
   end
 
   private
+
+  def sharding_key_columns
+    %i[project_id group_id organization_id]
+  end
+
+  def validate_description_length?
+    return false unless description_changed?
+
+    previous_description = changes['description'].first
+    # previous_description will be nil for new records
+    return true if previous_description.blank?
+
+    previous_description.bytesize <= DESCRIPTION_LENGTH_MAX || description.bytesize > previous_description.bytesize
+  end
 
   def issues_count(user, params = {})
     params.merge!(subject_foreign_key => subject.id, label_name: title, scope: 'all')
@@ -190,18 +326,35 @@ class Label < ActiveRecord::Base
   def label_format_reference(format = :id)
     raise StandardError, 'Unknown format' unless [:id, :name].include?(format)
 
-    if format == :name && !name.include?('"')
+    if format == :name && name.exclude?('"')
       %("#{name}")
     else
       id
     end
   end
 
-  def sanitize_title(value)
-    CGI.unescapeHTML(Sanitize.clean(value.to_s))
+  def prevent_locked_label_destroy
+    return unless lock_on_merge
+
+    errors.add(:base, format(_('%{label_name} is locked and was not removed'), label_name: name))
+    throw :abort # rubocop:disable Cop/BanCatchThrow
   end
 
-  def strip_whitespace_from_title_and_color
-    %w(color title).each { |attr| self[attr] = self[attr]&.strip }
+  def ensure_lock_on_merge_allowed
+    return unless template?
+    return unless lock_on_merge || will_save_change_to_lock_on_merge?
+
+    errors.add(:lock_on_merge, _('can not be set for template labels'))
+  end
+
+  def ensure_single_parent_for_given_type
+    case type
+    when 'GroupLabel'
+      self[:project_id] = nil if project_id.present?
+    when 'ProjectLabel'
+      self[:group_id] = nil if group_id.present?
+    end
   end
 end
+
+Label.prepend_mod

@@ -1,495 +1,1033 @@
-# Vue
+---
+stage: none
+group: unassigned
+info: Any user with at least the Maintainer role can merge updates to this content. For details, see <https://docs.gitlab.com/development/development_processes/#development-guidelines-review>.
+title: Vue
+---
 
-For more complex frontend features, we recommend using Vue.js. It shares
-some ideas with React.js as well as Angular.
+To get started with Vue, read through [their documentation](https://v2.vuejs.org/v2/guide/index.html).
 
-To get started with Vue, read through [their documentation][vue-docs].
+## Examples
 
-## When to use Vue.js
+What is described in the following sections can be found in these examples:
 
-We recommend using Vue for more complex features. Here are some guidelines for when to use Vue.js:
+- [Security products](https://gitlab.com/gitlab-org/gitlab/-/tree/master/ee/app/assets/javascripts/vue_shared/security_reports)
+- [Registry](https://gitlab.com/gitlab-org/gitlab-foss/tree/master/app/assets/javascripts/registry/stores)
 
-- If you are starting a new feature or refactoring an old one that highly interacts with the DOM;
-- For real time data updates;
-- If you are creating a component that will be reused elsewhere;
+## When to add a Vue application
 
-## When not to use Vue.js
+Sometimes, a HAML page is enough to satisfy requirements. This statement is correct primarily for the static pages or pages that have very little logic. How do we know it's worth adding a Vue application to the page? The answer is "when we need to maintain application state and synchronize the rendered page with it".
 
-We don't want to refactor all GitLab frontend code into Vue.js, here are some guidelines for
-when not to use Vue.js:
+To better explain this, let's imagine the page that has one toggle, and toggling it sends an API request. This case does not involve any state we want to maintain. We send the request and switch the toggle. However, if we add one more toggle that should always be the opposite to the first one, we need a _state_: one toggle should be "aware" about the state of another one. When written in plain JavaScript, this logic usually involves listening to a DOM event and reacting by modifying the DOM. Cases like this are much easier to handle with Vue.js so we should create a Vue application here.
 
-- Adding or changing static information;
-- Features that highly depend on jQuery will be hard to work with Vue.js;
-- Features without reactive data;
+## How to add a Vue application to a page
 
-As always, the Frontend Architectural Experts are available to help with any Vue or JavaScript questions.
+1. Create a new folder in `app/assets/javascripts` for your Vue application.
+1. Add [page-specific JavaScript](performance.md#page-specific-javascript) to load your application.
+1. You can use the [`initSimpleApp helper](#the-initsimpleapp-helper) to simplify [passing data from HAML to JS](#providing-data-from-haml-to-javascript).
+
+### What are some flags signaling that you might need a Vue application?
+
+- when you need to define complex conditionals based on multiple factors and update them on user interaction;
+- when you have to maintain any form of application state and share it between tags/elements;
+- when you expect complex logic to be added in the future - it's easier to start with a basic Vue application than having to rewrite JS/HAML to Vue on the next step.
+
+## Avoid multiple Vue applications on the page
+
+In the past, we added interactivity to the page piece-by-piece, adding multiple small Vue applications to different parts of the rendered HAML page. However, this approach led us to multiple complications:
+
+- in most cases, these applications don't share state and perform API requests independently which increases the number of requests;
+- we have to provide data from Rails to Vue using multiple endpoints;
+- we cannot render Vue applications dynamically after page load, so the page structure becomes rigid;
+- we cannot fully leverage client-side routing to replace Rails routing;
+- multiple applications lead to unpredictable user experience, increased page complexity, harder debugging process;
+- the way apps communicate with each other affects Web Vitals numbers.
+
+Because of these reasons, we want to be cautious about adding new Vue applications to the pages where another Vue application is already present (this does not include old or new navigation). Before adding a new app, make sure that it is absolutely impossible to extend an existing application to achieve a desired functionality. When in doubt, feel free to ask for the architectural advice on `#frontend` or `#frontend-maintainers` Slack channel.
+
+If you still need to add a new application, make sure it shares local state with existing applications.
+Learn: [How do I know which state manager to use?](state_management.md)
 
 ## Vue architecture
 
-All new features built with Vue.js must follow a [Flux architecture][flux].
-The main goal we are trying to achieve is to have only one data flow and only one data entry.
-In order to achieve this goal, each Vue bundle needs a Store - where we keep all the data -,
-a Service - that we use to communicate with the server - and a main Vue component.
+The main goal we are trying to achieve with Vue architecture is to have only one data flow, and only one data entry.
+To achieve this goal we use [Pinia](pinia.md) or [Apollo Client](graphql.md#libraries)
 
-Think of the Main Vue Component as the entry point of your application. This is the only smart
-component that should exist in each Vue feature.
-This component is responsible for:
-1. Calling the Service to get data from the server
-1. Calling the Store to store the data received
-1. Mounting all the other components
+You can also read about this architecture in Vue documentation about
+[state management](https://v2.vuejs.org/v2/guide/state-management.html#Simple-State-Management-from-Scratch)
+and about [one way data flow](https://v2.vuejs.org/v2/guide/components-props.html#One-Way-Data-Flow).
 
-  ![Vue Architecture](img/vue_arch.png)
+### Components and Store
 
-You can also read about this architecture in vue docs about [state management][state-management]
-and about [one way data flow][one-way-data-flow].
-
-### Components, Stores and Services
-
-In some features implemented with Vue.js, like the [issue board][issue-boards]
-or [environments table][environments-table]
+In some features implemented with Vue.js, like the [issue board](https://gitlab.com/gitlab-org/gitlab-foss/tree/master/app/assets/javascripts/boards)
+or [environments table](https://gitlab.com/gitlab-org/gitlab-foss/tree/master/app/assets/javascripts/environments)
 you can find a clear separation of concerns:
 
-```
+```plaintext
 new_feature
 ├── components
-│   └── component.js.es6
+│   └── component.vue
 │   └── ...
 ├── store
-│  └── new_feature_store.js.es6
-├── service
-│  └── new_feature_service.js.es6
-├── new_feature_bundle.js.es6
+│  └── new_feature_store.js
+├── index.js
 ```
-_For consistency purposes, we recommend you to follow the same structure._
+
+_For consistency purposes, we recommend that you follow the same structure._
 
 Let's look into each of them:
 
-### A `*_bundle.js` file
+### An `index.js` file
 
-This is the index file of your new feature. This is where the root Vue instance
-of the new feature should be.
+This file is the index file of your new feature. The root Vue instance
+of the new feature should be here.
 
 The Store and the Service should be imported and initialized in this file and
 provided as a prop to the main component.
 
-Don't forget to follow [these steps.][page_specific_javascript]
+Be sure to read about [page-specific JavaScript](performance.md#page-specific-javascript).
 
-### A folder for Components
+### Bootstrapping Gotchas
 
-This folder holds all components that are specific of this new feature.
-If you need to use or create a component that will probably be used somewhere
-else, please refer to `vue_shared/components`.
+#### Providing data from HAML to JavaScript
 
-A good thumb rule to know when you should create a component is to think if
-it will be reusable elsewhere.
+While mounting a Vue application, you might need to provide data from Rails to JavaScript.
+To do that, you can use the `data` attributes in the HTML element and query them while mounting the application.
+You should only do this while initializing the application, because the mounted element is replaced
+with a Vue-generated DOM.
 
-For example, tables are used in a quite amount of places across GitLab, a table
-would be a good fit for a component. On the other hand, a table cell used only
-in one table would not be a good use of this pattern.
+The `data` attributes are [only able to accept String values](https://developer.mozilla.org/en-US/docs/Learn/HTML/Howto/Use_data_attributes#javascript_access),
+so you will need to cast or convert other variable types to String.
 
-You can read more about components in Vue.js site, [Component System][component-system]
+The advantage of providing data from the DOM to the Vue instance through `props` or
+`provide` in the `render` function, instead of querying the DOM inside the main Vue
+component, is that you avoid creating a fixture or an HTML element in the unit test.
 
-### A folder for the Store
+##### The `initSimpleApp` helper
 
-The Store is a class that allows us to manage the state in a single
-source of truth. It is not aware of the service or the components.
+`initSimpleApp` is a helper function that streamlines the process of mounting a component in Vue.js. It accepts two arguments: a selector string representing the mount point in the HTML, and a Vue component.
 
-The concept we are trying to follow is better explained by Vue documentation
-itself, please read this guide: [State Management][state-management]
+To use `initSimpleApp`:
 
-### A folder for the Service
+1. Include an HTML element in the page with an ID or unique class.
+1. Add a data-view-model attribute containing a JSON object.
+1. Import the desired Vue component, and pass it along with a valid CSS selector string
+   that selects the HTML element to `initSimpleApp`. This string mounts the component
+   at the specified location.
 
-The Service is a class used only to communicate with the server.
-It does not store or manipulate any data. It is not aware of the store or the components.
-We use [vue-resource][vue-resource-repo] to communicate with the server.
+`initSimpleApp` automatically retrieves the content of the data-view-model attribute as a JSON object and passes it as props to the mounted Vue component. This can be used to pre-populate the component with data.
 
-Vue Resource should only be imported in the service file.
+Example:
 
-  ```javascript
-  import Vue from 'vue';
-  import VueResource from 'vue-resource';
-
-  Vue.use(VueResource);
-  ```
-
-#### Vue-resource gotchas
-#### Headers
-Headers are being parsed into a plain object in an interceptor.
-In Vue-resource 1.x `headers` object was changed into an `Headers` object. In order to not change all old code, an interceptor was added.
-
-If you need to write a unit test that takes the headers in consideration, you need to include an interceptor to parse the headers after your test interceptor.
-You can see an example in `spec/javascripts/environments/environment_spec.js`:
-  ```javascript
-  import { headersInterceptor } from './helpers/vue_resource_helper';
-
-  beforeEach(() => {
-    Vue.http.interceptors.push(myInterceptor);
-    Vue.http.interceptors.push(headersInterceptor);
-  });
-
-  afterEach(() => {
-    Vue.http.interceptors = _.without(Vue.http.interceptors, myInterceptor);
-    Vue.http.interceptors = _.without(Vue.http.interceptors, headersInterceptor);
-  });
-  ```
-
-#### `.json()`
-When making a request to the server, you will most likely need to access the body of the response.
-Use `.json()` to convert. Because `.json()` returns a Promise the follwoing structure should be used:
-
-  ```javascript
-  service.get('url')
-    .then(resp => resp.json())
-    .then((data) => {
-      this.store.storeData(data);
-    })
-    .catch(() => new Flash('Something went wrong'));
-  ```
-
-When using `Poll` (`app/assets/javascripts/lib/utils/poll.js`), the `successCallback` needs to handle `.json()` as a Promise:
-  ```javascript
-  successCallback: (response) => {
-    return response.json().then((data) => {
-      // handle the response
-    });
-  }
-  ```
-
-#### CSRF token
-We use a Vue Resource interceptor to manage the CSRF token.
-`app/assets/javascripts/vue_shared/vue_resource_interceptor.js` holds all our common interceptors.
-Note: You don't need to load `app/assets/javascripts/vue_shared/vue_resource_interceptor.js`
-since it's already being loaded by `common_vue.js`.
-
-### End Result
-
-The following example shows an  application:
-
-```javascript
-// store.js
-export default class Store {
-
-  /**
-   * This is where we will iniatialize the state of our data.
-   * Usually in a small SPA you don't need any options when starting the store. In the case you do
-   * need guarantee it's an Object and it's documented.
-   *
-   * @param  {Object} options
-   */
-  constructor(options) {
-    this.options = options;
-
-    // Create a state object to handle all our data in the same place
-    this.todos = []:
-  }
-
-  setTodos(todos = []) {
-    this.todos = todos;
-  }
-
-  addTodo(todo) {
-    this.todos.push(todo);
-  }
-
-  removeTodo(todoID) {
-    const state = this.todos;
-
-    const newState = state.filter((element) => {element.id !== todoID});
-
-    this.todos = newState;
-  }
-}
-
-// service.js
-import Vue from 'vue';
-import VueResource from 'vue-resource';
-import 'vue_shared/vue_resource_interceptor';
-
-Vue.use(VueResource);
-
-export default class Service {
-  constructor(options) {
-    this.todos = Vue.resource(endpoint.todosEndpoint);
-  }
-
-  getTodos() {
-    return this.todos.get();
-  }
-
-  addTodo(todo) {
-    return this.todos.put(todo);
-  }
-}
-// todo_component.vue
-<script>
-export default {
-  props: {
-    data: {
-      type: Object,
-      required: true,
-    },
-  }
-}
-</script>
+```vue
+//my_component.vue
 <template>
   <div>
-    <h1>
-      Title: {{data.title}}
-    </h1>
-    <p>
-      {{data.text}}
-    </p>
+    <p>Prop1: {{ prop1 }}</p>
+    <p>Prop2: {{ prop2 }}</p>
   </div>
 </template>
 
-// todos_main_component.vue
 <script>
-import Store from 'store';
-import Service from 'service';
-import TodoComponent from 'todoComponent';
 export default {
-  /**
-   * Although most data belongs in the store, each component it's own state.
-   * We want to show a loading spinner while we are fetching the todos, this state belong
-   * in the component.
-   *
-   * We need to access the store methods through all methods of our component.
-   * We need to access the state of our store.
-   */
-  data() {
-    const store = new Store();
-
-    return {
-      isLoading: false,
-      store: store,
-      todos: store.todos,
-    };
-  },
-
-  components: {
-    todo: TodoComponent,
-  },
-
-  created() {
-    this.service = new Service('todos');
-
-    this.getTodos();
-  },
-
-  methods: {
-    getTodos() {
-      this.isLoading = true;
-
-      this.service.getTodos()
-        .then(response => response.json())
-        .then((response) => {
-          this.store.setTodos(response);
-          this.isLoading = false;
-        })
-        .catch(() => {
-          this.isLoading = false;
-          // Show an error
-        });
+  name: 'MyComponent',
+  props: {
+    prop1: {
+      type: String,
+      required: true
     },
-
-    addTodo(todo) {
-      this.service.addTodo(todo)
-      then(response => response.json())
-      .then((response) => {
-        this.store.addTodo(response);
-      })
-      .catch(() => {
-        // Show an error
-      });
+    prop2: {
+      type: Number,
+      required: true
     }
   }
 }
 </script>
-<template>
-  <div class="container">
-    <div v-if="isLoading">
-      <i
-        class="fa fa-spin fa-spinner"
-        aria-hidden="true" />
-    </div>
-
-    <div
-      v-if="!isLoading"
-      class="js-todo-list">
-      <template v-for='todo in todos'>
-        <todo :data="todo" />
-      </template>
-
-      <button
-        @click="addTodo"
-        class="js-add-todo">
-        Add Todo
-      </button>
-    </div>
-  <div>
-</template>
-
-// bundle.js
-import todoComponent from 'todos_main_component.vue';
-
-new Vue({
-  el: '.js-todo-app',
-  components: {
-    todoComponent,
-  },
-  render: createElement => createElement('todo-component' {
-    props: {
-      someProp: [],
-    }
-  }),
-});
-
 ```
 
-The [issue boards service][issue-boards-service]
-is a good example of this pattern.
+```html
+<div id="js-my-element" data-view-model='{"prop1": "my object", "prop2": 42 }'></div>
+```
+
+```javascript
+//index.js
+import MyComponent from './my_component.vue'
+import { initSimpleApp } from '~/helpers/init_simple_app_helper'
+
+initSimpleApp('#js-my-element', MyComponent, { name: 'MyAppRoot' })
+```
+
+###### Passing values as `provide`/`inject` instead of props
+
+To use `initSimpleApp` to pass values as `provide`/`inject` instead of props:
+
+1. Include an HTML element in the page with an ID or unique class.
+1. Add a `data-provide` attribute containing a JSON object.
+1. Import the desired Vue component, and pass it along with a valid CSS selector string
+   that selects the HTML element to `initSimpleApp`. This string mounts the component
+   at the specified location.
+
+`initSimpleApp` automatically retrieves the content of the data-provide attribute as a JSON object and passes it as inject to the mounted Vue component. This can be used to pre-populate the component with data.
+
+Example:
+
+```vue
+//my_component.vue
+<template>
+  <div>
+    <p>Inject1: {{ inject1 }}</p>
+    <p>Inject2: {{ inject2 }}</p>
+  </div>
+</template>
+
+<script>
+export default {
+  name: 'MyComponent',
+  inject: {
+    inject1: {
+      default: '',
+    },
+    inject2: {
+      default: 0
+    }
+  },
+}
+</script>
+```
+
+```html
+<div id="js-my-element" data-provide='{"inject1": "my object", "inject2": 42 }'></div>
+```
+
+```javascript
+//index.js
+import MyComponent from './my_component.vue'
+import { initSimpleApp } from '~/helpers/init_simple_app_helper'
+
+initSimpleApp('#js-my-element', MyComponent, { name: 'MyAppRoot' })
+```
+
+##### `provide` and `inject`
+
+Vue supports dependency injection through [`provide` and `inject`](https://v2.vuejs.org/v2/api/#provide-inject).
+In the component the `inject` configuration accesses the values `provide` passes down.
+This example of a Vue app initialization shows how the `provide` configuration passes a value from HAML to the component:
+
+```javascript
+#js-vue-app{ data: { endpoint: 'foo' }}
+
+// index.js
+const el = document.getElementById('js-vue-app');
+
+if (!el) return false;
+
+const { endpoint } = el.dataset;
+
+return new Vue({
+  el,
+  name: 'MyComponentRoot',
+  render(createElement) {
+    return createElement('my-component', {
+      provide: {
+        endpoint
+      },
+    });
+  },
+});
+```
+
+The component, or any of its child components, can access the property through `inject` as:
+
+```vue
+<script>
+  export default {
+    name: 'MyComponent',
+    inject: ['endpoint'],
+    ...
+    ...
+  };
+</script>
+<template>
+  ...
+  ...
+</template>
+```
+
+Using dependency injection to provide values from HAML is ideal when:
+
+- The injected value doesn't need an explicit validation against its data type or contents.
+- The value doesn't need to be reactive.
+- Multiple components exist in the hierarchy that need access to this value where
+  prop-drilling becomes an inconvenience. Prop-drilling is when the same prop is passed
+  through all components in the hierarchy until the component that genuinely uses it.
+
+Dependency injection can potentially break a child component (either an immediate child or multiple levels deep) if both conditions are true:
+
+- The value declared in the `inject` configuration doesn't have defaults defined.
+- The parent component has not provided the value using the `provide` configuration.
+
+A [default value](https://vuejs.org/guide/components/provide-inject.html#injection-default-values) might be useful in contexts where it makes sense.
+
+Dependency injection decays over time.
+When a component that uses `inject` is refactored or removed, the matching `provide` entry often
+stays behind as dead plumbing.
+To find and remove provides that no component injects, see
+[trace unused Vue provides](tooling.md#trace-unused-vue-provides).
+
+##### props
+
+If the value from HAML doesn't fit the criteria of dependency injection, use `props`.
+See the following example.
+
+```javascript
+// haml
+#js-vue-app{ data: { endpoint: 'foo' }}
+
+// index.js
+const el = document.getElementById('js-vue-app');
+
+if (!el) return false;
+
+const { endpoint } = el.dataset;
+
+return new Vue({
+  el,
+  name: 'MyComponentRoot',
+  render(createElement) {
+    return createElement('my-component', {
+      props: {
+        endpoint
+      },
+    });
+  },
+});
+```
+
+> [!note]
+> When adding an `id` attribute to mount a Vue application, make sure this `id` is unique
+> across the codebase.
+
+For more information on why we explicitly declare the data being passed into the Vue app,
+refer to our [Vue style guide](style/vue.md#basic-rules).
+
+#### Providing Rails form fields to Vue applications
+
+When composing a form with Rails, the `name`, `id`, and `value` attributes of form inputs are generated
+to match the backend. It can be helpful to have access to these generated attributes when converting
+a Rails form to Vue, or when [integrating components](https://gitlab.com/gitlab-org/gitlab/-/blob/8956ad767d522f37a96e03840595c767de030968/app/assets/javascripts/access_tokens/index.js#L15) (such as a date picker or project selector) into it.
+The [`parseRailsFormFields`](https://gitlab.com/gitlab-org/gitlab/-/blob/fe88797f682c7ff0b13f2c2223a3ff45ada751c1/app/assets/javascripts/lib/utils/forms.js#L107) utility function can be used to parse the generated form input attributes so they can be passed to the Vue application.
+This enables us to integrate Vue components without changing how the form submits.
+
+```ruby
+-# form.html.haml
+= form_for user do |form|
+  .js-user-form
+    = form.text_field :name, class: 'form-control gl-form-input', data: { js_name: 'name' }
+    = form.text_field :email, class: 'form-control gl-form-input', data: { js_name: 'email' }
+```
+
+The `js_name` data attribute is used as the key in the resulting JavaScript object.
+For example `= form.text_field :email, data: { js_name: 'fooBarBaz' }` would be translated
+to `{ fooBarBaz: { name: 'user[email]', id: 'user_email', value: '' } }`
+
+```javascript
+// index.js
+import Vue from 'vue';
+import { parseRailsFormFields } from '~/lib/utils/forms';
+import UserForm from './components/user_form.vue';
+
+export const initUserForm = () => {
+  const el = document.querySelector('.js-user-form');
+
+  if (!el) {
+    return null;
+  }
+
+  const fields = parseRailsFormFields(el);
+
+  return new Vue({
+    el,
+    name: 'UserFormRoot',
+    render(h) {
+      return h(UserForm, {
+        props: {
+          fields,
+        },
+      });
+    },
+  });
+};
+```
+
+```vue
+<script>
+// user_form.vue
+import { GlButton, GlFormGroup, GlFormInput } from '@gitlab/ui';
+
+export default {
+  name: 'UserForm',
+  components: { GlButton, GlFormGroup, GlFormInput },
+  props: {
+    fields: {
+      type: Object,
+      required: true,
+    },
+  },
+};
+</script>
+
+<template>
+  <div>
+    <gl-form-group :label-for="fields.name.id" :label="__('Name')">
+      <gl-form-input v-bind="fields.name" width="lg" />
+    </gl-form-group>
+
+    <gl-form-group :label-for="fields.email.id" :label="__('Email')">
+      <gl-form-input v-bind="fields.email" type="email" width="lg" />
+    </gl-form-group>
+
+    <gl-button type="submit" category="primary" variant="confirm">{{ __('Update') }}</gl-button>
+  </div>
+</template>
+```
+
+#### Accessing the `gl` object
+
+We query the `gl` object for data that doesn't change during the application's life
+cycle in the same place we query the DOM. By following this practice, we can
+avoid mocking the `gl` object, which makes tests easier. It should be done while
+initializing our Vue instance, and the data should be provided as `props` to the main component:
+
+```javascript
+return new Vue({
+  el: '.js-vue-app',
+  name: 'MyComponentRoot',
+  render(createElement) {
+    return createElement('my-component', {
+      props: {
+        avatarUrl: gl.avatarUrl,
+      },
+    });
+  },
+});
+```
+
+#### Accessing abilities
+
+After pushing an ability to the [frontend](../permissions/authorizations.md#frontend),
+use the [`provide` and `inject`](https://v2.vuejs.org/v2/api/#provide-inject)
+mechanisms in Vue to make abilities available to any descendant components
+in a Vue application. The `glAbilities` object is already provided in
+`commons/vue.js`, so only the mixin is required to use the flags:
+
+```javascript
+// An arbitrary descendant component
+
+import glAbilitiesMixin from '~/vue_shared/mixins/gl_abilities_mixin';
+
+export default {
+  // ...
+  mixins: [glAbilitiesMixin()],
+  // ...
+  created() {
+    if (this.glAbilities.someAbility) {
+      // ...
+    }
+  },
+}
+```
+
+#### Accessing feature flags
+
+After pushing a feature flag to the [frontend](../feature_flags/_index.md#frontend),
+use the [`provide` and `inject`](https://v2.vuejs.org/v2/api/#provide-inject)
+mechanisms in Vue to make feature flags available to any descendant components
+in a Vue application. The `glFeatures` object is already provided in
+`commons/vue.js`, so only the mixin is required to use the flags:
+
+```javascript
+// An arbitrary descendant component
+
+import glFeatureFlagsMixin from '~/vue_shared/mixins/gl_feature_flags_mixin';
+
+export default {
+  // ...
+  mixins: [glFeatureFlagsMixin()],
+  // ...
+  created() {
+    if (this.glFeatures.myFlag) {
+      // ...
+    }
+  },
+}
+```
+
+This approach has a few benefits:
+
+- Arbitrarily deeply nested components can opt-in and access the flag without
+  intermediate components being aware of it (c.f. passing the flag down via
+  props).
+- Good testability, because the flag can be provided to `mount`/`shallowMount`
+  from `vue-test-utils` as a prop.
+
+  ```javascript
+  import { shallowMount } from '@vue/test-utils';
+
+  shallowMount(component, {
+    provide: {
+      glFeatures: { myFlag: true },
+    },
+  });
+  ```
+
+- Accessing a global variable is not required, except in the application's
+  [entry point](#accessing-the-gl-object).
+
+#### Redirecting to page and displaying alerts
+
+If you need to redirect to another page and display alerts, you can use the [`visitUrlWithAlerts`](https://gitlab.com/gitlab-org/gitlab/-/blob/7063dce68b8231442567707024b2f29e48ce2f64/app/assets/javascripts/lib/utils/url_utility.js#L731) utility function.
+This can be useful when you're redirecting to a newly created resource and showing a success alert.
+
+By default the alerts will be cleared when the page is reloaded. If you need an alert to be persisted on a page you can set the
+`persistOnPages` key to an array of Rails controller actions. To find the Rails controller action run `document.body.dataset.page` in your console.
+
+Example:
+
+```javascript
+visitUrlWithAlerts('/dashboard/groups', [
+  {
+    id: 'resource-building-in-background',
+    message: 'Resource is being built in the background.',
+    variant: 'info',
+    persistOnPages: ['dashboard:groups:index'],
+  },
+])
+```
+
+If you need to manually remove a persisted alert, you can use the [`removeGlobalAlertById`](https://gitlab.com/gitlab-org/gitlab/-/blob/7063dce68b8231442567707024b2f29e48ce2f64/app/assets/javascripts/lib/utils/global_alerts.js#L31) utility function.
+
+If you need to programmatically dismiss an alert, you can use the [`dismissGlobalAlertById`](https://gitlab.com/gitlab-org/gitlab/-/blob/master/app/assets/javascripts/lib/utils/global_alerts.js#L43) utility function.
+
+### A folder for Components
+
+This folder holds all components that are specific to this new feature.
+To use or create a component that is likely to be used somewhere
+else, refer to `vue_shared/components`.
+
+A good guideline to know when you should create a component is to think if
+it could be reusable elsewhere.
+
+For example, tables are used in quite a few places across GitLab, so a table
+would be a good fit for a component. On the other hand, a table cell used only
+in one table would not be a good use of this pattern.
+
+You can read more about components on the Vue.js site, in the [Component System](https://v2.vuejs.org/v2/guide/#Composing-with-Components) section.
+
+### Pinia
+
+[Learn more about Pinia in GitLab](pinia.md).
+
+### Vuex
+
+[Vuex is deprecated](vuex.md#deprecated). Consider [migrating](migrating_from_vuex.md).
+
+### Vue Router
+
+To add [Vue Router](https://router.vuejs.org/) to a page:
+
+1. Add a catch-all route to the Rails route file using a wildcard named `*vueroute`:
+
+   ```ruby
+   # example from ee/config/routes/project.rb
+
+   resources :iteration_cadences, path: 'cadences(/*vueroute)', action: :index
+   ```
+
+   The above example serves the `index` page from `iteration_cadences` controller to any route
+   matching the start of the `path`, for example `groupname/projectname/-/cadences/123/456/`.
+1. Pass the base route (everything before `*vueroute`) to the frontend to use as the `base` parameter to initialize Vue Router:
+
+   ```haml
+   .js-my-app{ data: { base_path: project_iteration_cadences_path(project) } }
+   ```
+
+1. Initialize the router:
+
+   ```javascript
+   Vue.use(VueRouter);
+
+   export function createRouter(basePath) {
+     return new VueRouter({
+       routes: createRoutes(),
+       mode: 'history',
+       base: basePath,
+     });
+   }
+   ```
+
+1. Add a fallback for unrecognised routes with `path: '*'`. Either:
+   - Add a redirect to the end of your routes array:
+
+     ```javascript
+     const routes = [
+       {
+         path: '/',
+         name: 'list-page',
+         component: ListPage,
+       },
+       {
+         path: '*',
+         redirect: '/',
+       },
+     ];
+     ```
+
+   - Add a fallback component to the end of your routes array:
+
+     ```javascript
+     const routes = [
+       {
+         path: '/',
+         name: 'list-page',
+         component: ListPage,
+       },
+       {
+         path: '*',
+         component: NotFound,
+       },
+     ];
+     ```
+
+1. Optional. To also allow using the path helper for child routes, add `controller` and `action`
+   parameters to use the parent controller.
+
+   ```ruby
+   resources :iteration_cadences, path: 'cadences(/*vueroute)', action: :index do
+     resources :iterations, only: [:index, :new, :edit, :show], constraints: { id: /\d+/ }, controller: :iteration_cadences, action: :index
+   end
+   ```
+
+   This means routes like `/cadences/123/iterations/456/edit` can be validated on the backend,
+   for example to check group or project membership.
+   It also means we can use the `_path` helper, which means we can load the page in feature specs
+   without manually building the `*vueroute` part of the path.
+
+### Mixing Vue and jQuery
+
+- Mixing Vue and jQuery is not recommended.
+- To use a specific jQuery plugin in Vue, [create a wrapper around it](https://vuejs.org/v2/examples/select2.html).
+- It is acceptable for Vue to listen to existing jQuery events using jQuery event listeners.
+- It is not recommended to add new jQuery events for Vue to interact with jQuery.
+
+### Mixing Vue and JavaScript classes (in the data function)
+
+In the [Vue documentation](https://v2.vuejs.org/v2/api/#Options-Data) the Data function/object is defined as follows:
+
+> The data object for the Vue instance. Vue recursively converts its properties into getter/setters
+to make it "reactive". The object must be plain: native objects such as browser API objects and
+prototype properties are ignored. A guideline is that data should just be data - it is not
+recommended to observe objects with their own stateful behavior.
+
+Based on the Vue guidance:
+
+- Do not use or create a JavaScript class in your [data function](https://v2.vuejs.org/v2/api/#data).
+- Do not add new JavaScript class implementations.
+- Do encapsulate complex state management with cohesive decoupled components or [a state manager](state_management.md).
+- Do maintain existing implementations using such approaches.
+- Do migrate components to a pure object model when there are substantial changes to it.
+- Do move business logic to separate files, so you can test them separately from your component.
+
+#### Why
+
+Additional reasons why having a JavaScript class presents maintainability issues on a huge codebase:
+
+- After a class is created, it can be extended in a way that can infringe Vue reactivity and best practices.
+- A class adds a layer of abstraction, which makes the component API and its inner workings less clear.
+- It makes it harder to test. Because the class is instantiated by the component data function, it is
+  harder to 'manage' component and class separately.
+- Adding Object Oriented Principles (OOP) to a functional codebase adds another way of writing code, reducing consistency and clarity.
 
 ## Style guide
 
-Please refer to the Vue section of our [style guide](style_guide_js.md#vuejs)
-for best practices while writing your Vue components and templates.
+Refer to the Vue section of our [style guide](style/vue.md)
+for best practices while writing and testing your Vue components and templates.
 
-## Testing Vue Components
+## Composition API
 
-Each Vue component has a unique output. This output is always present in the render function.
+With Vue 2.7 it is possible to use [Composition API](https://vuejs.org/guide/introduction.html#api-styles) in Vue components and as standalone composables.
 
-Although we can test each method of a Vue component individually, our goal must be to test the output
-of the render/template function, which represents the state at all times.
+### Prefer `<script>` over `<script setup>`
 
-Make use of Vue Resource Interceptors to mock data returned by the service.
+Composition API allows you to place the logic in the `<script>` section of the component or to have a dedicated `<script setup>` section. We should use `<script>` and add Composition API to components using `setup()` property:
 
-Here's how we would test the Todo App above:
+```html
+<script>
+  import { computed } from 'vue';
+
+  export default {
+    name: 'MyComponent',
+    setup(props) {
+      const doubleCount = computed(() => props.count*2)
+    }
+  }
+</script>
+```
+
+### `v-bind` limitations
+
+Avoid using `v-bind="$attrs"` unless absolutely necessary. You might need this when
+developing a native control wrapper. (This is a good candidate for a `gitlab-ui` component.)
+In any other cases, always prefer using `props` and explicit data flow.
+
+Using `v-bind="$attrs"` leads to:
+
+1. A loss in component's contract. The `props` were designed specifically
+   to address this problem.
+1. High maintenance cost for each component in the tree. `v-bind="$attrs"` is specifically
+   hard to debug because you must scan the whole hierarchy of components to understand
+   the data flow.
+1. Problems during migration to Vue 3. `$attrs` in Vue 3 includes event listeners which
+   could cause unexpected side-effects after Vue 3 migration is completed.
+
+### Aim to have one API style per component
+
+When adding `setup()` property to Vue component, consider refactoring it to Composition API entirely. It's not always feasible, especially for large components, but we should aim to have one API style per component for readability and maintainability.
+
+### Composables
+
+With Composition API, we have a new way of abstracting logic including reactive state to _composables_. A composable is a function that can accept parameters and return reactive properties and methods to be used in a Vue component.
 
 ```javascript
-import component from 'todos_main_component';
+// useCount.js
+import { ref } from 'vue';
 
-describe('Todos App', () => {
-  it('should render the loading state while the request is being made', () => {
-    const Component = Vue.extend(component);
+export function useCount(initialValue) {
+  const count = ref(initialValue)
 
-    const vm = new Component().$mount();
+  function incrementCount() {
+    count.value += 1
+  }
 
-    expect(vm.$el.querySelector('i.fa-spin')).toBeDefined();
-  });
+  function decrementCount() {
+    count.value -= 1
+  }
 
-  describe('with data', () => {
-    // Mock the service to return data
-    const interceptor = (request, next) => {
-      next(request.respondWith(JSON.stringify([{
-        title: 'This is a todo',
-        body: 'This is the text'
-      }]), {
-        status: 200,
-      }));
-    };
-
-    let vm;
-
-    beforeEach(() => {
-      Vue.http.interceptors.push(interceptor);
-
-      const Component = Vue.extend(component);
-
-      vm = new Component().$mount();
-    });
-
-    afterEach(() => {
-      Vue.http.interceptors = _.without(Vue.http.interceptors, interceptor);
-    });
-
-
-    it('should render todos', (done) => {
-      setTimeout(() => {
-        expect(vm.$el.querySelectorAll('.js-todo-list div').length).toBe(1);
-        done();
-      }, 0);
-    });
-  });
-
-  describe('add todo', () => {
-    let vm;
-    beforeEach(() => {
-      const Component = Vue.extend(component);
-      vm = new Component().$mount();
-    });
-    it('should add a todos', (done) => {
-      setTimeout(() => {
-        vm.$el.querySelector('.js-add-todo').click();
-
-        // Add a new interceptor to mock the add Todo request
-        Vue.nextTick(() => {
-          expect(vm.$el.querySelectorAll('.js-todo-list div').length).toBe(2);
-        });
-      }, 0);
-    });
-  });
-});
+  return { count, incrementCount, decrementCount }
+}
 ```
-#### Test the component's output
-The main return value of a Vue component is the rendered output. In order to test the component we
-need to test the rendered output. [Vue][vue-test] guide's to unit test show us exactly that:
 
+```javascript
+// MyComponent.vue
+import { useCount } from 'useCount'
 
-### Stubbing API responses
-[Vue Resource Interceptors][vue-resource-interceptor] allow us to add a interceptor with
-the response we need:
+export default {
+  name: 'MyComponent',
+  setup() {
+    const { count, incrementCount, decrementCount } = useCount(5)
 
-  ```javascript
-    // Mock the service to return data
-    const interceptor = (request, next) => {
-      next(request.respondWith(JSON.stringify([{
-        title: 'This is a todo',
-        body: 'This is the text'
-      }]), {
-        status: 200,
-      }));
-    };
+    return { count, incrementCount, decrementCount }
+  }
+}
+```
 
-    beforeEach(() => {
-      Vue.http.interceptors.push(interceptor);
-    });
+#### Prefix function and filenames with `use`
 
-    afterEach(() => {
-      Vue.http.interceptors = _.without(Vue.http.interceptors, interceptor);
-    });
+Common naming convention in Vue for composables is to prefix them with `use` and then refer to composable functionality briefly, like `useBreakpoints` or `useGeolocation`. The same rule applies to the `.js` files containing composables - they should start with `use_` even if the file contains more than one composable.
 
-    it('should do something', (done) => {
-      setTimeout(() => {
-        // Test received data
-        done();
-      }, 0);
-    });
-  ```
+#### Avoid lifecycle pitfalls
 
-1. Headers interceptor
-Refer to [this section](vue.md#headers)
+When building a composable, we should aim to keep it as simple as possible. Lifecycle hooks add complexity to composables and might lead to unexpected side effects. To avoid that we should follow these principles:
 
-1. Use `$.mount()` to mount the component
+- Minimize lifecycle hooks usage whenever possible, prefer accepting/returning callbacks instead.
+- If your composable needs lifecycle hooks, make sure it also performs a cleanup. If we add a listener on `onMounted`, we should remove it on `onUnmounted` within the same composable.
+- Always set up lifecycle hooks immediately:
 
 ```javascript
 // bad
-new Component({
-  el: document.createElement('div')
-});
+const useAsyncLogic = () => {
+  const action = async () => {
+    await doSomething();
+    onMounted(doSomethingElse);
+  };
+  return { action };
+};
 
-// good
-new Component().$mount();
+// OK
+const useAsyncLogic = () => {
+  const done = ref(false);
+  onMounted(() => {
+    watch(
+      done,
+      () => done.value && doSomethingElse(),
+      { immediate: true },
+    );
+  });
+  const action = async () => {
+    await doSomething();
+    done.value = true;
+  };
+  return { action };
+};
 ```
 
-[vue-docs]: http://vuejs.org/guide/index.html
-[issue-boards]: https://gitlab.com/gitlab-org/gitlab-ce/tree/master/app/assets/javascripts/boards
-[environments-table]: https://gitlab.com/gitlab-org/gitlab-ce/tree/master/app/assets/javascripts/environments
-[page_specific_javascript]: https://docs.gitlab.com/ce/development/frontend.html#page-specific-javascript
-[component-system]: https://vuejs.org/v2/guide/#Composing-with-Components
-[state-management]: https://vuejs.org/v2/guide/state-management.html#Simple-State-Management-from-Scratch
-[one-way-data-flow]: https://vuejs.org/v2/guide/components.html#One-Way-Data-Flow
-[vue-resource-repo]: https://github.com/pagekit/vue-resource
-[vue-resource-interceptor]: https://github.com/pagekit/vue-resource/blob/develop/docs/http.md#interceptors
-[vue-test]: https://vuejs.org/v2/guide/unit-testing.html
-[issue-boards-service]: https://gitlab.com/gitlab-org/gitlab-ce/blob/master/app/assets/javascripts/boards/services/board_service.js.es6
-[flux]: https://facebook.github.io/flux
+#### Avoid escape hatches
+
+It might be tempting to write a composable that does everything as a black box, using some of the escape hatches that Vue provides. But for most of the cases this makes them too complex and hard to maintain. One escape hatch is the `getCurrentInstance` method. This method returns an instance of a current rendering component. Instead of using that method, you should prefer passing down the data or methods to a composable via arguments.
+
+```javascript
+const useSomeLogic = () => {
+  doSomeLogic();
+  getCurrentInstance().emit('done'); // bad
+};
+```
+
+```javascript
+const done = () => emit('done');
+
+const useSomeLogic = (done) => {
+  doSomeLogic();
+  done(); // good, composable doesn't try to be too smart
+}
+```
+
+#### Testing composables
+
+<!-- TBD -->
+
+## Testing Vue Components
+
+Refer to the [Vue testing style guide](style/vue.md#vue-testing)
+for guidelines and best practices for testing your Vue components.
+
+Each Vue component has a unique output. This output is always present in the render function.
+
+Although each method of a Vue component can be tested individually, our goal is to test the output
+of the render function, which represents the state at all times.
+
+Visit the [Vue testing guide](https://v2.vuejs.org/v2/guide/testing.html#Unit-Testing) for help.
+
+Here's an example of a well structured unit test for [this Vue component](#appendix---vue-component-subject-under-test):
+
+```javascript
+import { GlLoadingIcon } from '@gitlab/ui';
+import MockAdapter from 'axios-mock-adapter';
+import { shallowMountExtended } from 'helpers/vue_test_utils_helper';
+import axios from '~/lib/utils/axios_utils';
+import App from '~/todos/app.vue';
+
+const TEST_TODOS = [{ text: 'Lorem ipsum test text' }, { text: 'Lorem ipsum 2' }];
+const TEST_NEW_TODO = 'New todo title';
+const TEST_TODO_PATH = '/todos';
+
+describe('~/todos/app.vue', () => {
+  let wrapper;
+  let mock;
+
+  beforeEach(() => {
+    // IMPORTANT: Use axios-mock-adapter for stubbing axios API requests
+    mock = new MockAdapter(axios);
+    mock.onGet(TEST_TODO_PATH).reply(200, TEST_TODOS);
+    mock.onPost(TEST_TODO_PATH).reply(200);
+  });
+
+  afterEach(() => {
+    // IMPORTANT: Clean up the axios mock adapter
+    mock.restore();
+  });
+
+  // It is very helpful to separate setting up the component from
+  // its collaborators (for example, Vuex and axios).
+  const createWrapper = (props = {}) => {
+    wrapper = shallowMountExtended(App, {
+      propsData: {
+        path: TEST_TODO_PATH,
+        ...props,
+      },
+    });
+  };
+  // Helper methods greatly help test maintainability and readability.
+  const findLoader = () => wrapper.findComponent(GlLoadingIcon);
+  const findAddButton = () => wrapper.findByTestId('add-button');
+  const findTextInput = () => wrapper.findByTestId('text-input');
+  const findTodoData = () =>
+    wrapper
+      .findAllByTestId('todo-item')
+      .wrappers.map((item) => ({ text: item.text() }));
+
+  describe('when mounted and loading', () => {
+    beforeEach(() => {
+      // Create request which will never resolve
+      mock.onGet(TEST_TODO_PATH).reply(() => new Promise(() => {}));
+      createWrapper();
+    });
+
+    it('should render the loading state', () => {
+      expect(findLoader().exists()).toBe(true);
+    });
+  });
+
+  describe('when todos are loaded', () => {
+    beforeEach(() => {
+      createWrapper();
+      // IMPORTANT: This component fetches data asynchronously on mount, so let's wait for the Vue template to update
+      return wrapper.vm.$nextTick();
+    });
+
+    it('should not show loading', () => {
+      expect(findLoader().exists()).toBe(false);
+    });
+
+    it('should render todos', () => {
+      expect(findTodoData()).toEqual(TEST_TODOS);
+    });
+
+    it('when todo is added, should post new todo', async () => {
+      findTextInput().vm.$emit('update', TEST_NEW_TODO);
+      findAddButton().vm.$emit('click');
+
+      await wrapper.vm.$nextTick();
+
+      expect(mock.history.post.map((x) => JSON.parse(x.data))).toEqual([{ text: TEST_NEW_TODO }]);
+    });
+  });
+});
+```
+
+### Child components
+
+1. Test any directive that defines if/how child component is rendered (for example, `v-if` and `v-for`).
+1. Test any props we are passing to child components (especially if the prop is calculated in the
+   component under test, with the `computed` property, for example). Remember to use `.props()` and not `.vm.someProp`.
+1. Test we react correctly to any events emitted from child components:
+
+   ```javascript
+   const checkbox = wrapper.findByTestId('checkboxTestId');
+
+   expect(checkbox.attributes('disabled')).not.toBeDefined();
+
+   findChildComponent().vm.$emit('primary');
+   await nextTick();
+
+   expect(checkbox.attributes('disabled')).toBeDefined();
+   ```
+
+1. Do not test the internal implementation of the child components:
+
+   ```javascript
+   // bad
+   expect(findChildComponent().find('.error-alert').exists()).toBe(false);
+
+   // good
+   expect(findChildComponent().props('withAlertContainer')).toBe(false);
+   ```
+
+### Events
+
+We should test for events emitted in response to an action in our component. This testing
+verifies the correct events are being fired with the correct arguments.
+
+For any native DOM events, we should use [`trigger`](https://v1.test-utils.vuejs.org/api/wrapper/#trigger)
+to fire our event.
+
+```javascript
+// Assuming SomeButton renders: <button>Some button</button>
+wrapper = mount(SomeButton);
+
+...
+it('should fire the click event', () => {
+  const btn = wrapper.find('button')
+
+  btn.trigger('click');
+  ...
+})
+```
+
+When firing a Vue event, use [`emit`](https://v2.vuejs.org/v2/guide/components-custom-events.html).
+
+```javascript
+wrapper = shallowMount(DropdownItem);
+
+...
+
+it('should fire the itemClicked event', () => {
+  DropdownItem.vm.$emit('itemClicked');
+  ...
+})
+```
+
+We should verify an event has been fired by asserting against the result of the
+[`emitted()`](https://v1.test-utils.vuejs.org/api/wrapper/#emitted) method.
+
+It is a good practice to prefer to use `vm.$emit` over `trigger` when emitting events from child components.
+
+Using `trigger` on the component means we treat it as a white box: we assume that the root element of child component has a native `click` event. Also, some tests fail in Vue3 mode when using `trigger` on child components.
+
+   ```javascript
+   const findButton = () => wrapper.findComponent(GlButton);
+
+   // bad
+   findButton().trigger('click');
+
+   // good
+   findButton().vm.$emit('click');
+   ```
+
+## Vue.js Expert Role
+
+You should only apply to be a Vue.js expert when your own merge requests and your reviews show:
+
+- Deep understanding of Vue reactivity
+- Vue and [Pinia](pinia.md) code are structured according to both official and our guidelines
+- Full understanding of testing Vue components and Pinia stores
+- Knowledge about the existing Vue and Pinia applications and existing reusable components
+
+## Vue 2 -> Vue 3 Migration
+
+{{< history >}}
+
+- This section is added temporarily to support the efforts to migrate the codebase from Vue 2.x to Vue 3.x
+
+{{< /history >}}
+
+We recommend minimizing the addition of certain features to the codebase to prevent increasing
+the tech debt for the eventual migration:
+
+- filters
+- event buses
+- functional templates
+- `slot` attributes
+
+You can find more details on [Migration to Vue 3](vue3_migration.md)
+
+## Appendix - Vue component subject under test
+
+This is the template for the example component which is tested in the
+[Testing Vue components](#testing-vue-components) section:
+
+```html
+<template>
+  <div class="content">
+    <gl-loading-icon v-if="isLoading" />
+    <template v-else>
+      <div
+        v-for="todo in todos"
+        :key="todo.id"
+        :class="{ 'gl-strike': todo.isDone }"
+        data-testid="todo-item"
+      >{{ todo.text }}</div>
+      <footer class="gl-border-t-1 gl-mt-3 gl-pt-3">
+        <gl-form-input
+          type="text"
+          v-model="todoText"
+          data-testid="text-input"
+        >
+        <gl-button
+          variant="confirm"
+          data-testid="add-button"
+          @click="addTodo"
+        >Add</gl-button>
+      </footer>
+    </template>
+  </div>
+</template>
+```

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Mattermost::Client do
+RSpec.describe Mattermost::Client, feature_category: :integrations do
   let(:user) { build(:user) }
 
   subject { described_class.new(user) }
@@ -11,14 +13,17 @@ describe Mattermost::Client do
     end
 
     it 'yields an error on malformed JSON' do
-      bad_json = Struct::Request.new("I'm not json", true)
-      expect { subject.send(:json_response, bad_json) }.to raise_error(Mattermost::ClientError)
+      response = instance_double(HTTParty::Response)
+      allow(response).to receive(:parsed_response).and_raise(JSON::JSONError)
+
+      expect { subject.send(:json_response, response) }
+        .to raise_error(::Mattermost::ClientError, 'Cannot parse response')
     end
 
     it 'shows a client error if the request was unsuccessful' do
-      bad_request = Struct::Request.new("true", false)
+      response = instance_double(HTTParty::Response, parsed_response: { 'message' => 'Error' }, success?: false)
 
-      expect { subject.send(:json_response, bad_request) }.to raise_error(Mattermost::ClientError)
+      expect { subject.send(:json_response, response) }.to raise_error(::Mattermost::ClientError, 'Error')
     end
   end
 end

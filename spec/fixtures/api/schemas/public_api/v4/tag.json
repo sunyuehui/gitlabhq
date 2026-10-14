@@ -1,19 +1,47 @@
 {
   "type": "object",
-  "required" : [
+  "required": [
     "name",
     "message",
-    "commit",
-    "release"
+    "commit"
   ],
-  "properties" : {
-    "name": { "type": "string" },
-    "message": { "type": ["string", "null"] },
-    "commit": { "$ref": "commit/basic.json" },
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "message": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "commit": {
+      "$ref": "commit/basic.json"
+    },
+    "target": {
+      "type": "string"
+    },
     "release": {
       "oneOf": [
-        { "type": "null" },
-        { "$ref": "release.json" }
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "release/tag_release.json"
+        }
+      ]
+    },
+    "protected": {
+      "type": "boolean"
+    },
+    "created_at": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
       ]
     }
   },

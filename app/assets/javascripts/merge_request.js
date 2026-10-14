@@ -1,132 +1,195 @@
-/* eslint-disable func-names, space-before-function-paren, no-var, prefer-rest-params, wrap-iife, quotes, no-underscore-dangle, one-var, one-var-declaration-per-line, consistent-return, dot-notation, quote-props, comma-dangle, object-shorthand, max-len, prefer-arrow-callback */
-/* global MergeRequestTabs */
+/* eslint-disable func-names, no-underscore-dangle, consistent-return */
 
-import 'vendor/jquery.waitforimages';
+import $ from 'jquery';
+import { createAlert } from '~/alert';
+import { TYPE_MERGE_REQUEST } from '~/issues/constants';
+import toast from '~/vue_shared/plugins/global_toast';
+import { __ } from '~/locale';
+import { loadingIconForLegacyJS } from '~/loading_icon_for_legacy_js';
+import { sanitize, titleInLinkSafeHtmlConfig } from '~/lib/dompurify';
+import axios from './lib/utils/axios_utils';
+import { addDelimiter } from './lib/utils/text_utility';
+import { getParameterValues, setUrlParams } from './lib/utils/url_utility';
+import { EVENT_MR_TITLE_UPDATED } from './merge_requests/constants';
+import MergeRequestTabs from './merge_request_tabs';
 import TaskList from './task_list';
-import './merge_request_tabs';
-import IssuablesHelper from './helpers/issuables_helper';
 
-(function() {
-  this.MergeRequest = (function() {
-    function MergeRequest(opts) {
-      // Initialize MergeRequest behavior
-      //
-      // Options:
-      //   action - String, current controller action
-      //
-      this.opts = opts != null ? opts : {};
-      this.submitNoteForm = this.submitNoteForm.bind(this);
-      this.$el = $('.merge-request');
-      this.$('.show-all-commits').on('click', (function(_this) {
-        return function() {
-          return _this.showAllCommits();
-        };
-      })(this));
+function MergeRequest(opts) {
+  // Initialize MergeRequest behavior
+  //
+  // Options:
+  //   action - String, current controller action
+  //
+  this.opts = opts != null ? opts : {};
+  this.submitNoteForm = this.submitNoteForm.bind(this);
+  this.$el = $('.merge-request');
 
-      this.initTabs();
-      this.initMRBtnListeners();
-      this.initCommitMessageListeners();
-      this.closeReopenReportToggle = IssuablesHelper.initCloseReopenReport();
+  this.initTabs();
+  this.initMRBtnListeners();
 
-      if ($("a.btn-close").length) {
-        this.taskList = new TaskList({
-          dataType: 'merge_request',
-          fieldName: 'description',
-          selector: '.detail-page-description',
-          onSuccess: (result) => {
-            document.querySelector('#task_status').innerText = result.task_status;
-            document.querySelector('#task_status_short').innerText = result.task_status_short;
-          }
+  if ($('.description.js-task-list-container').length) {
+    this.taskList = new TaskList({
+      dataType: TYPE_MERGE_REQUEST,
+      fieldName: 'description',
+      selector: '.detail-page-description',
+      lockVersion: this.$el.data('lockVersion'),
+      onSuccess: (result) => {
+        const taskStatus = document.querySelector('#task_status');
+        const taskStatusShort = document.querySelector('#task_status_short');
+
+        if (taskStatus) {
+          taskStatus.innerText = result.task_status;
+        }
+
+        if (taskStatusShort) {
+          document.querySelector('#task_status_short').innerText = result.task_status_short;
+        }
+      },
+      onError: () => {
+        createAlert({
+          message: __(
+            'Someone edited this merge request at the same time you did. Please refresh the page to see changes.',
+          ),
         });
-      }
+      },
+    });
+  }
+}
+
+// Local jQuery finder
+MergeRequest.prototype.$ = function (selector) {
+  return this.$el.find(selector);
+};
+
+MergeRequest.prototype.initTabs = function () {
+  if (window.mrTabs) {
+    window.mrTabs.unbindEvents();
+  }
+
+  this.tabs = new MergeRequestTabs(this.opts);
+  window.mrTabs = this.tabs;
+};
+
+MergeRequest.prototype.initMRBtnListeners = function () {
+  const _this = this;
+  const draftToggles = document.querySelectorAll('.js-draft-toggle-button');
+
+  if (draftToggles.length) {
+    draftToggles.forEach((draftToggle) => {
+      draftToggle.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+
+        const url = draftToggle.href;
+        const wipEvent = getParameterValues('merge_request[wip_event]', url)[0];
+        const mobileDropdown = draftToggle.closest('.dropdown.show');
+
+        const loader = loadingIconForLegacyJS({ inline: true, classes: ['gl-mr-3'] });
+
+        if (mobileDropdown) {
+          $(mobileDropdown.firstElementChild).dropdown('toggle');
+        }
+
+        draftToggle.setAttribute('disabled', 'disabled');
+        draftToggle.prepend(loader);
+
+        axios
+          .put(draftToggle.href, null, { params: { format: 'json' } })
+          .then(({ data }) => {
+            draftToggle.removeAttribute('disabled');
+
+            MergeRequest.toggleDraftStatus(data.title, wipEvent === 'ready', data.title_html);
+          })
+          .catch(() => {
+            createAlert({
+              message: __('Something went wrong. Please try again.'),
+            });
+          })
+          .finally(() => {
+            draftToggle.removeAttribute('disabled');
+            loader.remove();
+          });
+      });
+    });
+  }
+
+  return $('.btn-close, .btn-reopen').on('click', function (e) {
+    const $this = $(this);
+    const shouldSubmit = $this.hasClass('btn-comment');
+    if (shouldSubmit && $this.data('submitted')) {
+      return;
     }
 
-    // Local jQuery finder
-    MergeRequest.prototype.$ = function(selector) {
-      return this.$el.find(selector);
-    };
-
-    MergeRequest.prototype.initTabs = function() {
-      if (window.mrTabs) {
-        window.mrTabs.unbindEvents();
-      }
-      window.mrTabs = new gl.MergeRequestTabs(this.opts);
-    };
-
-    MergeRequest.prototype.showAllCommits = function() {
-      this.$('.first-commits').remove();
-      return this.$('.all-commits').removeClass('hide');
-    };
-
-    MergeRequest.prototype.initMRBtnListeners = function() {
-      var _this;
-      _this = this;
-      return $('a.btn-close, a.btn-reopen').on('click', function(e) {
-        var $this, shouldSubmit;
-        $this = $(this);
-        shouldSubmit = $this.hasClass('btn-comment');
-        if (shouldSubmit && $this.data('submitted')) {
-          return;
-        }
-
-        if (this.closeReopenReportToggle) this.closeReopenReportToggle.setDisable();
-
-        if (shouldSubmit) {
-          if ($this.hasClass('btn-comment-and-close') || $this.hasClass('btn-comment-and-reopen')) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-
-            _this.submitNoteForm($this.closest('form'), $this);
-          }
-        }
-      });
-    };
-
-    MergeRequest.prototype.submitNoteForm = function(form, $button) {
-      var noteText;
-      noteText = form.find("textarea.js-note-text").val();
-      if (noteText.trim().length > 0) {
-        form.submit();
-        $button.data('submitted', true);
-        return $button.trigger('click');
-      }
-    };
-
-    MergeRequest.prototype.initCommitMessageListeners = function() {
-      $(document).on('click', 'a.js-with-description-link', function(e) {
-        var textarea = $('textarea.js-commit-message');
+    if (shouldSubmit) {
+      if ($this.hasClass('btn-comment-and-close') || $this.hasClass('btn-comment-and-reopen')) {
         e.preventDefault();
+        e.stopImmediatePropagation();
 
-        textarea.val(textarea.data('messageWithDescription'));
-        $('.js-with-description-hint').hide();
-        $('.js-without-description-hint').show();
-      });
+        _this.submitNoteForm($this.closest('form'), $this);
+      }
+    }
+  });
+};
 
-      $(document).on('click', 'a.js-without-description-link', function(e) {
-        var textarea = $('textarea.js-commit-message');
-        e.preventDefault();
+MergeRequest.prototype.submitNoteForm = function (form, $button) {
+  const noteText = form.find('textarea.js-note-text').val();
+  if (noteText.trim().length > 0) {
+    form.submit();
+    $button.data('submitted', true);
+    return $button.trigger('click');
+  }
+};
 
-        textarea.val(textarea.data('messageWithoutDescription'));
-        $('.js-with-description-hint').show();
-        $('.js-without-description-hint').hide();
-      });
-    };
+MergeRequest.decreaseCounter = function (by = 1) {
+  const $el = $('.js-merge-counter');
+  const count = Math.max(parseInt($el.first().text().replace(/[^\d]/, ''), 10) - by, 0);
 
-    MergeRequest.prototype.updateStatusText = function(classToRemove, classToAdd, newStatusText) {
-      $('.detail-page-header .status-box')
-        .removeClass(classToRemove)
-        .addClass(classToAdd)
-        .find('span')
-        .text(newStatusText);
-    };
+  $el.text(addDelimiter(count));
+};
 
-    MergeRequest.prototype.decreaseCounter = function(by = 1) {
-      const $el = $('.nav-links .js-merge-counter');
-      const count = Math.max((parseInt($el.text().replace(/[^\d]/, ''), 10) - by), 0);
+MergeRequest.toggleDraftStatus = function (title, isReady, titleHtml) {
+  if (isReady) {
+    toast(__('Marked as ready. Merging is now allowed.'));
+  } else {
+    toast(__('Marked as draft. Can only be merged when marked as ready.'));
+  }
+  const titleEl = document.querySelector(`.merge-request .detail-page-header .title`);
 
-      $el.text(gl.text.addDelimiter(count));
-    };
+  if (titleEl) {
+    if (titleHtml) {
+      titleEl.innerHTML = sanitize(titleHtml);
+    } else {
+      titleEl.textContent = title;
+    }
+    document.title = title;
+  }
 
-    return MergeRequest;
-  })();
-}).call(window);
+  const cssStickyTitleEl = document.querySelector('.merge-request-sticky-title');
+  if (cssStickyTitleEl) {
+    if (titleHtml) {
+      cssStickyTitleEl.innerHTML = sanitize(titleHtml, titleInLinkSafeHtmlConfig);
+    } else {
+      cssStickyTitleEl.textContent = title;
+    }
+  }
+  document.dispatchEvent(new CustomEvent(EVENT_MR_TITLE_UPDATED, { detail: { title, titleHtml } }));
+
+  const draftToggles = document.querySelectorAll('.js-draft-toggle-button');
+
+  if (draftToggles.length) {
+    draftToggles.forEach((el) => {
+      const draftToggle = el;
+      const url = setUrlParams(
+        { 'merge_request[wip_event]': isReady ? 'draft' : 'ready' },
+        { url: draftToggle.href },
+      );
+
+      draftToggle.setAttribute('href', url);
+      draftToggle.querySelector('.gl-dropdown-item-text-wrapper').textContent = isReady
+        ? __('Mark as draft')
+        : __('Mark as ready');
+    });
+  }
+};
+
+export default MergeRequest;

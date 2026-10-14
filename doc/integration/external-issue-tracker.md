@@ -1,32 +1,56 @@
-# External issue tracker
+---
+stage: Plan
+group: Work Items
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: External issue trackers
+description: Configure an external issue tracker for a GitLab project to reference and link issues from tools like Bugzilla or YouTrack.
+---
 
-GitLab has a great issue tracker but you can also use an external one such as
-Jira, Redmine, or Bugzilla. Issue trackers are configurable per GitLab project and allow
-you to do the following:
+{{< details >}}
 
-- you can reference these external issues inside GitLab interface
-  (merge requests, commits, comments) and they will be automatically converted
-  into links
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-You can have enabled both external and internal GitLab issue trackers in parallel. The **Issues** link always opens the internal issue tracker and in case the internal issue tracker is disabled the link is not visible in the menu.
+{{< /details >}}
 
-## Configuration
+GitLab has its own [issue tracker](../user/project/issues/_index.md),
+but you can also configure an external issue tracker per GitLab project.
+You can then use:
 
-The configuration is done via a project's **Services**.
+- The external issue tracker with the GitLab issue tracker
+- The external issue tracker only
 
-### Project Service
+With an external tracker, you can use the format `CODE-123` to mention
+external issues in GitLab merge requests, commits, and comments where:
 
-To enable an external issue tracker you must configure the appropriate **Service**.
-Visit the links below for details:
+- `CODE` is a unique code for the tracker.
+- `123` is the issue number in the tracker.
 
-- [Redmine](../user/project/integrations/redmine.md)
-- [Jira](../user/project/integrations/jira.md)
+References are displayed as issue links.
+
+## Disable the GitLab issue tracker
+
+To turn off work items for a project, including the GitLab issue tracker:
+
+1. In the top bar, select **Search or go to** and find your project.
+1. In the left sidebar, select **Settings** > **General**.
+1. Expand **Visibility, project features, permissions**.
+1. Under **Work items**, turn off the toggle.
+1. Select **Save changes**.
+
+After you turn off the work items setting, **Work items** is not visible in the left sidebar.
+If you've configured an [external issue tracker](#configure-an-external-issue-tracker), it remains in the left sidebar.
+
+## Configure an external issue tracker
+
+You can configure any of the following external issue trackers:
+
 - [Bugzilla](../user/project/integrations/bugzilla.md)
-
-### Service Template
-
-To save you the hassle from configuring each project's service individually,
-GitLab provides the ability to set Service Templates which can then be
-overridden in each project's settings.
-
-Read more on [Services Templates](../user/project/integrations/services_templates.md).
+- [ClickUp](../user/project/integrations/clickup.md)
+- [Custom issue tracker](../user/project/integrations/custom_issue_tracker.md)
+- [Engineering Workflow Management (EWM)](../user/project/integrations/ewm.md)
+- [Jira](jira/_index.md)
+- [Linear](../user/project/integrations/linear.md)
+- [Phorge](../user/project/integrations/phorge.md)
+- [Redmine](../user/project/integrations/redmine.md)
+- [YouTrack](../user/project/integrations/youtrack.md)

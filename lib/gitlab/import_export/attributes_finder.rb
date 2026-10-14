@@ -1,45 +1,78 @@
+# frozen_string_literal: true
+
 module Gitlab
   module ImportExport
     class AttributesFinder
-      def initialize(included_attributes:, excluded_attributes:, methods:)
-        @included_attributes = included_attributes || {}
-        @excluded_attributes = excluded_attributes || {}
-        @methods = methods || {}
+      attr_reader :tree, :included_attributes, :excluded_attributes, :methods, :preloads, :export_reorders,
+        :import_only_tree
+
+      def initialize(config:)
+        @tree = config[:tree] || {}
+        @included_attributes = config[:included_attributes] || {}
+        @excluded_attributes = config[:excluded_attributes] || {}
+        @methods = config[:methods] || {}
+        @preloads = config[:preloads] || {}
+        @export_reorders = config[:export_reorders] || {}
+        @include_if_exportable = config[:include_if_exportable] || {}
+        @import_only_tree = config[:import_only_tree] || {}
       end
 
-      def find(model_object)
-        parsed_hash = find_attributes_only(model_object)
-        parsed_hash.empty? ? model_object : { model_object => parsed_hash }
+      def find_root(model_key)
+        find(model_key, @tree[model_key])
       end
 
-      def parse(model_object)
-        parsed_hash = find_attributes_only(model_object)
-        yield parsed_hash unless parsed_hash.empty?
+      def find_relations_tree(model_key, include_import_only_tree: false)
+        return @tree[model_key].deep_merge(@import_only_tree[model_key] || {}) if include_import_only_tree
+
+        @tree[model_key]
       end
 
-      def find_included(value)
-        key = key_from_hash(value)
-        @included_attributes[key].nil? ? {} : { only: @included_attributes[key] }
+      def find_excluded_keys(klass_name)
+        @excluded_attributes[klass_name.to_sym]&.map(&:to_s) || []
       end
 
-      def find_excluded(value)
-        key = key_from_hash(value)
-        @excluded_attributes[key].nil? ? {} : { except: @excluded_attributes[key] }
-      end
-
-      def find_method(value)
-        key = key_from_hash(value)
-        @methods[key].nil? ? {} : { methods: @methods[key] }
+      def find_included_keys(klass_name)
+        @included_attributes[klass_name.to_sym]&.map(&:to_s) || []
       end
 
       private
 
-      def find_attributes_only(value)
-        find_included(value).merge(find_excluded(value)).merge(find_method(value))
+      def find(model_key, model_tree)
+        {
+          only: @included_attributes[model_key],
+          except: @excluded_attributes[model_key],
+          methods: @methods[model_key],
+          include: resolve_model_tree(model_tree),
+          preload: resolve_preloads(model_key, model_tree),
+          export_reorder: @export_reorders[model_key],
+          include_if_exportable: @include_if_exportable[model_key]
+        }.compact
       end
 
-      def key_from_hash(value)
-        value.is_a?(Hash) ? value.keys.first : value
+      def resolve_preloads(model_key, model_tree)
+        model_tree
+          .map { |submodel_key, submodel_tree| resolve_preload(model_key, submodel_key, submodel_tree) }
+          .tap { |entries| entries.compact! }
+          .to_h
+          .deep_merge(@preloads[model_key].to_h)
+          .presence
+      end
+
+      def resolve_preload(parent_model_key, model_key, model_tree)
+        return if @methods[parent_model_key]&.include?(model_key)
+
+        [model_key, resolve_preloads(model_key, model_tree)]
+      end
+
+      def resolve_model_tree(model_tree)
+        return unless model_tree
+
+        model_tree
+          .map { |key, tree| resolve_model(key, tree) }
+      end
+
+      def resolve_model(model_key, model_tree)
+        { model_key => find(model_key, model_tree) }
       end
     end
   end

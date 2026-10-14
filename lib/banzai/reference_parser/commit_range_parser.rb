@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 module Banzai
   module ReferenceParser
     class CommitRangeParser < BaseParser
       self.reference_type = :commit_range
 
-      def referenced_by(nodes)
+      def referenced_by(nodes, options = {})
         range_ids = commit_range_ids_per_project(nodes)
         projects = find_projects_for_hash_keys(range_ids)
 
@@ -29,6 +31,8 @@ module Banzai
       end
 
       def find_object(project, id)
+        return unless project.is_a?(Project)
+
         range = CommitRange.new(id, project)
 
         range.valid_commits? ? range : nil

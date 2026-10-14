@@ -1,18 +1,20 @@
+# frozen_string_literal: true
+
 # A module to check CSRF tokens in requests.
 # It's used in API helpers and OmniAuth.
 # Usage: GitLab::RequestForgeryProtection.call(env)
 
 module Gitlab
   module RequestForgeryProtection
-    class Controller < ActionController::Base
-      protect_from_forgery with: :exception
+    class Controller < BaseActionController
+      protect_from_forgery with: :exception, prepend: true
 
-      rescue_from ActionController::InvalidAuthenticityToken do |e|
-        logger.warn "This CSRF token verification failure is handled internally by `GitLab::RequestForgeryProtection`"
-        logger.warn "Unlike the logs may suggest, this does not result in an actual 422 response to the user"
-        logger.warn "For API requests, the only effect is that `current_user` will be `nil` for the duration of the request"
+      def initialize
+        super
 
-        raise e
+        # Squelch noisy and unnecessary "Can't verify CSRF token authenticity." messages.
+        # X-Csrf-Token is only one authentication mechanism for API helpers.
+        self.logger = ActiveSupport::Logger.new(File::NULL)
       end
 
       def index
@@ -29,7 +31,14 @@ module Gitlab
     end
 
     def self.verified?(env)
-      call(env)
+      minimal_env = env.slice('REQUEST_METHOD', 'rack.session', 'HTTP_X_CSRF_TOKEN')
+                      .merge('rack.input' => StringIO.new(''))
+
+      # The CSRF token for some requests is in the form instead of headers.
+      # This line of code is used to accommodate this situation. See: https://gitlab.com/gitlab-org/gitlab/-/issues/443398
+      minimal_env['HTTP_X_CSRF_TOKEN'] ||= Rack::Request.new(env.dup).params['authenticity_token']
+
+      call(minimal_env)
 
       true
     rescue ActionController::InvalidAuthenticityToken

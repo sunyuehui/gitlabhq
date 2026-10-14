@@ -1,11 +1,13 @@
+# frozen_string_literal: true
+
 module Mattermost
-  class NoSessionError < Mattermost::Error
+  class NoSessionError < ::Mattermost::Error
     def message
       'No session could be set up, is Mattermost configured with Single Sign On?'
     end
   end
 
-  ConnectionError = Class.new(Mattermost::Error)
+  ConnectionError = Class.new(::Mattermost::Error)
 
   # This class' prime objective is to obtain a session token on a Mattermost
   # instance with SSO configured where this GitLab instance is the provider.
@@ -22,16 +24,18 @@ module Mattermost
   # going.
   class Session
     include Doorkeeper::Helpers::Controller
-    include HTTParty
 
     LEASE_TIMEOUT = 60
 
-    base_uri Settings.mattermost.host
+    Request = Struct.new(:parameters, keyword_init: true) do
+      def method_missing(method_name, *args, &block); end
+    end
 
-    attr_accessor :current_resource_owner, :token
+    attr_accessor :current_resource_owner, :token, :base_uri
 
     def initialize(current_user)
       @current_resource_owner = current_user
+      @base_uri = Settings.mattermost.host
     end
 
     def with_session
@@ -41,8 +45,8 @@ module Mattermost
         begin
           yield self
         rescue Errno::ECONNREFUSED => e
-          Rails.logger.error(e.message + "\n" + e.backtrace.join("\n"))
-          raise Mattermost::NoSessionError
+          Gitlab::AppLogger.error(e.message + "\n" + e.backtrace.join("\n"))
+          raise ::Mattermost::NoSessionError
         ensure
           destroy
         end
@@ -52,7 +56,7 @@ module Mattermost
     # Next methods are needed for Doorkeeper
     def pre_auth
       @pre_auth ||= Doorkeeper::OAuth::PreAuthorization.new(
-        Doorkeeper.configuration, server.client_via_uid, params)
+        Doorkeeper.configuration, params)
     end
 
     def authorization
@@ -64,33 +68,48 @@ module Mattermost
     end
 
     def request
-      @request ||= OpenStruct.new(parameters: params)
+      @request ||= Request.new(parameters: params)
     end
 
     def params
-      Rack::Utils.parse_query(oauth_uri.query).symbolize_keys
+      { organization_id: @current_resource_owner.organization.id }
+        .merge(Rack::Utils.parse_query(oauth_uri.query).symbolize_keys)
     end
 
     def get(path, options = {})
       handle_exceptions do
-        self.class.get(path, options.merge(headers: @headers))
+        Integrations::Clients::HTTP.get(path, build_options(options))
       end
     end
 
     def post(path, options = {})
       handle_exceptions do
-        self.class.post(path, options.merge(headers: @headers))
+        Integrations::Clients::HTTP.post(path, build_options(options))
+      end
+    end
+
+    def delete(path, options = {})
+      handle_exceptions do
+        Integrations::Clients::HTTP.delete(path, build_options(options))
       end
     end
 
     private
 
+    def build_options(options)
+      options.tap do |hash|
+        hash[:headers] = @headers
+        hash[:allow_local_requests] = true
+        hash[:base_uri] = base_uri if base_uri.presence
+      end
+    end
+
     def create
-      raise Mattermost::NoSessionError unless oauth_uri
-      raise Mattermost::NoSessionError unless token_uri
+      raise ::Mattermost::NoSessionError unless oauth_uri
+      raise ::Mattermost::NoSessionError unless token_uri
 
       @token = request_token
-      raise Mattermost::NoSessionError unless @token
+      raise ::Mattermost::NoSessionError unless @token
 
       @headers = {
         Authorization: "Bearer #{@token}"
@@ -100,7 +119,7 @@ module Mattermost
     end
 
     def destroy
-      post('/api/v3/users/logout')
+      post('/api/v4/users/logout')
     end
 
     def oauth_uri
@@ -108,7 +127,7 @@ module Mattermost
 
       @oauth_uri = nil
 
-      response = get("/api/v3/oauth/gitlab/login", follow_redirects: false)
+      response = get('/oauth/gitlab/login', follow_redirects: false)
       return unless (300...400) === response.code
 
       redirect_uri = response.headers['location']
@@ -159,14 +178,14 @@ module Mattermost
 
     def handle_exceptions
       yield
-    rescue HTTParty::Error => e
-      raise Mattermost::ConnectionError.new(e.message)
+    rescue Gitlab::HTTP::Error => e
+      raise ::Mattermost::ConnectionError, e.message
     rescue Errno::ECONNREFUSED => e
-      raise Mattermost::ConnectionError.new(e.message)
+      raise ::Mattermost::ConnectionError, e.message
     end
 
     def parse_cookie(response)
-      cookie_hash = CookieHash.new
+      cookie_hash = Gitlab::HTTP::CookieHash.new
       response.get_fields('Set-Cookie').each { |c| cookie_hash.add_cookies(c) }
       cookie_hash
     end

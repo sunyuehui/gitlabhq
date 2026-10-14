@@ -1,6 +1,8 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
-describe Gitlab::Ci::Config::Entry::Environment do
+require 'fast_spec_helper'
+
+RSpec.describe Gitlab::Ci::Config::Entry::Environment, feature_category: :environment_management do
   let(:entry) { described_class.new(config) }
 
   before do
@@ -90,13 +92,38 @@ describe Gitlab::Ci::Config::Entry::Environment do
   end
 
   context 'when valid action is used' do
-    let(:config) do
-      { name: 'production',
-        action: 'start' }
+    where(:action) do
+      %w[start stop prepare verify access]
     end
 
-    it 'is valid' do
-      expect(entry).to be_valid
+    with_them do
+      let(:config) do
+        { name: 'production', action: action }
+      end
+
+      it 'is valid' do
+        expect(entry).to be_valid
+      end
+    end
+  end
+
+  context 'when wrong action type is used' do
+    let(:config) do
+      { name: 'production',
+        action: ['stop'] }
+    end
+
+    describe '#valid?' do
+      it 'is not valid' do
+        expect(entry).not_to be_valid
+      end
+    end
+
+    describe '#errors' do
+      it 'contains error about wrong action type' do
+        expect(entry.errors)
+          .to include 'environment action should be a string'
+      end
     end
   end
 
@@ -115,7 +142,7 @@ describe Gitlab::Ci::Config::Entry::Environment do
     describe '#errors' do
       it 'contains error about invalid action' do
         expect(entry.errors)
-          .to include 'environment action should be start or stop'
+          .to include 'environment action should be start, stop, prepare, verify, or access'
       end
     end
   end
@@ -151,6 +178,26 @@ describe Gitlab::Ci::Config::Entry::Environment do
     end
   end
 
+  context 'when wrong url type is used' do
+    let(:config) do
+      { name: 'production',
+        url: ['https://meow.meow'] }
+    end
+
+    describe '#valid?' do
+      it 'is not valid' do
+        expect(entry).not_to be_valid
+      end
+    end
+
+    describe '#errors' do
+      it 'contains error about wrong url type' do
+        expect(entry.errors)
+          .to include 'environment url should be a string'
+      end
+    end
+  end
+
   context 'when variables are used for environment' do
     let(:config) do
       { name: 'review/$CI_COMMIT_REF_NAME',
@@ -160,6 +207,35 @@ describe Gitlab::Ci::Config::Entry::Environment do
     describe '#valid?' do
       it 'is valid' do
         expect(entry).to be_valid
+      end
+    end
+  end
+
+  context 'when auto_stop_in is specified' do
+    let(:config) do
+      {
+        name: 'review/$CI_COMMIT_REF_NAME',
+        url: 'https://$CI_COMMIT_REF_NAME.review.gitlab.com',
+        on_stop: 'stop_review',
+        auto_stop_in: auto_stop_in
+      }
+    end
+
+    context 'when auto_stop_in is correct format' do
+      let(:auto_stop_in) { '2 days' }
+
+      it 'becomes valid' do
+        expect(entry).to be_valid
+        expect(entry.auto_stop_in).to eq(auto_stop_in)
+      end
+    end
+
+    context 'when variables are used for auto_stop_in' do
+      let(:auto_stop_in) { '$TTL' }
+
+      it 'becomes valid' do
+        expect(entry).to be_valid
+        expect(entry.auto_stop_in).to eq(auto_stop_in)
       end
     end
   end
@@ -197,6 +273,60 @@ describe Gitlab::Ci::Config::Entry::Environment do
             .to include "environment name can't be blank"
         end
       end
+    end
+  end
+
+  describe 'kubernetes' do
+    let(:config) do
+      { name: 'production', kubernetes: kubernetes_config }
+    end
+
+    context 'is a string' do
+      let(:kubernetes_config) { 'production' }
+
+      it { expect(entry).not_to be_valid }
+    end
+
+    context 'is a hash' do
+      let(:kubernetes_config) { Hash(namespace: 'production') }
+
+      it { expect(entry).to be_valid }
+    end
+
+    context 'is nil' do
+      let(:kubernetes_config) { nil }
+
+      it { expect(entry).to be_valid }
+    end
+  end
+
+  describe 'deployment_tier' do
+    let(:config) do
+      { name: 'customer-portal', deployment_tier: deployment_tier }
+    end
+
+    context 'is a string' do
+      let(:deployment_tier) { 'production' }
+
+      it { expect(entry).to be_valid }
+    end
+
+    context 'is a hash' do
+      let(:deployment_tier) { Hash(tier: 'production') }
+
+      it { expect(entry).not_to be_valid }
+    end
+
+    context 'is nil' do
+      let(:deployment_tier) { nil }
+
+      it { expect(entry).to be_valid }
+    end
+
+    context 'is a variable' do
+      let(:deployment_tier) { '$DEPLOYMENT_TIER' }
+
+      it { expect(entry).to be_valid }
     end
   end
 end

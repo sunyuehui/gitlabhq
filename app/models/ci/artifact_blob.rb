@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Ci
   class ArtifactBlob
     include BlobLike
@@ -15,8 +17,10 @@ module Ci
     end
 
     def size
-      entry.metadata[:size]
+      # Old versions of Workhorse omit the size if the file is 0 bytes
+      entry.metadata.fetch(:size, 0)
     end
+    alias_method :external_size, :size
 
     def data
       "Build artifact #{path}"
@@ -30,6 +34,12 @@ module Ci
       :build_artifact
     end
 
-    alias_method :external_size, :size
+    def external_url(job)
+      job.project.pages_url_builder.artifact_url(entry, job)
+    end
+
+    def external_link?(job)
+      job.project.pages_url_builder.artifact_url_available?(entry, job)
+    end
   end
 end

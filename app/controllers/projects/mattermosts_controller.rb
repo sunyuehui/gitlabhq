@@ -1,24 +1,29 @@
+# frozen_string_literal: true
+
 class Projects::MattermostsController < Projects::ApplicationController
-  include TriggersHelper
+  include Ci::TriggersHelper
   include ActionView::Helpers::AssetUrlHelper
 
   layout 'project_settings'
 
   before_action :authorize_admin_project!
-  before_action :service
+  before_action :integration
   before_action :teams, only: [:new]
 
-  def new
-  end
+  feature_category :integrations
+
+  def new; end
 
   def create
-    result, message = @service.configure(current_user, configure_params)
+    render_404 && return unless integration
+
+    result, message = integration.configure(current_user, configure_params)
 
     if result
-      flash[:notice] = 'This service is now configured'
-      redirect_to edit_project_service_path(@project, service)
+      flash[:notice] = 'This integration is now configured'
+      redirect_to edit_project_settings_integration_path(@project, integration)
     else
-      flash[:alert] = message || 'Failed to configure service'
+      flash[:alert] = message || 'Failed to configure integration'
       redirect_to new_project_mattermost_path(@project)
     end
   end
@@ -27,15 +32,15 @@ class Projects::MattermostsController < Projects::ApplicationController
 
   def configure_params
     params.require(:mattermost).permit(:trigger, :team_id).merge(
-      url: service_trigger_url(@service),
-      icon_url: asset_url('slash-command-logo.png'))
+      url: integration_trigger_url(integration),
+      icon_url: asset_url('slash-command-logo.png', skip_pipeline: true))
   end
 
   def teams
-    @teams, @teams_error_message = @service.list_teams(current_user)
+    @teams, @teams_error_message = integration.list_teams(current_user)
   end
 
-  def service
-    @service ||= @project.find_or_initialize_service('mattermost_slash_commands')
+  def integration
+    @integration ||= @project.find_or_initialize_integration('mattermost_slash_commands')
   end
 end

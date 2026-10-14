@@ -1,12 +1,12 @@
+# frozen_string_literal: true
+
 module Gitlab
   module SidekiqMiddleware
     class RequestStoreMiddleware
       def call(worker, job, queue)
-        RequestStore.begin!
-        yield
-      ensure
-        RequestStore.end!
-        RequestStore.clear!
+        ::Gitlab::SafeRequestStore.ensure_request_store do
+          yield
+        end
       end
     end
   end

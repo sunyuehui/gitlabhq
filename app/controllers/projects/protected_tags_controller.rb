@@ -1,20 +1,26 @@
+# frozen_string_literal: true
+
 class Projects::ProtectedTagsController < Projects::ProtectedRefsController
   protected
+
+  def ref_type
+    :tags
+  end
 
   def project_refs
     @project.repository.tags
   end
 
-  def create_service_class
-    ::ProtectedTags::CreateService
-  end
-
-  def update_service_class
-    ::ProtectedTags::UpdateService
+  def service_namespace
+    ::ProtectedTags
   end
 
   def load_protected_ref
-    @protected_ref = @project.protected_tags.find(params[:id])
+    @protected_ref = @project.protected_tags.find(params.permit(:id)[:id])
+  end
+
+  def access_levels
+    [:create_access_levels]
   end
 
   def protected_ref_params

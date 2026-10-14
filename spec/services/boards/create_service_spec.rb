@@ -1,34 +1,40 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Boards::CreateService do
+RSpec.describe Boards::CreateService, feature_category: :planning_views do
   describe '#execute' do
-    let(:project) { create(:project) }
+    let_it_be(:user) { create(:user) }
 
-    subject(:service) { described_class.new(project, double) }
+    subject(:service) { described_class.new(parent, user) }
 
-    context 'when project does not have a board' do
-      it 'creates a new board' do
-        expect { service.execute }.to change(Board, :count).by(1)
-      end
+    context 'when board parent is a project' do
+      let_it_be_with_reload(:parent) { create(:project) }
 
-      it 'creates the default lists' do
-        board = service.execute
+      it_behaves_like 'boards create service'
 
-        expect(board.lists.size).to eq 2
-        expect(board.lists.first).to be_backlog
-        expect(board.lists.last).to be_closed
+      it 'tracks board_created event' do
+        expect do
+          service.execute
+        end.to(
+          trigger_internal_events('board_created')
+            .with(user: user, project: parent, namespace: parent.namespace)
+        )
       end
     end
 
-    context 'when project has a board' do
-      before do
-        create(:board, project: project)
-      end
+    context 'when board parent is a group' do
+      let_it_be_with_reload(:parent) { create(:group) }
 
-      it 'does not create a new board' do
-        expect(service).to receive(:can_create_board?) { false }
+      it_behaves_like 'boards create service'
 
-        expect { service.execute }.not_to change(project.boards, :count)
+      it 'tracks board_created event' do
+        expect do
+          service.execute
+        end.to(
+          trigger_internal_events('board_created')
+            .with(user: user, namespace: parent)
+        )
       end
     end
   end

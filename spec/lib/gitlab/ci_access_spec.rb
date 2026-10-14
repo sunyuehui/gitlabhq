@@ -1,6 +1,8 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
-describe Gitlab::CiAccess do
+require 'fast_spec_helper'
+
+RSpec.describe Gitlab::CiAccess do
   let(:access) { described_class.new }
 
   describe '#can_do_action?' do

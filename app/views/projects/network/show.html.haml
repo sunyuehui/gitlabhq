@@ -1,24 +1,22 @@
-- breadcrumb_title "Graph"
-- page_title "Graph", @ref
-- content_for :page_specific_javascripts do
-  = page_specific_javascript_bundle_tag('network')
-- if show_new_nav?
-  - add_to_breadcrumbs("Repository", project_tree_path(@project))
-= render "projects/commits/head"
-= render "head"
-%div{ class: container_class }
-  .project-network
-    .controls
-      = form_tag project_network_path(@project, @id), method: :get, class: 'form-inline network-form' do |f|
-        = text_field_tag :extended_sha1, @options[:extended_sha1], placeholder: "Git revision", class: 'search-input form-control input-mx-250 search-sha'
-        = button_tag class: 'btn btn-success' do
-          = icon('search')
-        .inline.prepend-left-20
-          .checkbox.light
-            = label_tag :filter_ref do
-              = check_box_tag :filter_ref, 1, @options[:filter_ref]
-              %span Begin with the selected commit
+- title = _("Repository graph")
+- breadcrumb_title title
+- page_title title, @ref
 
-    - if @commit
-      .network-graph{ data: { url: @url, commit_url: @commit_url, ref: @ref, commit_id: @commit.id } }
-        = spinner nil, true
+- if @gitaly_unavailable
+  = render 'shared/errors/gitaly_unavailable', reason: s_('Network|Unable to load repository graph')
+- else
+  .project-network-header.gl-flex.gl-flex-col.gl-overflow-hidden
+    = render ::Layouts::PageHeadingComponent.new(title) do |c|
+      - c.with_description do
+        = _("You can move around the graph by using the arrow keys.")
+
+    .project-network
+      .gl-flex.gl-flex-wrap.gl-items-start.gl-gap-3.gl-p-5.gl-bg-subtle.gl-border-t.gl-border-b
+        .gl-min-w-26
+          #js-graph-ref-switcher{ data: { project_id: @project.id, ref: @ref, network_path: project_network_path(@project, @ref, ref_type: @ref_type) } }
+
+        #js-ref-search-form{ data: { network_path: project_network_path(@project, @ref, ref_type: @ref_type)} }
+
+      - if @commit
+        .network-graph.gl-overflow-scroll{ tabindex: 0, role: 'figure', data: { url: @url, commit_url: @commit_url, ref: @ref, commit_id: @commit.id, type: 'figure-branch-graph' } }
+          = gl_loading_icon(size: 'md', css_class: 'gl-mt-5')

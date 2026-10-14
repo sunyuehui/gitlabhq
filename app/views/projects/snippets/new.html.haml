@@ -1,6 +1,6 @@
-- page_title "New Snippets"
+- add_to_breadcrumbs _("Snippets"), project_snippets_path(@project)
+- breadcrumb_title _("New snippet")
+- page_title _("New snippet")
 
-%h3.page-title
-  New Snippet
-%hr
+= render ::Layouts::PageHeadingComponent.new(_('New snippet'))
 = render "shared/snippets/form", url: project_snippets_path(@project, @snippet)

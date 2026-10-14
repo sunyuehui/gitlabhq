@@ -1,20 +1,29 @@
+# frozen_string_literal: true
+
 class Groups::LabelsController < Groups::ApplicationController
   include ToggleSubscriptionAction
 
   before_action :label, only: [:edit, :update, :destroy]
-  before_action :authorize_admin_labels!, only: [:new, :create, :edit, :update, :destroy]
+  before_action :authorize_create_label!, only: [:new, :create]
+  before_action :authorize_update_label!, only: [:edit, :update]
+  before_action :authorize_delete_label!, only: [:destroy]
   before_action :save_previous_label_path, only: [:edit]
 
   respond_to :html
 
+  feature_category :team_planning
+  urgency :low
+
   def index
     respond_to do |format|
       format.html do
-        @labels = @group.labels.page(params[:page])
+        # at group level we do not want to list project labels,
+        # we only want `only_group_labels = false` when pulling labels for label filter dropdowns, fetched through json
+        @labels = available_labels(labels_finder_params.merge(only_group_labels: true))
+          .page(labels_finder_params[:page])
+        Preloaders::LabelsPreloader.new(@labels, current_user).preload_all
       end
-
       format.json do
-        available_labels = LabelsFinder.new(current_user, group_id: @group.id).execute
         render json: LabelSerializer.new.represent_appearance(available_labels)
       end
     end
@@ -26,12 +35,20 @@ class Groups::LabelsController < Groups::ApplicationController
   end
 
   def create
-    @label = Labels::CreateService.new(label_params).execute(group: group)
+    @label = Labels::CreateService.new(current_user, label_params).execute(group: group)
 
-    if @label.valid?
-      redirect_to group_labels_path(@group)
-    else
-      render :new
+    respond_to do |format|
+      format.html do
+        if @label.valid?
+          redirect_to group_labels_path(@group)
+        else
+          render :new
+        end
+      end
+
+      format.json do
+        render json: LabelSerializer.new.represent_appearance(@label)
+      end
     end
   end
 
@@ -40,7 +57,7 @@ class Groups::LabelsController < Groups::ApplicationController
   end
 
   def update
-    @label = Labels::UpdateService.new(label_params).execute(@label)
+    @label = Labels::UpdateService.new(current_user, label_params).execute(@label)
 
     if @label.valid?
       redirect_back_or_group_labels_path
@@ -50,28 +67,39 @@ class Groups::LabelsController < Groups::ApplicationController
   end
 
   def destroy
-    @label.destroy
+    label = Labels::DestroyService.new(current_user, @label).execute
 
-    respond_to do |format|
-      format.html do
-        redirect_to group_labels_path(@group), status: 302, notice: 'Label was removed'
-      end
-      format.js
+    if label.destroyed?
+      redirect_to group_labels_path(@group), status: :found,
+        notice: format(_('%{label_name} was removed'), label_name: label.name)
+    else
+      redirect_to group_labels_path(@group), status: :found,
+        alert: label.errors.full_messages.to_sentence
     end
   end
 
   protected
 
-  def authorize_admin_labels!
-    return render_404 unless can?(current_user, :admin_label, @group)
+  def authorize_create_label!
+    render_404 unless can?(current_user, :create_label, @group)
+  end
+
+  # The label can belong to an ancestor group, so check both.
+  def authorize_update_label!
+    render_404 unless can?(current_user, :update_label, @group) && can?(current_user, :update_label, @label)
+  end
+
+  def authorize_delete_label!
+    render_404 unless can?(current_user, :delete_label, @group) && can?(current_user, :delete_label, @label)
   end
 
   def authorize_read_labels!
-    return render_404 unless can?(current_user, :read_label, @group)
+    render_404 unless can?(current_user, :read_label, @group)
   end
 
   def label
-    @label ||= @group.labels.find(params[:id])
+    @label ||= available_labels(labels_finder_params.merge(only_group_labels: true, ignore_archived: true))
+      .find(labels_finder_params[:id])
   end
   alias_method :subscribable_resource, :label
 
@@ -80,7 +108,10 @@ class Groups::LabelsController < Groups::ApplicationController
   end
 
   def label_params
-    params.require(:label).permit(:title, :description, :color)
+    allowed = [:title, :description, :color, :archived]
+    allowed << :lock_on_merge if @group.supports_lock_on_merge?
+
+    params.require(:label).permit(allowed)
   end
 
   def redirect_back_or_group_labels_path(options = {})
@@ -97,5 +128,30 @@ class Groups::LabelsController < Groups::ApplicationController
 
   def save_previous_label_path
     session[:previous_labels_path] = URI(request.referer || '').path
+  end
+
+  def available_labels(options = labels_finder_params)
+    archived_param = options[:archived].nil? ? false : options[:archived] unless options[:ignore_archived]
+
+    @available_labels ||=
+      LabelsFinder.new(
+        current_user,
+        group_id: @group.id,
+        only_group_labels: options[:only_group_labels],
+        include_ancestor_groups: true,
+        sort: sort,
+        subscribed: options[:subscribed],
+        include_descendant_groups: options[:include_descendant_groups],
+        search: options[:search],
+        archived: archived_param
+      ).execute
+  end
+
+  def sort
+    @sort ||= labels_finder_params[:sort] || 'name_asc'
+  end
+
+  def labels_finder_params
+    params.permit(:archived, :id, :include_descendant_groups, :only_group_labels, :page, :search, :sort, :subscribed)
   end
 end

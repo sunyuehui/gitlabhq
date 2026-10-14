@@ -1,25 +1,20 @@
+# frozen_string_literal: true
+
 class Admin::JobsController < Admin::ApplicationController
-  def index
-    @scope = params[:scope]
-    @all_builds = Ci::Build
-    @builds = @all_builds.order('created_at DESC')
-    @builds =
-      case @scope
-      when 'pending'
-        @builds.pending.reverse_order
-      when 'running'
-        @builds.running.reverse_order
-      when 'finished'
-        @builds.finished
-      else
-        @builds
-      end
-    @builds = @builds.page(params[:page]).per(30)
+  feature_category :continuous_integration
+  urgency :low
+
+  before_action do
+    push_frontend_feature_flag(:admin_jobs_filter_runner_type, type: :ops)
   end
+
+  def index; end
 
   def cancel_all
     Ci::Build.running_or_pending.each(&:cancel)
 
-    redirect_to admin_jobs_path
+    redirect_to admin_jobs_path, status: :see_other
   end
 end
+
+Admin::JobsController.prepend_mod

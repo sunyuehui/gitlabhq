@@ -1,3 +1,4 @@
+@use "sass:list";
 // This file is based off animate.css 3.5.1, available here:
 // https://github.com/daneden/animate.css/blob/3.5.1/animate.css
 //
@@ -11,23 +12,8 @@
   @include webkit-prefix(animation-duration, 1s);
   @include webkit-prefix(animation-fill-mode, both);
 
-  &.infinite {
-    @include webkit-prefix(animation-iteration-count, infinite);
-  }
-
   &.once {
     @include webkit-prefix(animation-iteration-count, 1);
-  }
-
-  &.hinge {
-    @include webkit-prefix(animation-duration, 2s);
-  }
-
-  &.flipOutX,
-  &.flipOutY,
-  &.bounceIn,
-  &.bounceOut {
-    @include webkit-prefix(animation-duration, .75s);
   }
 
   &.short {
@@ -63,77 +49,48 @@
 //
 // Pass in any number of transitions
 @mixin transition($transitions...) {
-  $unfoldedTransitions: ();
+  $unfolded-transitions: ();
   @each $transition in $transitions {
-    $unfoldedTransitions: append($unfoldedTransitions, unfoldTransition($transition), comma);
+    $unfolded-transitions: list.append($unfolded-transitions, unfold-transition($transition), comma);
   }
 
-  transition: $unfoldedTransitions;
+  transition: $unfolded-transitions;
 }
 
-@mixin disableAllAnimation {
-  /*CSS transitions*/
-  -o-transition-property: none !important;
-  -moz-transition-property: none !important;
-  -ms-transition-property: none !important;
-  -webkit-transition-property: none !important;
-  transition-property: none !important;
-  /*CSS transforms*/
-  -o-transform: none !important;
-  -moz-transform: none !important;
-  -ms-transform: none !important;
-  -webkit-transform: none !important;
-  transform: none !important;
-  /*CSS animations*/
-  -webkit-animation: none !important;
-  -moz-animation: none !important;
-  -o-animation: none !important;
-  -ms-animation: none !important;
-  animation: none !important;
-}
-
-@function unfoldTransition ($transition) {
+@function unfold-transition ($transition) {
   // Default values
   $property: all;
   $duration: $general-hover-transition-duration;
   $easing: $general-hover-transition-curve; // Browser default is ease, which is what we want
   $delay: null; // Browser default is 0, which is what we want
-  $defaultProperties: ($property, $duration, $easing, $delay);
+  $default-properties: ($property, $duration, $easing, $delay);
 
   // Grab transition properties if they exist
-  $unfoldedTransition: ();
-  @for $i from 1 through length($defaultProperties) {
+  $unfolded-transition: ();
+  @for $i from 1 through list.length($default-properties) {
     $p: null;
-    @if $i <= length($transition) {
-      $p: nth($transition, $i);
+    @if $i <= list.length($transition) {
+      $p: list.nth($transition, $i);
     } @else {
-      $p: nth($defaultProperties, $i);
+      $p: list.nth($default-properties, $i);
     }
-    $unfoldedTransition: append($unfoldedTransition, $p);
+    $unfolded-transition: list.append($unfolded-transition, $p);
   }
 
-  @return $unfoldedTransition;
+  @return $unfolded-transition;
 }
 
-.btn,
-.global-dropdown-toggle {
+.btn {
   @include transition(background-color, border-color, color, box-shadow);
 }
 
-.dropdown-menu-toggle,
-.avatar-circle,
-.header-user-avatar {
+.dropdown-menu-toggle {
   @include transition(border-color);
 }
 
-.note-action-button .link-highlight,
-.toolbar-btn,
+.note-action-button,
 .dropdown-toggle-caret {
   @include transition(color);
-}
-
-a {
-  @include transition(background-color, color, border);
 }
 
 .stage-nav-item {
@@ -141,8 +98,7 @@ a {
 }
 
 .dropdown-menu a,
-.dropdown-menu button,
-.dropdown-menu-nav a {
+.dropdown-menu button {
   transition: none;
 }
 
@@ -188,71 +144,56 @@ a {
   animation: fadeInFull $fade-in-duration 1;
 }
 
-
 .animation-container {
-  background: $repo-editor-grey;
   height: 40px;
   overflow: hidden;
-  position: relative;
 
   &.animation-container-small {
     height: 12px;
   }
 
-  &::before {
-    animation-duration: 1s;
-    animation-fill-mode: forwards;
-    animation-iteration-count: infinite;
-    animation-name: blockTextShine;
-    animation-timing-function: linear;
-    background-image: $repo-editor-linear-gradient;
-    background-repeat: no-repeat;
-    background-size: 800px 45px;
-    content: ' ';
-    display: block;
-    height: 100%;
+  &.animation-container-right {
+    .skeleton-line-2 {
+      left: 0;
+      right: 150px;
+    }
+  }
+
+  [class^='skeleton-line-'] {
     position: relative;
-  }
-
-  div {
-    background: $white-light;
-    height: 6px;
-    left: 0;
-    position: absolute;
-    right: 0;
-  }
-
-  .skeleton-line-1 {
-    left: 0;
-    top: 8px;
-  }
-
-  .skeleton-line-2 {
-    left: 150px;
-    top: 0;
+    @apply gl-bg-strong;
     height: 10px;
-  }
+    overflow: hidden;
 
-  .skeleton-line-3 {
-    left: 0;
-    top: 23px;
-  }
+    &:not(:last-of-type) {
+      margin-bottom: 4px;
+    }
 
-  .skeleton-line-4 {
-    left: 0;
-    top: 38px;
+    &::after {
+      content: ' ';
+      display: block;
+      animation: blockTextShine 1s linear infinite forwards;
+      background-repeat: no-repeat;
+      background-size: cover;
+      background-image: linear-gradient(to right,
+      $gray-50 0%,
+      $gray-10 20%,
+      $gray-50 40%,
+      $gray-50 100%);
+      height: 10px;
+    }
   }
+}
 
-  .skeleton-line-5 {
-    left: 200px;
-    top: 28px;
-    height: 10px;
-  }
+$skeleton-line-widths: (
+  156px,
+  235px,
+  200px,
+);
 
-  .skeleton-line-6 {
-    top: 14px;
-    left: 230px;
-    height: 10px;
+@for $count from 1 through list.length($skeleton-line-widths) {
+  .skeleton-line-#{$count} {
+    width: list.nth($skeleton-line-widths, $count);
   }
 }
 
@@ -263,5 +204,92 @@ a {
 
   100% {
     transform: translateX(468px);
+  }
+}
+
+// These are composite classes for use with Vue Transition
+// https://vuejs.org/guide/built-ins/transition
+.slide-down-enter-active {
+  transition: transform 0.2s;
+}
+
+.slide-down-enter,
+.slide-down-leave-to {
+  transform: translateY(-30%);
+}
+
+.slide-in-fwd-bottom-enter-active {
+  animation: slide-in-fwd-bottom 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+.slide-in-fwd-bottom-leave-active {
+  animation: slide-in-fwd-bottom 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) both reverse;
+}
+
+/* ----------------------------------------------
+ * Generated by Animista on 2019-4-26 17:40:41
+ * w: http://animista.net, t: @cssanimista
+ * ---------------------------------------------- */
+@keyframes slide-in-fwd-bottom {
+  0% {
+    transform: translateZ(-1400px) translateY(800px);
+    opacity: 0;
+  }
+
+  100% {
+    transform: translateZ(0) translateY(0);
+    opacity: 1;
+  }
+}
+
+// Hotspot pulse animation
+.hotspot-pulse {
+  @apply gl-relative;
+  
+  // Static dot that appears after flex content
+  &::after {
+    content: '';
+    @apply gl-h-3;
+    @apply gl-w-3;
+    @apply gl-rounded-full;
+    background-color: var(--gl-status-info-icon-color);
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2;
+  }
+  
+  // Pulsing ring positioned on top of the static dot
+  &::before {
+    @include gl-prefers-reduced-motion-animation;
+    content: '';
+    @apply gl-absolute;
+    @apply gl-h-3;
+    @apply gl-w-3;
+    @apply gl-rounded-full;
+    @apply gl-pointer-events-none;
+    
+    /* Position exactly where the ::after dot will be */
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    
+    background-color: rgb(from var(--gl-status-info-icon-color) r g b / 0.7);
+    z-index: 1;
+    animation: hotspot-pulse 2s infinite;
+    transform-origin: center;
+  }
+}
+
+@keyframes hotspot-pulse {
+  0% {
+    transform: translateY(-50%) scale(1);
+    opacity: 0.7;
+  }
+
+  100% {
+    transform: translateY(-50%) scale(2.5);
+    opacity: 0;
   }
 }

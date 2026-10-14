@@ -1,45 +1,71 @@
-- @no_container = true
-- page_title @tag.name, "Tags"
-= render "projects/commits/head"
+- add_to_breadcrumbs s_('TagsPage|Tags'), project_tags_path(@project)
+- page_title params[:id], s_('TagsPage|Tags')
 
-%div{ class: container_class }
-  .top-area.multi-line
+- if @gitaly_unavailable
+  = render 'shared/errors/gitaly_unavailable', reason: s_('TagsPage|Unable to load tag')
+- else
+  - user = user_email = nil
+  - if @tag.user_email
+    - user_email = @tag.user_email
+    - user = User.find_by_any_email(user_email)
+  - breadcrumb_title @tag.name
+
+  .top-area.multi-line.gl-border-b-0
     .nav-text
       .title
-        %span.item-title.ref-name
-          = icon('tag')
+        %span.item-title.ref-name{ data: { testid: 'tag-name-content' } }
+          = sprite_icon('tag')
           = @tag.name
         - if protected_tag?(@project, @tag)
-          %span.label.label-success
-            protected
+          = gl_badge_tag s_('TagsPage|protected'), variant: :success
+
+      - if user
+        = link_to user_path(user) do
+          %div
+            = user_avatar_without_link(user: user, size: 32, css_class: "!gl-mt-2 !gl-mb-2")
+
+          %div
+            %strong= user.name
+            %div= user.to_reference
+
+      - elsif user_email
+        = mail_to user_email do
+          %div
+            = user_avatar_without_link(user_email: user_email, size: 32, css_class: "!gl-mt-2 !gl-mb-2")
+
+          %div{ :class => "!gl-clearfix" }
+            %strong= user_email
+
       - if @commit
         = render 'projects/branches/commit', commit: @commit, project: @project
       - else
-        Cant find HEAD commit for this tag
+        = s_("TagsPage|Can't find HEAD commit for this tag")
 
-    .nav-controls.controls-flex
-      - if can?(current_user, :push_code, @project)
-        = link_to edit_project_tag_release_path(@project, @tag.name), class: 'btn controls-item has-tooltip', title: 'Edit release notes' do
-          = icon("pencil")
-      = link_to project_tree_path(@project, @tag.name), class: 'btn controls-item has-tooltip', title: 'Browse files' do
-        = icon('files-o')
-      = link_to project_commits_path(@project, @tag.name), class: 'btn controls-item has-tooltip', title: 'Browse commits' do
-        = icon('history')
-      .btn-container.controls-item
-        = render 'projects/buttons/download', project: @project, ref: @tag.name
-      - if can?(current_user, :admin_project, @project)
-        .btn-container.controls-item-full
-          = link_to project_tag_path(@project, @tag.name), class: "btn btn-remove remove-row has-tooltip #{protected_tag?(@project, @tag) ? 'disabled' : ''}", title: "Delete tag", method: :delete, data: { confirm: "Deleting the '#{@tag.name}' tag cannot be undone. Are you sure?" } do
-            %i.fa.fa-trash-o
+      - if @release
+        = render 'release_link', project: @project, release: @release
 
-    - if @tag.message.present?
-      %pre.wrap
-        = strip_gpg_signature(@tag.message)
+    .nav-controls.gl-flex-wrap.gl-items-center{ class: '!gl-flex' }
+      - if @tag.has_signature?
+        - signature_object = tag_view_signature(@tag)
+        - if signature_object.present?
+          .gl-mr-3
+            = render partial: 'projects/commit/signature', object: signature_object
 
-  .append-bottom-default.prepend-top-default
-    - if @release.description.present?
-      .description
-        .wiki
-          = markdown_field(@release, :description)
-    - else
-      This tag has no release notes.
+      - if @pipeline_status
+        .gl-mr-3
+          = render 'ci/status/icon', status: @pipeline_status
+
+      - if can?(current_user, :admin_tag, @project)
+        = render 'edit_release_button', tag: @tag, project: @project, release: @release
+      = link_button_to nil, project_tree_path(@project, @tag.name, ref_type: :tags), class: 'has-tooltip', title: s_('TagsPage|Browse files'), icon: 'folder-open'
+      = link_button_to nil, project_commits_path(@project, @tag.name), class: 'has-tooltip', title: s_('TagsPage|Browse commits'), icon: 'history'
+      = render 'projects/buttons/download', project: @project, ref: @tag.name, ref_type: :tags
+      - if can?(current_user, :admin_tag, @project)
+        = render 'projects/buttons/remove_tag', project: @project, tag: @tag
+
+  - if @tag.message.present?
+    %pre.wrap{ data: { testid: 'tag-message-content' } }
+      = strip_signature(@tag.message)
+
+  - if can?(current_user, :admin_tag, @project)
+    .js-delete-tag-modal

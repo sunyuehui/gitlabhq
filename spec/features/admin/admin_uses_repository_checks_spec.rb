@@ -1,45 +1,68 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-feature 'Admin uses repository checks' do
+require 'spec_helper'
+
+RSpec.describe 'Admin uses repository checks', :request_store, feature_category: :user_management do
   include StubENV
+  include Spec::Support::Helpers::ModalHelpers
+
+  let(:admin) { create(:admin) }
 
   before do
     stub_env('IN_MEMORY_APPLICATION_SETTINGS', 'false')
-    sign_in(create(:admin))
+    sign_in(admin)
   end
 
-  scenario 'to trigger a single check' do
-    project = create(:project)
-    visit_admin_project_page(project)
+  context 'when admin mode is disabled' do
+    it 'admin project page requires admin mode' do
+      project = create(:project)
+      visit_admin_project_page(project)
 
-    page.within('.repository-check') do
-      click_button 'Trigger repository check'
-    end
-
-    expect(page).to have_content('Repository check was triggered')
-  end
-
-  scenario 'to see a single failed repository check' do
-    project = create(:project)
-    project.update_columns(
-      last_repository_check_failed: true,
-      last_repository_check_at: Time.now
-    )
-    visit_admin_project_page(project)
-
-    page.within('.alert') do
-      expect(page.text).to match(/Last repository check \(.* ago\) failed/)
+      expect(page).not_to have_css('.repository-check')
+      expect(page).to have_content('Enter admin mode')
     end
   end
 
-  scenario 'to clear all repository checks', js: true do
-    visit admin_application_settings_path
+  context 'when admin mode is enabled' do
+    before do
+      enable_admin_mode!(admin)
+    end
 
-    expect(RepositoryCheck::ClearWorker).to receive(:perform_async)
+    it 'to trigger a single check', :js do
+      project = create(:project)
+      visit_admin_project_page(project)
 
-    click_link 'Clear all repository checks'
+      page.within('.repository-check') do
+        click_button 'Trigger repository check'
+      end
 
-    expect(page).to have_content('Started asynchronous removal of all repository check states.')
+      expect(page).to have_content('Repository check was triggered')
+    end
+
+    it 'to see a single failed repository check', :js do
+      project = create(:project)
+      project.update_columns(
+        last_repository_check_failed: true,
+        last_repository_check_at: Time.zone.now
+      )
+      visit_admin_project_page(project)
+
+      within_testid('last-repository-check-failed-alert') do
+        expect(page.text).to match(/Last repository check \(just now\) failed/)
+      end
+    end
+
+    it 'to clear all repository checks', :js do
+      visit repository_admin_application_settings_path
+
+      expect(RepositoryCheck::ClearWorker).to receive(:perform_async)
+
+      accept_gl_confirm(button_text: 'Clear repository checks') do
+        find(:link, 'Clear all repository checks').send_keys(:return)
+      end
+
+      expect(page).to have_content('Started asynchronous removal of all repository check states.')
+    end
   end
 
   def visit_admin_project_page(project)

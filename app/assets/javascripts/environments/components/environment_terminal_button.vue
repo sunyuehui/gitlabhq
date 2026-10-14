@@ -3,43 +3,33 @@
  * Renders a terminal button to open a web terminal.
  * Used in environments table.
  */
-import terminalIconSvg from 'icons/_icon_terminal.svg';
-import tooltip from '../../vue_shared/directives/tooltip';
+import { GlDisclosureDropdownItem } from '@gitlab/ui';
+import { __ } from '~/locale';
 
 export default {
+  name: 'EnvironmentTerminalButton',
+  components: {
+    GlDisclosureDropdownItem,
+  },
   props: {
     terminalPath: {
       type: String,
       required: false,
       default: '',
     },
+    disabled: {
+      type: Boolean,
+      required: false,
+      default: false,
+    },
   },
-
-  directives: {
-    tooltip,
-  },
-
   data() {
     return {
-      terminalIconSvg,
+      item: { text: __('Terminal'), href: this.terminalPath },
     };
-  },
-
-  computed: {
-    title() {
-      return 'Terminal';
-    },
   },
 };
 </script>
 <template>
-  <a
-    v-tooltip
-    class="btn terminal-button hidden-xs hidden-sm"
-    data-container="body"
-    :title="title"
-    :aria-label="title"
-    :href="terminalPath"
-    v-html="terminalIconSvg">
-  </a>
+  <gl-disclosure-dropdown-item :item="item" :disabled="disabled" />
 </template>

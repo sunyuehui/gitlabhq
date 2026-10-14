@@ -1,106 +1,304 @@
 <script>
-  /* global Flash */
-  import eventHub from '../eventhub';
-  import DeployKeysService from '../service';
-  import DeployKeysStore from '../store';
-  import keysPanel from './keys_panel.vue';
-  import loadingIcon from '../../vue_shared/components/loading_icon.vue';
+import {
+  GlIcon,
+  GlLoadingIcon,
+  GlPagination,
+  GlFilteredSearch,
+  GlFilteredSearchToken,
+} from '@gitlab/ui';
+import { createAlert } from '~/alert';
+import { s__ } from '~/locale';
+import { captureException } from '~/sentry/sentry_browser_wrapper';
+import pageInfoQuery from '~/graphql_shared/client/page_info.query.graphql';
+import NavigationTabs from '~/vue_shared/components/navigation_tabs.vue';
+import { OPERATORS_IS } from '~/vue_shared/components/filtered_search_bar/constants';
+import deployKeysQuery from '../graphql/queries/deploy_keys.query.graphql';
+import currentPageQuery from '../graphql/queries/current_page.query.graphql';
+import currentScopeQuery from '../graphql/queries/current_scope.query.graphql';
+import confirmRemoveKeyQuery from '../graphql/queries/confirm_remove_key.query.graphql';
+import updateCurrentScopeMutation from '../graphql/mutations/update_current_scope.mutation.graphql';
+import updateCurrentPageMutation from '../graphql/mutations/update_current_page.mutation.graphql';
+import confirmDisableMutation from '../graphql/mutations/confirm_action.mutation.graphql';
+import disableKeyMutation from '../graphql/mutations/disable_key.mutation.graphql';
+import ConfirmModal from './confirm_modal.vue';
+import KeysPanel from './keys_panel.vue';
 
-  export default {
-    data() {
+const titleToken = {
+  title: s__('DeployKeys|Name'),
+  type: 'title',
+  operators: OPERATORS_IS,
+  token: GlFilteredSearchToken,
+  unique: true,
+};
+const keyToken = {
+  title: s__('DeployKeys|SHA'),
+  type: 'key',
+  operators: OPERATORS_IS,
+  token: GlFilteredSearchToken,
+  unique: true,
+};
+
+export default {
+  name: 'DeployKeysApp',
+  components: {
+    ConfirmModal,
+    KeysPanel,
+    NavigationTabs,
+    GlIcon,
+    GlLoadingIcon,
+    GlPagination,
+    GlFilteredSearch,
+  },
+  props: {
+    projectId: {
+      type: String,
+      required: true,
+    },
+    projectPath: {
+      type: String,
+      required: true,
+    },
+  },
+  apollo: {
+    deployKeys: {
+      query: deployKeysQuery,
+      variables() {
+        return {
+          projectPath: this.projectPath,
+          scope: this.currentScope,
+          page: this.currentPage,
+          search: this.searchObject,
+        };
+      },
+      update(data) {
+        return data?.project?.deployKeys || [];
+      },
+      skip() {
+        return !this.currentPage || !this.currentScope;
+      },
+      error(error) {
+        createAlert({
+          message: s__('DeployKeys|Error getting deploy keys'),
+          captureError: true,
+          error,
+        });
+      },
+    },
+    pageInfo: {
+      query: pageInfoQuery,
+      variables() {
+        return {
+          input: { page: this.currentPage, scope: this.currentScope, search: this.searchObject },
+        };
+      },
+      update({ pageInfo }) {
+        return pageInfo || {};
+      },
+    },
+    currentPage: {
+      query: currentPageQuery,
+    },
+    currentScope: {
+      query: currentScopeQuery,
+    },
+    deployKeyToRemove: {
+      query: confirmRemoveKeyQuery,
+    },
+  },
+  data() {
+    return {
+      deployKeys: [],
+      pageInfo: {},
+      currentPage: null,
+      currentScope: null,
+      refetching: false,
+      deployKeyToRemove: null,
+      searchObject: null,
+      searchValue: [],
+      availableTokens: [titleToken, keyToken],
+    };
+  },
+  scopes: {
+    enabledKeys: s__('DeployKeys|Enabled deploy keys'),
+    availableProjectKeys: s__('DeployKeys|Privately accessible deploy keys'),
+    availablePublicKeys: s__('DeployKeys|Publicly accessible deploy keys'),
+  },
+  i18n: {
+    loading: s__('DeployKeys|Loading deploy keys'),
+  },
+  computed: {
+    tabs() {
+      return Object.entries(this.$options.scopes).map(([scope, name]) => {
+        return {
+          name,
+          scope,
+          isActive: scope === this.currentScope,
+        };
+      });
+    },
+    confirmModalVisible() {
+      return Boolean(this.deployKeyToRemove);
+    },
+    hasSearch() {
+      return Boolean(this.searchObject?.search);
+    },
+    loading() {
+      return this.$apollo.queries.deployKeys.loading || this.refetching;
+    },
+  },
+  methods: {
+    onChangeTab(scope) {
+      this.searchObject = null;
+      this.searchValue = [];
+      this.refetching = true;
+
+      return this.$apollo
+        .mutate({
+          mutation: updateCurrentScopeMutation,
+          variables: { scope },
+        })
+        .then(() => {
+          return this.$apollo.queries.deployKeys.refetch();
+        })
+        .catch((error) => {
+          captureException(error, {
+            tags: {
+              deployKeyScope: scope,
+            },
+          });
+        })
+        .finally(() => {
+          this.refetching = false;
+        });
+    },
+    moveNext() {
+      return this.movePage('next');
+    },
+    movePrevious() {
+      return this.movePage('previous');
+    },
+    movePage(direction) {
+      return this.moveToPage(this.pageInfo[`${direction}Page`]);
+    },
+    moveToPage(page) {
+      return this.$apollo.mutate({ mutation: updateCurrentPageMutation, variables: { page } });
+    },
+    removeKey() {
+      this.$apollo
+        .mutate({
+          mutation: disableKeyMutation,
+          variables: { id: this.deployKeyToRemove.id },
+        })
+        .then(() => {
+          if (!this.deployKeys.length) {
+            return this.movePage('previous');
+          }
+          return null;
+        })
+        .then(() => this.$apollo.queries.deployKeys.refetch())
+        .catch(() => {
+          createAlert({
+            message: s__('DeployKeys|Error removing deploy key'),
+          });
+        });
+    },
+    cancel() {
+      this.$apollo.mutate({
+        mutation: confirmDisableMutation,
+        variables: { id: null },
+      });
+    },
+    updateSearch(search = []) {
+      const currentSearch = search[0];
+      const defaultTokens = [titleToken, keyToken];
+
+      if (!currentSearch?.value?.data) {
+        this.availableTokens = defaultTokens;
+        return;
+      }
+
+      const tokenTypeMap = {
+        title: [titleToken],
+        key: [keyToken],
+      };
+      this.availableTokens = tokenTypeMap[currentSearch.type] || [];
+    },
+    handleSearch(search = []) {
+      if (!search.length) {
+        this.searchObject = null;
+        return;
+      }
+
+      const currentSearch = search[0];
+      this.searchObject = this.buildSearchObject(currentSearch);
+    },
+    buildSearchObject(searchItem) {
+      if (typeof searchItem === 'string') {
+        return {
+          search: searchItem,
+          in: '',
+        };
+      }
+
       return {
-        isLoading: false,
-        store: new DeployKeysStore(),
+        search: searchItem.value?.data,
+        in: searchItem.type,
       };
     },
-    props: {
-      endpoint: {
-        type: String,
-        required: true,
-      },
-    },
-    computed: {
-      hasKeys() {
-        return Object.keys(this.keys).length;
-      },
-      keys() {
-        return this.store.keys;
-      },
-    },
-    components: {
-      keysPanel,
-      loadingIcon,
-    },
-    methods: {
-      fetchKeys() {
-        this.isLoading = true;
-
-        this.service.getKeys()
-          .then((data) => {
-            this.isLoading = false;
-            this.store.keys = data;
-          })
-          .catch(() => new Flash('Error getting deploy keys'));
-      },
-      enableKey(deployKey) {
-        this.service.enableKey(deployKey.id)
-          .then(() => this.fetchKeys())
-          .catch(() => new Flash('Error enabling deploy key'));
-      },
-      disableKey(deployKey) {
-        // eslint-disable-next-line no-alert
-        if (confirm('You are going to remove this deploy key. Are you sure?')) {
-          this.service.disableKey(deployKey.id)
-            .then(() => this.fetchKeys())
-            .catch(() => new Flash('Error removing deploy key'));
-        }
-      },
-    },
-    created() {
-      this.service = new DeployKeysService(this.endpoint);
-
-      eventHub.$on('enable.key', this.enableKey);
-      eventHub.$on('remove.key', this.disableKey);
-      eventHub.$on('disable.key', this.disableKey);
-    },
-    mounted() {
-      this.fetchKeys();
-    },
-    beforeDestroy() {
-      eventHub.$off('enable.key', this.enableKey);
-      eventHub.$off('remove.key', this.disableKey);
-      eventHub.$off('disable.key', this.disableKey);
-    },
-  };
+  },
+};
 </script>
 
 <template>
-  <div class="append-bottom-default deploy-keys">
-    <loading-icon
-      v-if="isLoading && !hasKeys"
-      size="2"
-      label="Loading deploy keys"
-    />
-    <div v-else-if="hasKeys">
-      <keys-panel
-        title="Enabled deploy keys for this project"
-        :keys="keys.enabled_keys"
-        :store="store"
-        :endpoint="endpoint"
-      />
-      <keys-panel
-        title="Deploy keys from projects you have access to"
-        :keys="keys.available_project_keys"
-        :store="store"
-        :endpoint="endpoint"
-      />
-      <keys-panel
-        v-if="keys.public_keys.length"
-        title="Public deploy keys available to any project"
-        :keys="keys.public_keys"
-        :store="store"
-        :endpoint="endpoint"
+  <div class="deploy-keys">
+    <confirm-modal :visible="confirmModalVisible" @remove="removeKey" @cancel="cancel" />
+    <div class="gl-items-center gl-py-0 gl-pl-0">
+      <div class="top-area scrolling-tabs-container inner-page-scroll-tabs gl-border-b-0">
+        <div class="fade-left">
+          <gl-icon name="chevron-lg-left" :size="12" />
+        </div>
+        <div class="fade-right">
+          <gl-icon name="chevron-lg-right" :size="12" />
+        </div>
+
+        <navigation-tabs
+          :tabs="tabs"
+          scope="deployKeys"
+          class="gl-rounded-lg"
+          @on-change-tab="onChangeTab"
+        />
+      </div>
+    </div>
+
+    <div class="gl-mt-4 gl-px-4">
+      <gl-filtered-search
+        v-model="searchValue"
+        :placeholder="s__('DeployKeys|Search deploy keys')"
+        :available-tokens="availableTokens"
+        :view-only="loading"
+        @clear="handleSearch"
+        @input="updateSearch"
+        @submit="handleSearch"
       />
     </div>
+    <gl-loading-icon v-if="loading" :label="$options.i18n.loading" size="md" class="gl-m-5" />
+
+    <template v-else>
+      <keys-panel
+        :project-id="projectId"
+        :keys="deployKeys"
+        :has-search="hasSearch"
+        data-testid="project-deploy-keys-container"
+      />
+      <gl-pagination
+        align="center"
+        :total-items="pageInfo.total"
+        :per-page="pageInfo.perPage"
+        :value="currentPage"
+        @next="moveNext()"
+        @previous="movePrevious()"
+        @input="moveToPage"
+      />
+    </template>
   </div>
 </template>

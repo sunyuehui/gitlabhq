@@ -1,43 +1,42 @@
 import Vue from 'vue';
-import commitPipelinesTable from './pipelines_table.vue';
+import VueApollo from 'vue-apollo';
+import CommitPipelinesList from '~/ci/commit/components/commit_pipelines_list.vue';
+import { initVueApp } from '~/lib/utils/vue3compat/init_vue_app';
+import createDefaultClient from '~/lib/graphql';
+import { initPipelineCountListener } from './utils';
+
+Vue.use(VueApollo);
+
+const apolloProvider = new VueApollo({
+  defaultClient: createDefaultClient(),
+});
 
 /**
  * Used in:
- *  - Commit details View > Pipelines Tab > Pipelines Table.
- *  - Merge Request details View > Pipelines Tab > Pipelines Table.
- *  - New Merge Request View > Pipelines Tab > Pipelines Table.
+ *  - Commit details View > Pipelines Tab > Pipelines Table (projects:commit:pipelines)
  */
-
-const CommitPipelinesTable = Vue.extend(commitPipelinesTable);
-
-// export for use in merge_request_tabs.js (TODO: remove this hack when we understand how to load
-// vue.js in merge_request_tabs.js)
-window.gl = window.gl || {};
-window.gl.CommitPipelinesTable = CommitPipelinesTable;
-
-document.addEventListener('DOMContentLoaded', () => {
+export const initCommitPipelines = () => {
   const pipelineTableViewEl = document.querySelector('#commit-pipeline-table-view');
 
   if (pipelineTableViewEl) {
-      // Update MR and Commits tabs
-    pipelineTableViewEl.addEventListener('update-pipelines-count', (event) => {
-      if (event.detail.pipelines &&
-        event.detail.pipelines.count &&
-        event.detail.pipelines.count.all) {
-        const badge = document.querySelector('.js-pipelines-mr-count');
+    // Update MR and Commits tabs
+    initPipelineCountListener(pipelineTableViewEl);
 
-        badge.textContent = event.detail.pipelines.count.all;
-      }
+    // The app mounts on a child element so that pipelineTableViewEl stays in the
+    // document: the listener above receives the `update-pipelines-count` event
+    // that the app bubbles up to it.
+    const el = document.createElement('div');
+    pipelineTableViewEl.appendChild(el);
+
+    initVueApp({
+      el,
+      name: 'CommitPipelinesListRoot',
+      component: CommitPipelinesList,
+      apolloProvider,
+      props: {
+        projectFullPath: pipelineTableViewEl.dataset.projectFullPath,
+        commitSha: pipelineTableViewEl.dataset.commitSha,
+      },
     });
-
-    if (pipelineTableViewEl.dataset.disableInitialization === undefined) {
-      const table = new CommitPipelinesTable({
-        propsData: {
-          endpoint: pipelineTableViewEl.dataset.endpoint,
-          helpPagePath: pipelineTableViewEl.dataset.helpPagePath,
-        },
-      }).$mount();
-      pipelineTableViewEl.appendChild(table.$el);
-    }
   }
-});
+};

@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Status
       class Canceled < Status::Core
         def text
-          s_('CiStatusText|canceled')
+          s_('CiStatusText|Canceled')
         end
 
         def label
@@ -11,11 +13,15 @@ module Gitlab
         end
 
         def icon
-          'icon_status_canceled'
+          'status_canceled'
         end
 
         def favicon
           'favicon_status_canceled'
+        end
+
+        def details_path
+          nil
         end
       end
     end

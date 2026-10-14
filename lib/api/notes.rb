@@ -1,149 +1,220 @@
+# frozen_string_literal: true
+
 module API
-  class Notes < Grape::API
+  class Notes < ::API::Base
     include PaginationParams
+    include APIGuard
 
-    before { authenticate! }
+    helpers ::API::Helpers::NotesHelpers
 
-    NOTEABLE_TYPES = [Issue, MergeRequest, Snippet].freeze
-
-    params do
-      requires :id, type: String, desc: 'The ID of a project'
+    before do
+      authenticate!
     end
-    resource :projects, requirements: { id: %r{[^/]+} } do
-      NOTEABLE_TYPES.each do |noteable_type|
-        noteables_str = noteable_type.to_s.underscore.pluralize
 
-        desc 'Get a list of project +noteable+ notes' do
+    allow_access_with_scope :ai_workflows, if: ->(request) do
+      request.get? || request.head? || request.post?
+    end
+
+    urgency :low, [
+      '/projects/:id/merge_requests/:noteable_id/notes',
+      '/projects/:id/merge_requests/:noteable_id/notes/:note_id',
+      '/projects/:id/issues/:noteable_id/notes',
+      '/projects/:id/issues/:noteable_id/notes/:note_id',
+      '/groups/:id/epics/:noteable_id/notes',
+      '/groups/:id/epics/:noteable_id/notes/:note_id'
+    ]
+
+    Helpers::NotesHelpers.noteable_types.each do |noteable_type|
+      parent_type = noteable_type.parent_type
+      noteables_str = noteable_type.noteables_str
+      feature_category = noteable_type.feature_category
+      noteable_class = noteable_type.noteable_class
+      tier = noteable_type.tier
+      boundary_type = parent_type.to_sym
+      noteable_name = noteable_type.human_name
+      noteable_article = noteable_name.match?(/\A[aeiou]/i) ? 'an' : 'a'
+
+      params do
+        requires :id, type: String, desc: "ID or URL-encoded path of the #{parent_type}."
+      end
+      resource parent_type.pluralize.to_sym, requirements: ::API::NAMESPACE_OR_PROJECT_REQUIREMENTS do
+        desc "List all #{noteable_name} notes" do
+          detail "Lists all notes for a specified #{noteable_name}."
           success Entities::Note
+          tags ['notes']
         end
         params do
-          requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
+          requires :noteable_id, type: Integer, desc: 'ID of the resource the note is attached to.'
+          optional :order_by, type: String, values: %w[created_at updated_at], default: 'created_at',
+            desc: 'Sort results by the specified field.'
+          optional :sort, type: String, values: %w[asc desc], default: 'desc',
+            desc: 'Sort results in ascending or descending order.'
+          optional :activity_filter, type: String, values: UserPreference::NOTES_FILTERS.stringify_keys.keys, default: 'all_notes',
+            desc: 'Filter notes by activity type.'
           use :pagination
         end
-        get ":id/#{noteables_str}/:noteable_id/notes" do
-          noteable = find_project_noteable(noteables_str, params[:noteable_id])
 
-          if can?(current_user, noteable_read_ability_name(noteable), noteable)
-            # We exclude notes that are cross-references and that cannot be viewed
-            # by the current user. By doing this exclusion at this level and not
-            # at the DB query level (which we cannot in that case), the current
-            # page can have less elements than :per_page even if
-            # there's more than one page.
-            notes =
-              # paginate() only works with a relation. This could lead to a
-              # mismatch between the pagination headers info and the actual notes
-              # array returned, but this is really a edge-case.
-              paginate(noteable.notes)
-              .reject { |n| n.cross_reference_not_visible_for?(current_user) }
-            present notes, with: Entities::Note
-          else
-            not_found!("Notes")
-          end
+        policy = Helpers::NotesHelpers.job_token_policy_for(noteable_type, 'GET')
+
+        authorization_settings = {
+          permissions: Helpers::NotesHelpers.permission_name_for(noteable_type, 'GET'),
+          boundary_type: boundary_type
+        }
+
+        if policy
+          route_setting :authentication, job_token_allowed: true
+          authorization_settings.merge!(
+            job_token_policies: policy,
+            allow_public_access_for_enabled_project_features: [:repository, :merge_requests]
+          )
         end
 
-        desc 'Get a single +noteable+ note' do
+        route_setting :tier, tier if tier
+        route_setting :authorization, authorization_settings
+
+        # rubocop: disable CodeReuse/ActiveRecord
+        get ":id/#{noteables_str}/:noteable_id/notes", feature_category: feature_category do
+          noteable = find_noteable(noteable_class, params[:noteable_id], parent_type)
+
+          # We exclude notes that are cross-references and that cannot be viewed
+          # by the current user. By doing this exclusion at this level and not
+          # at the DB query level (which we cannot in that case), the current
+          # page can have less elements than :per_page even if
+          # there's more than one page.
+          notes_filter = UserPreference::NOTES_FILTERS[params[:activity_filter].to_sym]
+          raw_notes = noteable.notes.with_metadata.with_notes_filter(notes_filter).reorder(order_options_with_tie_breaker)
+
+          # paginate() only works with a relation. This could lead to a
+          # mismatch between the pagination headers info and the actual notes
+          # array returned, but this is really a edge-case.
+          notes = paginate(raw_notes)
+          notes = prepare_and_filter_notes(notes)
+          present_note_collection(notes, noteable, noteable_class)
+        end
+        # rubocop: enable CodeReuse/ActiveRecord
+
+        desc "Retrieve #{noteable_article} #{noteable_name} note" do
+          detail "Retrieves a specified note for #{noteable_article} #{noteable_name}."
           success Entities::Note
+          tags %w[notes]
         end
         params do
-          requires :note_id, type: Integer, desc: 'The ID of a note'
-          requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
+          requires :note_id, type: Integer, desc: 'ID of the note.'
+          requires :noteable_id, type: Integer, desc: 'ID of the resource the note is attached to.'
         end
-        get ":id/#{noteables_str}/:noteable_id/notes/:note_id" do
-          noteable = find_project_noteable(noteables_str, params[:noteable_id])
-          note = noteable.notes.find(params[:note_id])
-          can_read_note = can?(current_user, noteable_read_ability_name(noteable), noteable) && !note.cross_reference_not_visible_for?(current_user)
+        policy = Helpers::NotesHelpers.job_token_policy_for(noteable_type, 'GET')
 
-          if can_read_note
-            present note, with: Entities::Note
-          else
-            not_found!("Note")
-          end
+        authorization_settings = {
+          permissions: Helpers::NotesHelpers.permission_name_for(noteable_type, 'GET'),
+          boundary_type: boundary_type
+        }
+
+        if policy
+          route_setting :authentication, job_token_allowed: true
+          authorization_settings.merge!(
+            job_token_policies: policy,
+            allow_public_access_for_enabled_project_features: [:repository, :merge_requests]
+          )
         end
 
-        desc 'Create a new +noteable+ note' do
+        route_setting :tier, tier if tier
+        route_setting :authorization, authorization_settings
+
+        get ":id/#{noteables_str}/:noteable_id/notes/:note_id", feature_category: feature_category do
+          noteable = find_noteable(noteable_class, params[:noteable_id], parent_type)
+          get_note(noteable, params[:note_id], noteable_class)
+        end
+
+        desc "Create #{noteable_article} #{noteable_name} note" do
+          detail "Creates a note for #{noteable_article} #{noteable_name}."
           success Entities::Note
+          tags %w[notes]
         end
         params do
-          requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
-          requires :body, type: String, desc: 'The content of a note'
-          optional :created_at, type: String, desc: 'The creation date of the note'
+          requires :noteable_id, type: Integer, desc: 'ID of the resource the note is attached to.'
+          requires :body, type: String, desc: 'Content of the note. Limited to 1,000,000 characters.'
+          optional :confidential, type: Boolean, desc: 'If `true`, marks the note as internal. Deprecated. Use `internal` instead.'
+          optional :internal, type: Boolean, default: false, desc: 'Internal note flag.'
+          optional :created_at, type: String, desc: 'Date and time the note was created, in ISO 8601 format such as `2016-03-11T03:45:40Z`. Requires administrator or project/group owner rights.'
+          optional :merge_request_diff_head_sha, type: String, desc: "SHA of the head commit, which ensures the merge request wasn't updated after the API request was sent. Required for the [`/merge`](https://docs.gitlab.com/user/project/quick_actions/#merge) quick action."
         end
-        post ":id/#{noteables_str}/:noteable_id/notes" do
-          noteable = find_project_noteable(noteables_str, params[:noteable_id])
 
+        route_setting :tier, tier if tier
+        route_setting :authorization,
+          permissions: Helpers::NotesHelpers.permission_name_for(noteable_type, 'POST'),
+          boundary_type: boundary_type
+
+        post ":id/#{noteables_str}/:noteable_id/notes", feature_category: feature_category do
+          allowlist =
+            Gitlab::CurrentSettings.current_application_settings.notes_create_limit_allowlist
+          check_rate_limit! :notes_create, scope: { user: current_user }, users_allowlist: allowlist
+          noteable = find_noteable(noteable_class, params[:noteable_id], parent_type)
+          validator = ::Gitlab::Auth::ScopeValidator.new(current_user, Gitlab::Auth::RequestAuthenticator.new(request))
           opts = {
             note: params[:body],
-            noteable_type: noteables_str.classify,
-            noteable_id: noteable.id
+            noteable_type: noteable.class.name,
+            noteable_id: noteable.id,
+            internal: params[:internal] || params[:confidential],
+            created_at: params[:created_at],
+            merge_request_diff_head_sha: params[:merge_request_diff_head_sha],
+            scope_validator: validator
           }
 
-          if can?(current_user, noteable_read_ability_name(noteable), noteable)
-            if params[:created_at] && (current_user.admin? || user_project.owner == current_user)
-              opts[:created_at] = params[:created_at]
-            end
+          begin
+            note = create_note(noteable, opts)
 
-            note = ::Notes::CreateService.new(user_project, current_user, opts).execute
-
-            if note.valid?
-              present note, with: Entities.const_get(note.class.name)
-            else
-              not_found!("Note #{note.errors.messages}")
+            process_note_creation_result(note) do
+              present_single_note(note, noteable, noteable_class)
             end
-          else
-            not_found!("Note")
+          rescue QuickActions::InterpretService::QuickActionsNotAllowedError => error
+            forbidden!(error.message)
           end
         end
 
-        desc 'Update an existing +noteable+ note' do
+        desc "Update #{noteable_article} #{noteable_name} note" do
+          detail "Updates an existing note for #{noteable_article} #{noteable_name}."
           success Entities::Note
+          tags %w[notes]
         end
         params do
-          requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
-          requires :note_id, type: Integer, desc: 'The ID of a note'
-          requires :body, type: String, desc: 'The content of a note'
-        end
-        put ":id/#{noteables_str}/:noteable_id/notes/:note_id" do
-          note = user_project.notes.find(params[:note_id])
-
-          authorize! :admin_note, note
-
-          opts = {
-            note: params[:body]
-          }
-
-          note = ::Notes::UpdateService.new(user_project, current_user, opts).execute(note)
-
-          if note.valid?
-            present note, with: Entities::Note
-          else
-            render_api_error!("Failed to save note #{note.errors.messages}", 400)
-          end
+          requires :noteable_id, type: Integer, desc: 'ID of the resource the note is attached to.'
+          requires :note_id, type: Integer, desc: 'ID of the note.'
+          optional :body, type: String, allow_blank: false, desc: 'Content of the note. Limited to 1,000,000 characters.'
+          optional :confidential, type: Boolean,
+            desc: 'If `true`, the note must already be confidential. If `false`, it must not be. Confidentiality cannot be changed after a note is created. Deprecated.'
         end
 
-        desc 'Delete a +noteable+ note' do
+        route_setting :tier, tier if tier
+        route_setting :authorization,
+          permissions: Helpers::NotesHelpers.permission_name_for(noteable_type, 'PUT'),
+          boundary_type: boundary_type
+
+        put ":id/#{noteables_str}/:noteable_id/notes/:note_id", feature_category: feature_category do
+          noteable = find_noteable(noteable_class, params[:noteable_id], parent_type)
+
+          update_note(noteable, params[:note_id], noteable_class)
+        end
+
+        desc "Delete #{noteable_article} #{noteable_name} note" do
+          detail "Deletes a specified note from #{noteable_article} #{noteable_name}."
           success Entities::Note
+          tags %w[notes]
         end
         params do
-          requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
-          requires :note_id, type: Integer, desc: 'The ID of a note'
+          requires :noteable_id, type: Integer, desc: 'ID of the resource the note is attached to.'
+          requires :note_id, type: Integer, desc: 'ID of the note.'
         end
+
+        route_setting :tier, tier if tier
+        route_setting :authorization,
+          permissions: Helpers::NotesHelpers.permission_name_for(noteable_type, 'DELETE'),
+          boundary_type: boundary_type
+
         delete ":id/#{noteables_str}/:noteable_id/notes/:note_id" do
-          note = user_project.notes.find(params[:note_id])
-          authorize! :admin_note, note
+          noteable = find_noteable(noteable_class, params[:noteable_id], parent_type)
 
-          status 204
-          ::Notes::DestroyService.new(user_project, current_user).execute(note)
+          delete_note(noteable, params[:note_id])
         end
-      end
-    end
-
-    helpers do
-      def find_project_noteable(noteables_str, noteable_id)
-        public_send("find_project_#{noteables_str.singularize}", noteable_id) # rubocop:disable GitlabSecurity/PublicSend
-      end
-
-      def noteable_read_ability_name(noteable)
-        "read_#{noteable.class.to_s.underscore}".to_sym
       end
     end
   end

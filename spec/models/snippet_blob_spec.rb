@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe SnippetBlob do
-  let(:snippet) { create(:snippet) }
+RSpec.describe SnippetBlob, feature_category: :source_code_management do
+  let(:snippet) { build_stubbed(:project_snippet) }
 
   subject { described_class.new(snippet) }
 
@@ -26,22 +28,6 @@ describe SnippetBlob do
   describe '#data' do
     it 'returns the snippet content' do
       expect(subject.data).to eq(snippet.content)
-    end
-  end
-
-  describe '#rendered_markup' do
-    context 'when the content is GFM' do
-      let(:snippet) { create(:snippet, file_name: 'file.md') }
-
-      it 'returns the rendered GFM' do
-        expect(subject.rendered_markup).to eq(snippet.content_html)
-      end
-    end
-
-    context 'when the content is not GFM' do
-      it 'returns nil' do
-        expect(subject.rendered_markup).to be_nil
-      end
     end
   end
 end

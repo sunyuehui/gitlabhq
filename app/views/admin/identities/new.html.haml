@@ -1,4 +1,7 @@
-- page_title "New Identity"
-%h3.page-title New identity
-%hr
+- add_to_breadcrumbs _('Users'), admin_users_path
+- add_to_breadcrumbs @user.name, admin_user_identities_path(@user)
+- breadcrumb_title _('New identity')
+- page_title _('New identity')
+
+= render ::Layouts::PageHeadingComponent.new(_('New identity'))
 = render 'form'

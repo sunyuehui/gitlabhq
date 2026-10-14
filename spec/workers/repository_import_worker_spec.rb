@@ -1,46 +1,127 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe RepositoryImportWorker do
-  let(:project) { create(:project, :import_scheduled) }
+RSpec.describe RepositoryImportWorker, feature_category: :importers do
+  let(:project) { build_stubbed(:project, :import_scheduled, import_state: import_state, import_url: 'url') }
+  let(:import_state) { create(:import_state, status: :scheduled) }
+  let(:jid) { '12345678' }
 
-  subject { described_class.new }
+  before do
+    allow(subject).to receive(:jid).and_return(jid)
+    allow(Project).to receive(:find_by_id).with(project.id).and_return(project)
+    allow(project).to receive(:after_import)
+    allow(import_state).to receive(:start).and_return(true)
+  end
 
   describe '#perform' do
-    context 'when the import was successful' do
-      it 'imports a project' do
-        expect_any_instance_of(Projects::ImportService).to receive(:execute)
-          .and_return({ status: :ok })
+    context 'when project not found (deleted)' do
+      before do
+        allow(Project).to receive(:find_by_id).with(project.id).and_return(nil)
+      end
 
-        expect_any_instance_of(Repository).to receive(:expire_emptiness_caches)
-        expect_any_instance_of(Project).to receive(:import_finish)
+      it 'does not raise any exception' do
+        expect(Projects::ImportService).not_to receive(:new)
+
+        expect { subject.perform(project.id) }.not_to raise_error
+      end
+    end
+
+    context 'when import_state is scheduled' do
+      it 'imports the project successfully' do
+        expect_next_instance_of(Projects::ImportService) do |instance|
+          expect(instance).to receive(:execute).and_return({ status: :ok })
+        end
 
         subject.perform(project.id)
+
+        expect(project).to have_received(:after_import)
+        expect(import_state).to have_received(:start)
+      end
+
+      context 'when the import cannot be started' do
+        before do
+          allow(import_state).to receive(:start).and_return(false)
+        end
+
+        it 'logs the organization id and does not import the project' do
+          expect(::Import::Framework::Logger).to receive(:info).with(
+            message: 'Project was in inconsistent state while importing',
+            Labkit::Fields::GL_ORGANIZATION_ID => project.organization_id,
+            project_full_path: project.full_path,
+            project_import_status: project.import_status
+          )
+          expect(Projects::ImportService).not_to receive(:new)
+
+          subject.perform(project.id)
+        end
+      end
+    end
+
+    context 'when worker was reset without cleanup (import_state is started)' do
+      let(:import_state) { create(:import_state, :started, jid: jid) }
+
+      it 'imports the project successfully' do
+        expect_next_instance_of(Projects::ImportService) do |instance|
+          expect(instance).to receive(:execute).and_return({ status: :ok })
+        end
+
+        subject.perform(project.id)
+
+        expect(project).to have_received(:after_import)
+        expect(import_state).not_to have_received(:start)
+      end
+    end
+
+    context 'when using an asynchronous importer' do
+      it 'does not mark the import process as finished' do
+        expect_next_instance_of(Projects::ImportService) do |instance|
+          expect(instance).to receive(:execute).and_return({ status: :ok })
+          expect(instance).to receive(:async?).and_return(true)
+        end
+
+        subject.perform(project.id)
+
+        expect(project).not_to have_received(:after_import)
       end
     end
 
     context 'when the import has failed' do
-      it 'hide the credentials that were used in the import URL' do
-        error = %q{remote: Not Found fatal: repository 'https://user:pass@test.com/root/repoC.git/' not found }
+      let(:error) { "https://user:pass@test.com/root/repoC.git/ not found" }
 
-        project.update_attributes(import_jid: '123')
-        expect_any_instance_of(Projects::ImportService).to receive(:execute).and_return({ status: :error, message: error })
+      before do
+        allow(import_state).to receive(:mark_as_failed)
+      end
 
-        expect do
-          subject.perform(project.id)
-        end.to raise_error(RepositoryImportWorker::ImportError, error)
-        expect(project.reload.import_jid).not_to be_nil
+      it 'marks import_state as failed' do
+        expect_next_instance_of(Projects::ImportService) do |instance|
+          expect(project).to receive(:reset_counters_and_iids)
+          expect(instance).to receive(:execute).and_return({ status: :error, message: error })
+        end
+
+        subject.perform(project.id)
+
+        expect(import_state).to have_received(:mark_as_failed).with(error)
+        expect(project).not_to have_received(:after_import)
       end
     end
+  end
 
-    context 'with unexpected error' do
-      it 'marks import as failed' do
-        allow_any_instance_of(Projects::ImportService).to receive(:execute).and_raise(RuntimeError)
+  describe '.sidekiq_interruptions_exhausted' do
+    it 'sets import status to failed and removes import_file' do
+      user = build_stubbed(:user)
+      upload = build_stubbed(:import_export_upload, project: project, user: user)
+      job = { 'args' => [project.id] }
 
-        expect do
-          subject.perform(project.id)
-        end.to raise_error(RepositoryImportWorker::ImportError)
-        expect(project.reload.import_status).to eq('failed')
-      end
+      allow(import_state).to receive(:mark_as_failed)
+      allow(project).to receive_message_chain(:import_export_uploads, :find_by_user_id).and_return(upload)
+      expect(::Gitlab::Import::RemoveImportFileWorker).to receive(:perform_async).with(upload.id)
+
+      described_class.interruptions_exhausted_block.call(job)
+
+      expect(import_state)
+        .to have_received(:mark_as_failed)
+        .with('Import process reached the maximum number of interruptions')
     end
   end
 end

@@ -1,7 +1,11 @@
+# frozen_string_literal: true
+
 module Gitlab
   # Extract possible GFM references from an arbitrary String for further processing.
   class ReferenceExtractor < Banzai::ReferenceExtractor
-    REFERABLES = %i(user issue label milestone merge_request snippet commit commit_range directly_addressed_user).freeze
+    REFERABLES = %i[user issue work_item label milestone mentioned_user mentioned_group mentioned_project
+      merge_request snippet commit commit_range directly_addressed_user epic vulnerability
+      alert].freeze
     attr_accessor :project, :current_user, :author
 
     def initialize(project, current_user = nil)
@@ -16,8 +20,17 @@ module Gitlab
       super(text, context.merge(project: project))
     end
 
-    def references(type)
-      super(type, project, current_user)
+    def references(type, ids_only: false)
+      refs = super(type, project, current_user, ids_only: ids_only)
+      update_visible_nodes_set(refs[:nodes], refs[:visible_nodes])
+
+      refs[:visible]
+    end
+
+    # this method is stateful, it tracks if all nodes from `references`
+    # calls are visible or not
+    def all_visible?
+      not_visible_nodes.empty?
     end
 
     def reset_memoized_values
@@ -26,13 +39,19 @@ module Gitlab
     end
 
     REFERABLES.each do |type|
-      define_method("#{type}s") do
+      define_method(type.to_s.pluralize) do
         @references[type] ||= references(type)
+      end
+
+      next unless %w[mentioned_user mentioned_group mentioned_project].include?(type.to_s)
+
+      define_method("#{type}_ids") do
+        @references[type] ||= references(type, ids_only: true)
       end
     end
 
     def issues
-      if project && project.jira_tracker?
+      if project&.external_references_supported?
         if project.issues_enabled?
           @references[:all_issues] ||= references(:external_issue) + references(:issue)
         else
@@ -44,19 +63,46 @@ module Gitlab
       end
     end
 
+    def issues_and_work_items
+      (issues + work_items).uniq(&:id)
+    end
+
     def all
-      REFERABLES.each { |referable| send(referable.to_s.pluralize) } # rubocop:disable GitlabSecurity/PublicSend
+      self.class.referrables.each { |referable| send(referable.to_s.pluralize) } # rubocop:disable GitlabSecurity/PublicSend
       @references.values.flatten
     end
 
-    def self.references_pattern
-      return @pattern if @pattern
+    class << self
+      def references_pattern
+        return @pattern if @pattern
 
-      patterns = REFERABLES.map do |ref|
-        ref.to_s.classify.constantize.try(:reference_pattern)
+        patterns = referrables.map do |type|
+          Banzai::ReferenceParser[type].reference_class.try(:reference_pattern)
+        end.uniq
+
+        @pattern = Regexp.union(patterns.compact)
       end
 
-      @pattern = Regexp.union(patterns.compact)
+      def referrables
+        @referrables ||= REFERABLES
+      end
+    end
+
+    def has_work_item_references?
+      references(:work_item).present?
+    end
+
+    private
+
+    def update_visible_nodes_set(all, visible)
+      not_visible_nodes.merge(all)
+      not_visible_nodes.subtract(visible)
+    end
+
+    def not_visible_nodes
+      @not_visible_nodes ||= Set.new
     end
   end
 end
+
+Gitlab::ReferenceExtractor.prepend_mod

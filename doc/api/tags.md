@@ -1,18 +1,79 @@
-# Tags API
+---
+stage: Create
+group: Source Code
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+description: Documentation for the REST API for Git tags in GitLab.
+title: Tags API
+---
 
-## List project repository tags
+{{< details >}}
 
-Get a list of repository tags from a project, sorted by name in reverse
-alphabetical order. This endpoint can be accessed without authentication if the
-repository is publicly accessible.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-```
+{{< /details >}}
+
+Use this API to manage [Git tags](../user/project/repository/tags/_index.md). This API also returns X.509
+signature information from signed tags.
+
+## List all project repository tags
+
+Lists all repository tags from a project, sorted by update date and time in
+descending order.
+
+> [!note]
+> If the repository is publicly accessible, authentication
+> (`--header "PRIVATE-TOKEN: <your_access_token>"`) is not required.
+
+```plaintext
 GET /projects/:id/repository/tags
 ```
 
-Parameters:
+Supported attributes:
 
-- `id` (required) - The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user
+| Attribute    | Type              | Required | Description |
+|--------------|-------------------|----------|-------------|
+| `id`         | integer or string | Yes      | ID or [URL-encoded path](rest/_index.md#namespaced-paths) of the project. |
+| `order_by`   | string            | No       | Return tags ordered by `name`, `updated`, or `version`. `version` sorts by semantic version number. Default is `updated`. |
+| `page`       | integer           | No       | Current page number for pagination. Default is `1`. |
+| `page_token` | string            | No       | Name of tag to start the pagination from. Used for keyset pagination. |
+| `search`     | string            | No       | Return a list of tags matching the search criteria. You can use `^term` and `term$` to find tags that begin and end with `term`. No other regular expressions are supported. |
+| `sort`       | string            | No       | Return tags sorted in `asc` or `desc` order. Default is `desc`. |
+
+If successful, returns [`200 OK`](rest/troubleshooting.md#status-codes) and the following response attributes:
+
+| Attribute                | Type    | Description |
+|--------------------------|---------|-------------|
+| `commit`                 | object  | Commit information associated with the tag. |
+| `commit.author_email`    | string  | Email address of the commit author. |
+| `commit.author_name`     | string  | Name of the commit author. |
+| `commit.authored_date`   | string  | Date when the commit was authored in ISO 8601 format. |
+| `commit.committed_date`  | string  | Date when the commit was committed in ISO 8601 format. |
+| `commit.committer_email` | string  | Email address of the committer. |
+| `commit.committer_name`  | string  | Name of the committer. |
+| `commit.created_at`      | string  | Date when the commit was created in ISO 8601 format. |
+| `commit.id`              | string  | Full SHA of the commit. |
+| `commit.message`         | string  | Commit message. |
+| `commit.parent_ids`      | array   | Array of parent commit SHAs. |
+| `commit.short_id`        | string  | Short SHA of the commit. |
+| `commit.title`           | string  | Title of the commit. |
+| `created_at`             | string  | Date when the tag was created in ISO 8601 format. |
+| `message`                | string  | Tag message. |
+| `name`                   | string  | Name of the tag. |
+| `protected`              | boolean | If `true`, the tag is protected. |
+| `release`                | object  | Release information associated with the tag. |
+| `release.description`    | string  | Description of the release. |
+| `release.tag_name`       | string  | Tag name of the release. |
+| `target`                 | string  | SHA that the tag points to. |
+
+Example request:
+
+```shell
+curl --header "PRIVATE-TOKEN: <your_access_token>" \
+    --url "https://gitlab.example.com/api/v4/projects/5/repository/tags"
+```
+
+Example response:
 
 ```json
 [
@@ -38,37 +99,68 @@ Parameters:
       "description": "Amazing release. Wow"
     },
     "name": "v1.0.0",
-    "message": null
+    "target": "2695effb5807a22ff3d138d593fd856244e155e7",
+    "message": null,
+    "protected": true,
+    "created_at": "2017-07-26T11:08:53.000+02:00"
   }
 ]
 ```
 
-## Get a single repository tag
+## Retrieve a single repository tag
 
-Get a specific repository tag determined by its name. This endpoint can be
+Retrieves a repository tag with the specified name. This endpoint can be
 accessed without authentication if the repository is publicly accessible.
 
-```
+```plaintext
 GET /projects/:id/repository/tags/:tag_name
 ```
 
-Parameters:
+Supported attributes:
 
-| Attribute | Type | Required | Description |
-| --------- | ---- | -------- | ----------- |
-| `id` | integer/string | yes | The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user |
-| `tag_name` | string | yes | The name of the tag |
+| Attribute  | Type              | Required | Description |
+|------------|-------------------|----------|-------------|
+| `id`       | integer or string | Yes      | ID or [URL-encoded path of the project](rest/_index.md#namespaced-paths). |
+| `tag_name` | string            | Yes      | Name of a tag. |
 
-```bash
-curl --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/projects/5/repository/tags/v1.0.0
+If successful, returns [`200 OK`](rest/troubleshooting.md#status-codes) and the following response attributes:
+
+| Attribute                | Type    | Description |
+|--------------------------|---------|-------------|
+| `commit`                 | object  | Commit information associated with the tag. |
+| `commit.author_email`    | string  | Email address of the commit author. |
+| `commit.author_name`     | string  | Name of the commit author. |
+| `commit.authored_date`   | string  | Date when the commit was authored in ISO 8601 format. |
+| `commit.committed_date`  | string  | Date when the commit was committed in ISO 8601 format. |
+| `commit.committer_email` | string  | Email address of the committer. |
+| `commit.committer_name`  | string  | Name of the committer. |
+| `commit.created_at`      | string  | Date when the commit was created in ISO 8601 format. |
+| `commit.id`              | string  | Full SHA of the commit. |
+| `commit.message`         | string  | Commit message. |
+| `commit.parent_ids`      | array   | Array of parent commit SHAs. |
+| `commit.short_id`        | string  | Short SHA of the commit. |
+| `commit.title`           | string  | Title of the commit. |
+| `created_at`             | string  | Date when the tag was created in ISO 8601 format. |
+| `message`                | string  | Tag message. |
+| `name`                   | string  | Name of the tag. |
+| `protected`              | boolean | If `true`, the tag is protected. |
+| `release`                | object  | Release information associated with the tag. |
+| `target`                 | string  | SHA that the tag points to. |
+
+Example request:
+
+```shell
+curl --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/projects/5/repository/tags/v1.0.0"
 ```
 
-Example Response:
+Example response:
 
 ```json
 {
   "name": "v5.0.0",
   "message": null,
+  "target": "60a8ff033665e1207714d6670fcd7b65304ec02f",
   "commit": {
     "id": "60a8ff033665e1207714d6670fcd7b65304ec02f",
     "short_id": "60a8ff03",
@@ -85,25 +177,77 @@ Example Response:
     "committer_email": "contact@arthurverschaeve.be",
     "committed_date": "2015-02-01T21:56:31.000+01:00"
   },
-  "release": null
+  "release": null,
+  "protected": false,
+  "created_at": "2017-07-26T11:08:53.000+02:00"
 }
 ```
 
 ## Create a new tag
 
-Creates a new tag in the repository that points to the supplied ref.
+{{< history >}}
 
-```
+- Rate limit [introduced](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/252393) in GitLab 19.4.
+
+{{< /history >}}
+
+Creates a new tag in the repository that points to the supplied reference.
+
+This endpoint is rate limited for each project. The default is 100 requests
+every 30 minutes, configurable with the `tags_create_limit`
+[application setting](settings.md). Set the limit to `0` to disable it.
+The limit is shared between this endpoint, the GraphQL `tagCreate` mutation, tag creation in
+the UI, and the [`/tag` quick action](../user/project/quick_actions.md#tag). The limit applies
+to the project, not to you. You can receive
+[`429 Too Many Requests`](rest/troubleshooting.md#status-codes) after other users of the project
+reach the limit.```
+
+```plaintext
 POST /projects/:id/repository/tags
 ```
 
-Parameters:
+Supported attributes:
 
-- `id` (required) - The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user
-- `tag_name` (required) - The name of a tag
-- `ref` (required) - Create tag using commit SHA, another tag name, or branch name.
-- `message` (optional) - Creates annotated tag.
-- `release_description` (optional) - Add release notes to the git tag and store it in the GitLab database.
+| Attribute  | Type              | Required | Description |
+|------------|-------------------|----------|-------------|
+| `id`       | integer or string | Yes      | ID or [URL-encoded path of the project](rest/_index.md#namespaced-paths). |
+| `ref`      | string            | Yes      | Create a tag from a commit SHA, another tag name, or branch name. |
+| `tag_name` | string            | Yes      | Name of a tag. |
+| `message`  | string            | No       | Create an annotated tag. |
+
+If successful, returns [`201 Created`](rest/troubleshooting.md#status-codes) and the following response attributes:
+
+| Attribute                | Type    | Description |
+|--------------------------|---------|-------------|
+| `commit`                 | object  | Commit information associated with the tag. |
+| `commit.author_email`    | string  | Email address of the commit author. |
+| `commit.author_name`     | string  | Name of the commit author. |
+| `commit.authored_date`   | string  | Date when the commit was authored in ISO 8601 format. |
+| `commit.committed_date`  | string  | Date when the commit was committed in ISO 8601 format. |
+| `commit.committer_email` | string  | Email address of the committer. |
+| `commit.committer_name`  | string  | Name of the committer. |
+| `commit.created_at`      | string  | Date when the commit was created in ISO 8601 format. |
+| `commit.id`              | string  | Full SHA of the commit. |
+| `commit.message`         | string  | Commit message. |
+| `commit.parent_ids`      | array   | Array of parent commit SHAs. |
+| `commit.short_id`        | string  | Short SHA of the commit. |
+| `commit.title`           | string  | Title of the commit. |
+| `created_at`             | string  | Date when the tag was created in ISO 8601 format. |
+| `message`                | string  | Tag message. |
+| `name`                   | string  | Name of the tag. |
+| `protected`              | boolean | If `true`, the tag is protected. |
+| `release`                | object  | Release information associated with the tag. |
+| `target`                 | string  | SHA that the tag points to. |
+
+Example request:
+
+```shell
+curl --request POST \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/projects/5/repository/tags?tag_name=test&ref=main"
+```
+
+Example response:
 
 ```json
 {
@@ -123,73 +267,112 @@ Parameters:
     "committer_email": "jack@example.com",
     "committed_date": "2012-05-28T04:42:42-07:00"
   },
-  "release": {
-    "tag_name": "1.0.0",
-    "description": "Amazing release. Wow"
-  },
+  "release": null,
   "name": "v1.0.0",
-  "message": null
+  "target": "2695effb5807a22ff3d138d593fd856244e155e7",
+  "message": null,
+  "protected": false,
+  "created_at": null
 }
 ```
-The message will be `nil` when creating a lightweight tag otherwise
-it will contain the annotation.
 
-In case of an error,
-status code `405` with an explaining error message is returned.
+The type of tag created determines the contents of `created_at`, `target`, and `message`:
+
+- For annotated tags:
+  - `created_at` contains the timestamp of tag creation.
+  - `message` contains the annotation.
+  - `target` contains the tag object's ID.
+- For lightweight tags:
+  - `created_at` is null.
+  - `message` is null.
+  - `target` contains the commit ID.
+
+Errors return status code `405` with an explanatory error message.
 
 ## Delete a tag
 
-Deletes a tag of a repository with given name.
+Deletes a repository tag with the specified name.
 
-```
+```plaintext
 DELETE /projects/:id/repository/tags/:tag_name
 ```
 
-Parameters:
+Supported attributes:
 
-- `id` (required) - The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user
-- `tag_name` (required) - The name of a tag
+| Attribute  | Type              | Required | Description |
+|------------|-------------------|----------|-------------|
+| `id`       | integer or string | Yes      | ID or [URL-encoded path of the project](rest/_index.md#namespaced-paths). |
+| `tag_name` | string            | Yes      | Name of a tag. |
 
+## Retrieve X.509 signature of a tag
 
-## Create a new release
+Retrieves the [X.509 signature from a tag](../user/project/repository/signed_commits/x509.md),
+if it is signed. Unsigned tags return a `404 Not Found` response.
 
-Add release notes to the existing git tag. If there
-already exists a release for the given tag, status code `409` is returned.
-
+```plaintext
+GET /projects/:id/repository/tags/:tag_name/signature
 ```
-POST /projects/:id/repository/tags/:tag_name/release
+
+Supported attributes:
+
+| Attribute  | Type              | Required | Description |
+|------------|-------------------|----------|-------------|
+| `id`       | integer or string | Yes      | ID or [URL-encoded path of the project](rest/_index.md#namespaced-paths). |
+| `tag_name` | string            | Yes      | Name of a tag. |
+
+If successful, returns [`200 OK`](rest/troubleshooting.md#status-codes) and the following response attributes:
+
+| Attribute                                             | Type    | Description |
+|-------------------------------------------------------|---------|-------------|
+| `signature_type`                                      | string  | Type of signature (`X509`). |
+| `verification_status`                                 | string  | Verification status of the signature. |
+| `x509_certificate`                                    | object  | X.509 certificate information. |
+| `x509_certificate.certificate_status`                 | string  | Status of the certificate. |
+| `x509_certificate.email`                              | string  | Email address from the certificate. |
+| `x509_certificate.id`                                 | integer | ID of the certificate. |
+| `x509_certificate.serial_number`                      | integer | Serial number of the certificate. |
+| `x509_certificate.subject`                            | string  | Subject of the certificate. |
+| `x509_certificate.subject_key_identifier`             | string  | Subject key identifier of the certificate. |
+| `x509_certificate.x509_issuer`                        | object  | Issuer information of the certificate. |
+| `x509_certificate.x509_issuer.crl_url`                | string  | Certificate revocation list URL. |
+| `x509_certificate.x509_issuer.id`                     | integer | ID of the issuer. |
+| `x509_certificate.x509_issuer.subject`                | string  | Subject of the issuer. |
+| `x509_certificate.x509_issuer.subject_key_identifier` | string  | Subject key identifier of the issuer. |
+
+Example request:
+
+```shell
+curl --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/projects/1/repository/tags/v1.1.1/signature"
 ```
 
-Parameters:
-
-- `id` (required) - The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user
-- `tag_name` (required) - The name of a tag
-- `description` (required) - Release notes with markdown support
+Example response if tag is X.509 signed:
 
 ```json
 {
-  "tag_name": "1.0.0",
-  "description": "Amazing release. Wow"
+  "signature_type": "X509",
+  "verification_status": "unverified",
+  "x509_certificate": {
+    "id": 1,
+    "subject": "CN=gitlab@example.org,OU=Example,O=World",
+    "subject_key_identifier": "BC:BC:BC:BC:BC:BC:BC:BC:BC:BC:BC:BC:BC:BC:BC:BC:BC:BC:BC:BC",
+    "email": "gitlab@example.org",
+    "serial_number": 278969561018901340486471282831158785578,
+    "certificate_status": "good",
+    "x509_issuer": {
+      "id": 1,
+      "subject": "CN=PKI,OU=Example,O=World",
+      "subject_key_identifier": "AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB",
+      "crl_url": "http://example.com/pki.crl"
+    }
+  }
 }
 ```
 
-## Update a release
-
-Updates the release notes of a given release.
-
-```
-PUT /projects/:id/repository/tags/:tag_name/release
-```
-
-Parameters:
-
-- `id` (required) - The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user
-- `tag_name` (required) - The name of a tag
-- `description` (required) - Release notes with markdown support
+Example response if tag is unsigned:
 
 ```json
 {
-  "tag_name": "1.0.0",
-  "description": "Amazing release. Wow"
+  "message": "404 GPG Signature Not Found"
 }
 ```

@@ -1,19 +1,21 @@
+# frozen_string_literal: true
+
 require_relative '../../migration_helpers'
 
 module RuboCop
   module Cop
     module Migration
       # Cop that checks if indexes are removed in a concurrent manner.
-      class RemoveIndex < RuboCop::Cop::Cop
+      class RemoveIndex < RuboCop::Cop::Base
         include MigrationHelpers
 
-        MSG = '`remove_index` requires downtime, use `remove_concurrent_index` instead'.freeze
+        MSG = '`remove_index` requires downtime, use `remove_concurrent_index` instead'
 
         def on_def(node)
           return unless in_migration?(node)
 
           node.each_descendant(:send) do |send_node|
-            add_offense(send_node, :selector) if method_name(send_node) == :remove_index
+            add_offense(send_node.loc.selector) if method_name(send_node) == :remove_index
           end
         end
 

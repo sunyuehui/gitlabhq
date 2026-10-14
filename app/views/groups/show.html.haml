@@ -1,20 +1,18 @@
-- @no_container = true
-- breadcrumb_title "Group"
+- page_itemtype 'https://schema.org/Organization'
+- @skip_current_level_breadcrumb = true
+- add_page_specific_style 'page_bundles/group'
+
+= render_if_exists 'shared/qrtly_reconciliation_alert', group: @group
 
 = content_for :meta_tags do
   = auto_discovery_link_tag(:atom, group_url(@group, rss_url_options), title: "#{@group.name} activity")
 
-= render 'groups/head'
+= render partial: 'flash_messages'
+
 = render 'groups/home_panel'
 
-.groups-header{ class: container_class }
-  .top-area
-    = render 'groups/show_nav'
-    .nav-controls
-      = render 'shared/projects/search_form'
-      = render 'shared/projects/dropdown'
-      - if can? current_user, :create_projects, @group
-        = link_to new_project_path(namespace_id: @group.id), class: 'btn btn-new pull-right' do
-          New Project
+= render_if_exists 'groups/group_activity_analytics', group: @group
 
-  = render "projects", projects: @projects
+#js-groups-show-app{ data: { app_data: groups_show_app_data(@group) } }
+
+= render partial: 'groups/group_readme', locals: { group: @group }

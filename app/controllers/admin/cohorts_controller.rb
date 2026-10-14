@@ -1,11 +1,26 @@
-class Admin::CohortsController < Admin::ApplicationController
-  def index
-    if current_application_settings.usage_ping_enabled
-      cohorts_results = Rails.cache.fetch('cohorts', expires_in: 1.day) do
-        CohortsService.new.execute
-      end
+# frozen_string_literal: true
 
-      @cohorts = CohortsSerializer.new.represent(cohorts_results)
-    end
+class Admin::CohortsController < Admin::ApplicationController
+  include ProductAnalyticsTracking
+  include Admin::CohortsActions
+
+  track_event :index,
+    name: 'i_analytics_cohorts',
+    action: 'perform_analytics_usage_action',
+    label: 'redis_hll_counters.analytics.analytics_total_unique_counts_monthly',
+    destinations: %i[redis_hll snowplow]
+
+  def index
+    @cohorts = load_cohorts
+  end
+
+  private
+
+  def tracking_namespace_source
+    nil
+  end
+
+  def tracking_project_source
+    nil
   end
 end

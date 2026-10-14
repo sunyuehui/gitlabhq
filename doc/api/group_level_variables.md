@@ -1,125 +1,253 @@
-# Group-level Variables  API
+---
+stage: Verify
+group: Pipeline Authoring
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Group-level Variables API
+---
 
-## List group variables
+{{< details >}}
 
-Get list of a group's variables.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-```
+{{< /details >}}
+
+Use this API to interact with [CI/CD variables](../ci/variables/_index.md#for-a-group) for a group.
+
+Prerequisites:
+
+- You must have the Owner role for the group.
+
+## List all group variables
+
+Lists all variables for a specified group. Use the `page` and `per_page` [pagination](rest/_index.md#offset-based-pagination)
+parameters to control the pagination of results.
+
+```plaintext
 GET /groups/:id/variables
 ```
 
-| Attribute | Type    | required | Description         |
-|-----------|---------|----------|---------------------|
-| `id`      | integer/string | yes      | The ID of a group or [URL-encoded path of the group](README.md#namespaced-path-encoding) owned by the authenticated user |
+| Attribute | Type           | Required | Description |
+|-----------|----------------|----------|-------------|
+| `id`      | integer or string | Yes      | The ID of a group or [URL-encoded path](rest/_index.md#namespaced-paths) of the group |
 
-```
-curl --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" "https://gitlab.example.com/api/v4/groups/1/variables"
+```shell
+curl --request GET \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/groups/1/variables"
 ```
 
 ```json
 [
     {
         "key": "TEST_VARIABLE_1",
-        "value": "TEST_1"
+        "variable_type": "env_var",
+        "value": "TEST_1",
+        "protected": false,
+        "masked": false,
+        "hidden": false,
+        "raw": false,
+        "environment_scope": "*",
+        "description": null
     },
     {
         "key": "TEST_VARIABLE_2",
-        "value": "TEST_2"
+        "variable_type": "env_var",
+        "value": "TEST_2",
+        "protected": false,
+        "masked": false,
+        "hidden": false,
+        "raw": false,
+        "environment_scope": "*",
+        "description": null
     }
 ]
 ```
 
-## Show variable details
+## Retrieve details of a group variable
 
-Get the details of a group's specific variable.
+Retrieves details of a specified group variable. If there are multiple variables with the same key,
+use `filter` to select the correct `environment_scope`.
 
-```
+```plaintext
 GET /groups/:id/variables/:key
 ```
 
-| Attribute | Type    | required | Description           |
-|-----------|---------|----------|-----------------------|
-| `id`      | integer/string | yes      | The ID of a group or [URL-encoded path of the group](README.md#namespaced-path-encoding) owned by the authenticated user   |
-| `key`     | string  | yes      | The `key` of a variable |
+| Attribute | Type              | Required | Description |
+| --------- | ----------------- | -------- | ----------- |
+| `id`      | integer or string | Yes      | ID of a group or [URL-encoded path](rest/_index.md#namespaced-paths) of the group. |
+| `key`     | string            | Yes      | Key of a variable. |
+| `filter`  | hash              | No       | Filters results when multiple variables share the same key. Possible values: `[environment_scope]`. Premium and Ultimate only. |
 
-```
-curl --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" "https://gitlab.example.com/api/v4/groups/1/variables/TEST_VARIABLE_1"
+Example request:
+
+```shell
+curl --request GET \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/groups/1/variables/TEST_VARIABLE_1"
 ```
 
 ```json
 {
     "key": "TEST_VARIABLE_1",
-    "value": "TEST_1"
+    "variable_type": "env_var",
+    "value": "TEST_1",
+    "protected": false,
+    "masked": false,
+    "hidden": false,
+    "raw": false,
+    "environment_scope": "*",
+    "description": null
 }
 ```
 
-## Create variable
+Example request with `filter`:
 
-Create a new variable.
-
+```shell
+curl --request GET \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/groups/1/variables/SCOPED_VARIABLE_1" \
+  --form "filter[environment_scope]=production"
 ```
+
+## Create a group variable
+
+{{< history >}}
+
+- `masked_and_hidden` and `hidden` attributes [introduced](https://gitlab.com/gitlab-org/gitlab/-/issues/29674) in GitLab 17.4.
+
+{{< /history >}}
+
+Creates a group variable.
+
+```plaintext
 POST /groups/:id/variables
 ```
 
-| Attribute   | Type    | required | Description           |
-|-------------|---------|----------|-----------------------|
-| `id`        | integer/string | yes      | The ID of a group or [URL-encoded path of the group](README.md#namespaced-path-encoding) owned by the authenticated user   |
-| `key`       | string  | yes      | The `key` of a variable; must have no more than 255 characters; only `A-Z`, `a-z`, `0-9`, and `_` are allowed |
-| `value`     | string  | yes      | The `value` of a variable |
-| `protected` | boolean | no       | Whether the variable is protected |
+| Attribute           | Type              | Required | Description |
+|---------------------|-------------------|----------|-------------|
+| `id`                | integer or string | Yes      | The ID of a group or [URL-encoded path](rest/_index.md#namespaced-paths) of the group. |
+| `key`               | string            | Yes      | The `key` of a variable. Maximum 255 characters. Only `A-Z`, `a-z`, `0-9`, and `_` are allowed. |
+| `value`             | string            | Yes      | The `value` of a variable. |
+| `description`       | string            | No       | The `description` of the variable. Maximum 255 characters. Default: `null`. |
+| `environment_scope` | string            | No       | The [environment scope](../ci/environments/_index.md#limit-the-environment-scope-of-a-cicd-variable) of a variable. Premium and Ultimate only. |
+| `masked`            | boolean           | No       | Whether the variable is masked. |
+| `masked_and_hidden` | boolean           | No       | Whether the variable is masked and hidden. Default: `false` |
+| `protected`         | boolean           | No       | Whether the variable is protected. |
+| `raw`               | boolean           | No       | Whether the variable is treated as a raw string. Default: `true`. When `false`, variables in the value are [expanded](../ci/variables/_index.md#allow-cicd-variable-expansion). |
+| `variable_type`     | string            | No       | The type of a variable. Available types are: `env_var` (default) and `file`. |
 
-```
-curl --request POST --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" "https://gitlab.example.com/api/v4/groups/1/variables" --form "key=NEW_VARIABLE" --form "value=new value"
+```shell
+curl --request POST \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/groups/1/variables" \
+  --form "key=NEW_VARIABLE" \
+  --form "value=new value"
 ```
 
 ```json
 {
     "key": "NEW_VARIABLE",
     "value": "new value",
-    "protected": false
+    "variable_type": "env_var",
+    "protected": false,
+    "masked": false,
+    "hidden": false,
+    "raw": false,
+    "environment_scope": "*",
+    "description": null
 }
 ```
 
-## Update variable
+## Update a group variable
 
-Update a group's variable.
+Updates the specified group variable. If there are multiple variables with the same key,
+use `filter` to select the correct `environment_scope`.
 
-```
+> [!warning]
+> When filtering for an `environment_scope` that does not exist, the endpoint falls back to
+> updating a variable with the same name but different environment scope. Verify the existence
+> of a scope for a given variable using the [retrieve details of a group variable](#retrieve-details-of-a-group-variable) endpoint.
+
+```plaintext
 PUT /groups/:id/variables/:key
 ```
 
-| Attribute   | Type    | required | Description             |
-|-------------|---------|----------|-------------------------|
-| `id`        | integer/string | yes      | The ID of a group or [URL-encoded path of the group](README.md#namespaced-path-encoding) owned by the authenticated user     |
-| `key`       | string  | yes      | The `key` of a variable   |
-| `value`     | string  | yes      | The `value` of a variable |
-| `protected` | boolean | no       | Whether the variable is protected |
+| Attribute           | Type              | Required | Description |
+| ------------------- | ----------------- | -------- | ----------- |
+| `id`                | integer or string | Yes      | ID of a group or [URL-encoded path](rest/_index.md#namespaced-paths) of the group. |
+| `key`               | string            | Yes      | Key of a variable. |
+| `value`             | string            | Yes      | Value of a variable. |
+| `description`       | string            | No       | Description of the variable. Default: `null`. |
+| `environment_scope` | string            | No       | [Environment scope](../ci/environments/_index.md#limit-the-environment-scope-of-a-cicd-variable) of a variable. Premium and Ultimate only. |
+| `filter`            | hash              | No       | Filters results when multiple variables share the same key. Possible values: `[environment_scope]`. Premium and Ultimate only. |
+| `masked`            | boolean           | No       | If `true`, indicates the variable is masked. |
+| `protected`         | boolean           | No       | If `true`, indicates the variable is protected. |
+| `raw`               | boolean           | No       | If `true`, indicates the variable is treated as a raw string. When `false`, the variable value is [expanded](../ci/variables/_index.md#allow-cicd-variable-expansion). Default: `true`. |
+| `variable_type`     | string            | No       | Type of a variable. Available types are: `env_var` (default) and `file`. |
 
-```
-curl --request PUT --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" "https://gitlab.example.com/api/v4/groups/1/variables/NEW_VARIABLE" --form "value=updated value"
+Example request:
+
+```shell
+curl --request PUT \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/groups/1/variables/NEW_VARIABLE" \
+  --form "value=updated value"
 ```
 
 ```json
 {
     "key": "NEW_VARIABLE",
     "value": "updated value",
-    "protected": true
+    "variable_type": "env_var",
+    "protected": true,
+    "masked": true,
+    "hidden": false,
+    "raw": true,
+    "environment_scope": "*",
+    "description": null
 }
 ```
 
-## Remove variable
+Example request with `filter`:
 
-Remove a group's variable.
-
+```shell
+curl --request PUT \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/groups/1/variables/SCOPED_VARIABLE_1" \
+  --form "value=updated value" \
+  --form "environment_scope=production" \
+  --form "filter[environment_scope]=production"
 ```
+
+## Delete a group variable
+
+Deletes the specified group variable. If there are multiple variables with the same key,
+use `filter` to select the correct `environment_scope`.
+
+```plaintext
 DELETE /groups/:id/variables/:key
 ```
 
-| Attribute | Type    | required | Description             |
-|-----------|---------|----------|-------------------------|
-| `id`      | integer/string | yes      | The ID of a group or [URL-encoded path of the group](README.md#namespaced-path-encoding) owned by the authenticated user     |
-| `key`     | string  | yes      | The `key` of a variable |
+| Attribute | Type              | Required | Description |
+| --------- | ----------------- | -------- | ----------- |
+| `id`      | integer or string | Yes      | ID of a group or [URL-encoded path](rest/_index.md#namespaced-paths) of the group. |
+| `key`     | string            | Yes      | Key of a variable. |
+| `filter`  | hash              | No       | Filters results when multiple variables share the same key. Possible values: `[environment_scope]`. Premium and Ultimate only. |
 
+Example request:
+
+```shell
+curl --request DELETE \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/groups/1/variables/VARIABLE_1"
 ```
-curl --request DELETE --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" "https://gitlab.example.com/api/v4/groups/1/variables/VARIABLE_1"
+
+Example request with `filter`:
+
+```shell
+curl --request DELETE \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --url "https://gitlab.example.com/api/v4/groups/1/variables/SCOPED_VARIABLE_1" \
+  --form "filter[environment_scope]=production"
 ```

@@ -1,228 +1,151 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::Ci::Trace do
-  let(:build) { create(:ci_build) }
+RSpec.describe Gitlab::Ci::Trace, :clean_gitlab_redis_shared_state, factory_default: :keep, feature_category: :continuous_integration do
+  let_it_be(:project) { create_default(:project, :allow_runner_registration_token).freeze }
+  let_it_be_with_reload(:build) { create(:ci_build, :success) }
+
   let(:trace) { described_class.new(build) }
 
   describe "associations" do
     it { expect(trace).to respond_to(:job) }
-    it { expect(trace).to delegate_method(:old_trace).to(:job) }
   end
 
-  describe '#html' do
+  context 'when trace is migrated to object storage' do
+    let!(:job) { create(:ci_build, :trace_artifact) }
+    let!(:artifact1) { job.job_artifacts_trace }
+    let(:test_data) { "hello world" }
+
     before do
-      trace.set("12\n34")
+      stub_artifacts_object_storage
+
+      artifact1.file.migrate!(ObjectStorage::Store::REMOTE)
     end
 
-    it "returns formatted html" do
-      expect(trace.html).to eq("12<br>34")
-    end
+    it 'reloads the trace in case of a chunk error' do
+      chunk_error = described_class::ChunkedIO::FailedToGetChunkError
 
-    it "returns last line of formatted html" do
-      expect(trace.html(last_lines: 1)).to eq("34")
+      allow_any_instance_of(described_class::Stream)
+        .to receive(:raw).and_raise(chunk_error)
+
+      expect(build).to receive(:reset).and_return(build)
+      expect { trace.raw }.to raise_error(chunk_error)
     end
   end
 
-  describe '#raw' do
+  context 'when live trace feature is disabled' do
     before do
-      trace.set("12\n34")
+      stub_application_setting(ci_job_live_trace_enabled: false)
     end
 
-    it "returns raw output" do
-      expect(trace.raw).to eq("12\n34")
-    end
-
-    it "returns last line of raw output" do
-      expect(trace.raw(last_lines: 1)).to eq("34")
-    end
+    it_behaves_like 'trace with disabled live trace feature'
   end
 
-  describe '#extract_coverage' do
-    let(:regex) { '\(\d+.\d+\%\) covered' }
-
-    context 'matching coverage' do
-      before do
-        trace.set('Coverage 1033 / 1051 LOC (98.29%) covered')
-      end
-
-      it "returns valid coverage" do
-        expect(trace.extract_coverage(regex)).to eq("98.29")
-      end
-    end
-
-    context 'no coverage' do
-      before do
-        trace.set('No coverage')
-      end
-
-      it 'returs nil' do
-        expect(trace.extract_coverage(regex)).to be_nil
-      end
-    end
-  end
-
-  describe '#set' do
+  context 'when live trace feature is enabled' do
     before do
-      trace.set("12")
+      stub_application_setting(ci_job_live_trace_enabled: true)
     end
 
-    it "returns trace" do
-      expect(trace.raw).to eq("12")
-    end
-
-    context 'overwrite trace' do
-      before do
-        trace.set("34")
-      end
-
-      it "returns new trace" do
-        expect(trace.raw).to eq("34")
-      end
-    end
-
-    context 'runners token' do
-      let(:token) { 'my_secret_token' }
-
-      before do
-        build.project.update(runners_token: token)
-        trace.set(token)
-      end
-
-      it "hides token" do
-        expect(trace.raw).not_to include(token)
-      end
-    end
-
-    context 'hides build token' do
-      let(:token) { 'my_secret_token' }
-
-      before do
-        build.update(token: token)
-        trace.set(token)
-      end
-
-      it "hides token" do
-        expect(trace.raw).not_to include(token)
-      end
-    end
+    it_behaves_like 'trace with enabled live trace feature'
   end
 
-  describe '#append' do
-    before do
-      trace.set("1234")
-    end
+  describe '#update_interval' do
+    context 'it is not being watched' do
+      it { expect(trace.update_interval).to eq(60.seconds) }
 
-    it "returns correct trace" do
-      expect(trace.append("56", 4)).to eq(6)
-      expect(trace.raw).to eq("123456")
-    end
-
-    context 'tries to append trace at different offset' do
-      it "fails with append" do
-        expect(trace.append("56", 2)).to eq(-4)
-        expect(trace.raw).to eq("1234")
-      end
-    end
-
-    context 'runners token' do
-      let(:token) { 'my_secret_token' }
-
-      before do
-        build.project.update(runners_token: token)
-        trace.append(token, 0)
-      end
-
-      it "hides token" do
-        expect(trace.raw).not_to include(token)
-      end
-    end
-
-    context 'build token' do
-      let(:token) { 'my_secret_token' }
-
-      before do
-        build.update(token: token)
-        trace.append(token, 0)
-      end
-
-      it "hides token" do
-        expect(trace.raw).not_to include(token)
-      end
-    end
-  end
-
-  describe 'trace handling' do
-    context 'trace does not exist' do
-      it { expect(trace.exist?).to be(false) }
-    end
-
-    context 'new trace path is used' do
-      before do
-        trace.send(:ensure_directory)
-
-        File.open(trace.send(:default_path), "w") do |file|
-          file.write("data")
-        end
-      end
-
-      it "trace exist" do
-        expect(trace.exist?).to be(true)
-      end
-
-      it "can be erased" do
-        trace.erase!
-        expect(trace.exist?).to be(false)
-      end
-    end
-
-    context 'deprecated path' do
-      let(:path) { trace.send(:deprecated_path) }
-
-      context 'with valid ci_id' do
+      context 'with a configured update interval' do
         before do
-          build.project.update(ci_id: 1000)
-
-          FileUtils.mkdir_p(File.dirname(path))
-
-          File.open(path, "w") do |file|
-            file.write("data")
-          end
+          stub_application_setting(ci_job_trace_update_interval: 10)
         end
 
-        it "trace exist" do
-          expect(trace.exist?).to be(true)
-        end
-
-        it "can be erased" do
-          trace.erase!
-          expect(trace.exist?).to be(false)
-        end
-      end
-
-      context 'without valid ci_id' do
-        it "does not return deprecated path" do
-          expect(path).to be_nil
-        end
+        it { expect(trace.update_interval).to eq(10.seconds) }
       end
     end
 
-    context 'stored in database' do
+    context 'it is being watched' do
       before do
-        build.send(:write_attribute, :trace, "data")
+        trace.being_watched!
       end
 
-      it "trace exist" do
-        expect(trace.exist?).to be(true)
+      it 'returns 3 seconds' do
+        expect(trace.update_interval).to eq(3.seconds)
       end
 
-      it "can be erased" do
-        trace.erase!
-        expect(trace.exist?).to be(false)
+      context 'with a configured update interval' do
+        before do
+          stub_application_setting(ci_job_trace_update_interval_when_being_watched: 5)
+        end
+
+        it { expect(trace.update_interval).to eq(5.seconds) }
+      end
+    end
+  end
+
+  describe '#being_watched!' do
+    let(:cache_key) { "gitlab:ci:trace:#{build.id}:watched" }
+
+    it 'sets gitlab:ci:trace:<job.id>:watched in redis' do
+      trace.being_watched!
+
+      result = Gitlab::Redis::SharedState.with do |redis|
+        redis.exists?(cache_key)
       end
 
-      it "returns database data" do
-        expect(trace.raw).to eq("data")
+      expect(result).to be(true)
+    end
+
+    it 'updates the expiry of gitlab:ci:trace:<job.id>:watched in redis', :clean_gitlab_redis_shared_state do
+      Gitlab::Redis::SharedState.with do |redis|
+        redis.set(cache_key, true, ex: 4.seconds)
       end
+
+      expect do
+        trace.being_watched!
+      end.to change { Gitlab::Redis::SharedState.with { |redis| redis.pttl(cache_key) } }
+    end
+  end
+
+  describe '#being_watched?' do
+    context 'gitlab:ci:trace:<job.id>:watched in redis is set', :clean_gitlab_redis_shared_state do
+      before do
+        Gitlab::Redis::SharedState.with do |redis|
+          redis.set("gitlab:ci:trace:#{build.id}:watched", true)
+        end
+      end
+
+      it 'returns true' do
+        expect(trace.being_watched?).to be(true)
+      end
+    end
+
+    context 'gitlab:ci:trace:<job.id>:watched in redis is not set' do
+      it 'returns false' do
+        expect(trace.being_watched?).to be(false)
+      end
+    end
+  end
+
+  describe '#lock' do
+    it 'acquires an exclusive lease on the trace' do
+      trace.lock do
+        expect { trace.lock }
+          .to raise_error described_class::LockedError
+      end
+    end
+  end
+
+  describe '#can_attempt_archival_now?' do
+    it 'creates the record and returns true' do
+      expect(trace.can_attempt_archival_now?).to be_truthy
+    end
+  end
+
+  describe '#increment_archival_attempts!' do
+    it 'creates the record and increments its value' do
+      expect { trace.increment_archival_attempts! }
+        .to change { build.reload.trace_metadata&.archival_attempts }.from(nil).to(1)
+        .and change { build.reload.trace_metadata&.last_archival_attempt_at }
     end
   end
 end

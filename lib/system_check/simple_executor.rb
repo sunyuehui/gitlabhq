@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module SystemCheck
   # Simple Executor is current default executor for GitLab
   # It is a simple port from display logic in the old check.rake
@@ -23,7 +25,8 @@ module SystemCheck
     #
     # @param [BaseCheck] check class
     def <<(check)
-      raise ArgumentError unless check < BaseCheck
+      raise ArgumentError unless check.is_a?(Class) && check < BaseCheck
+
       @checks << check
     end
 
@@ -42,60 +45,85 @@ module SystemCheck
     #
     # @param [SystemCheck::BaseCheck] check_klass
     def run_check(check_klass)
-      $stdout.print "#{check_klass.display_name} ... "
+      print_display_name(check_klass)
 
       check = check_klass.new
 
       # When implements skip method, we run it first, and if true, skip the check
       if check.can_skip? && check.skip?
-        $stdout.puts check_klass.skip_reason.color(:magenta)
+        say Rainbow(check.skip_reason || check_klass.skip_reason).magenta
         return
       end
 
       # When implements a multi check, we don't control the output
-      if check.is_multi_check?
+      if check.multi_check?
         check.multi_check
         return
       end
 
       if check.check?
-        $stdout.puts check_klass.check_pass.color(:green)
+        print_check_pass(check_klass)
       else
-        $stdout.puts check_klass.check_fail.color(:red)
+        print_check_failure(check_klass)
 
         if check.can_repair?
-          $stdout.print 'Trying to fix error automatically. ...'
+          print 'Trying to fix error automatically. ...' # rubocop:disable Rails/Output -- system check CLI output
+
           if check.repair!
-            $stdout.puts 'Success'.color(:green)
+            print_success
             return
           else
-            $stdout.puts 'Failed'.color(:red)
+            print_failure
           end
         end
 
         check.show_error
       end
     rescue StandardError => e
-      $stdout.puts "Exception: #{e.message}".color(:red)
+      say Rainbow("Exception: #{e.message}").red
     end
 
     private
+
+    def say(message = '')
+      puts message # rubocop:disable Rails/Output -- system check CLI output
+    end
+
+    def print_display_name(check_klass)
+      print "#{check_klass.display_name} ... " # rubocop:disable Rails/Output -- system check CLI output
+    end
+
+    def print_check_pass(check_klass)
+      say Rainbow(check_klass.check_pass).green
+    end
+
+    def print_check_failure(check_klass)
+      say Rainbow(check_klass.check_fail).red
+    end
+
+    def print_success
+      say Rainbow('Success').green
+    end
+
+    def print_failure
+      say Rainbow('Failed').red
+    end
 
     # Prints header content for the series of checks to be executed for this component
     #
     # @param [String] component name of the component relative to the checks being executed
     def start_checking(component)
-      $stdout.puts "Checking #{component.color(:yellow)} ..."
-      $stdout.puts ''
+      say "Checking #{Rainbow(component).yellow} ..."
+      say ''
     end
 
     # Prints footer content for the series of checks executed for this component
     #
     # @param [String] component name of the component relative to the checks being executed
     def finished_checking(component)
-      $stdout.puts ''
-      $stdout.puts "Checking #{component.color(:yellow)} ... #{'Finished'.color(:green)}"
-      $stdout.puts ''
+      say ''
+      say "Checking #{Rainbow(component).yellow} ... #{Rainbow('Finished').green}"
+      say ''
     end
   end
 end

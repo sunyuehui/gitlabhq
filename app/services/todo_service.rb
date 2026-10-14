@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # TodoService class
 #
 # Used for creating/updating todos after certain user actions
@@ -6,6 +8,14 @@
 #   TodoService.new.new_issue(issue, current_user)
 #
 class TodoService
+  include Gitlab::Utils::UsageData
+
+  BATCH_SIZE = 100
+
+  RESOLVE_ON_MR_FINALIZED_ACTIONS = [
+    Todo::ASSIGNED, Todo::APPROVAL_REQUIRED, Todo::REVIEW_REQUESTED, Todo::ADDED_APPROVER, Todo::BUILD_FAILED
+  ].freeze
+
   # When create an issue we should:
   #
   #  * create a todo for assignee if issue is assigned
@@ -28,23 +38,39 @@ class TodoService
   #  * mark all pending todos related to the target for the current user as done
   #
   def close_issue(issue, current_user)
-    mark_pending_todos_as_done(issue, current_user)
+    resolve_todos_for_target(issue, current_user)
   end
 
-  # When we destroy an issue we should:
+  # When we destroy a todo target we should:
   #
-  #  * refresh the todos count cache for the current user
+  #  * refresh the todos count cache for all users with todos on the target
   #
-  def destroy_issue(issue, current_user)
-    destroy_issuable(issue, current_user)
+  # This needs to yield back to the caller to destroy the target, because it
+  # collects the todo users before the todos themselves are deleted, then
+  # updates the todo counts for those users.
+  #
+  def destroy_target(target)
+    todo_user_ids = target.todos.distinct_user_ids
+
+    yield target
+
+    Users::UpdateTodoCountCacheService.new(todo_user_ids).execute if todo_user_ids.present?
   end
 
-  # When we reassign an issue we should:
+  # When we reassign an assignable object (issuable, alert) we should:
   #
-  #  * create a pending todo for new assignee if issue is assigned
+  #  * create a pending todo for new assignee if object is assigned
   #
-  def reassigned_issue(issue, current_user)
-    create_assignment_todo(issue, current_user)
+  def reassigned_assignable(issuable, current_user, old_assignees = [])
+    create_assignment_todo(issuable, current_user, old_assignees)
+  end
+
+  # When we reassign an reviewable object (merge request) we should:
+  #
+  #  * create a pending todo for new reviewer if object is assigned
+  #
+  def reassigned_reviewable(issuable, current_user, old_reviewers = [])
+    create_reviewer_todo(issuable, current_user, old_reviewers)
   end
 
   # When create a merge request we should:
@@ -67,43 +93,33 @@ class TodoService
   # When close a merge request we should:
   #
   #  * mark all pending todos related to the target for the current user as done
+  #  * mark pending todos for all users with specific actions as done
   #
   def close_merge_request(merge_request, current_user)
-    mark_pending_todos_as_done(merge_request, current_user)
-  end
+    resolve_todos_with_attributes_for_target(merge_request, { action: RESOLVE_ON_MR_FINALIZED_ACTIONS })
 
-  # When we destroy a merge request we should:
-  #
-  #  * refresh the todos count cache for the current user
-  #
-  def destroy_merge_request(merge_request, current_user)
-    destroy_issuable(merge_request, current_user)
-  end
-
-  # When we reassign a merge request we should:
-  #
-  #  * creates a pending todo for new assignee if merge request is assigned
-  #
-  def reassigned_merge_request(merge_request, current_user)
-    create_assignment_todo(merge_request, current_user)
+    resolve_todos_for_target(merge_request, current_user)
   end
 
   # When merge a merge request we should:
   #
   #  * mark all pending todos related to the target for the current user as done
+  #  * mark pending todos for all users with specific actions as done
   #
   def merge_merge_request(merge_request, current_user)
-    mark_pending_todos_as_done(merge_request, current_user)
+    resolve_todos_with_attributes_for_target(merge_request, { action: RESOLVE_ON_MR_FINALIZED_ACTIONS })
+
+    resolve_todos_for_target(merge_request, current_user)
   end
 
   # When a build fails on the HEAD of a merge request we should:
   #
-  #  * create a todo for author of MR to fix it
-  #  * create a todo for merge_user to keep an eye on it
+  #  * create a todo for each merge participant
   #
   def merge_request_build_failed(merge_request)
-    create_build_failed_todo(merge_request, merge_request.author)
-    create_build_failed_todo(merge_request, merge_request.merge_user) if merge_request.merge_when_pipeline_succeeds?
+    merge_request.merge_participants.each do |user|
+      create_build_failed_todo(merge_request, user)
+    end
   end
 
   # When a new commit is pushed to a merge request we should:
@@ -111,25 +127,27 @@ class TodoService
   #  * mark all pending todos related to the merge request for that user as done
   #
   def merge_request_push(merge_request, current_user)
-    mark_pending_todos_as_done(merge_request, current_user)
+    resolve_todos_for_target(merge_request, current_user)
   end
 
   # When a build is retried to a merge request we should:
   #
-  #  * mark all pending todos related to the merge request for the author as done
-  #  * mark all pending todos related to the merge request for the merge_user as done
+  #  * mark all pending todos related to the merge request as done for each merge participant
   #
   def merge_request_build_retried(merge_request)
-    mark_pending_todos_as_done(merge_request, merge_request.author)
-    mark_pending_todos_as_done(merge_request, merge_request.merge_user) if merge_request.merge_when_pipeline_succeeds?
+    merge_request.merge_participants.each do |user|
+      resolve_todos_for_target(merge_request, user)
+    end
   end
 
-  # When a merge request could not be automatically merged due to its unmergeable state we should:
+  # When a merge request could not be merged due to its unmergeable state we should:
   #
-  #  * create a todo for a merge_user
+  #  * create a todo for each merge participant
   #
   def merge_request_became_unmergeable(merge_request)
-    create_unmergeable_todo(merge_request, merge_request.merge_user) if merge_request.merge_when_pipeline_succeeds?
+    merge_request.merge_participants.each do |user|
+      create_unmergeable_todo(merge_request, user)
+    end
   end
 
   # When create a note we should:
@@ -155,75 +173,257 @@ class TodoService
   #  * mark all pending todos related to the awardable for the current user as done
   #
   def new_award_emoji(awardable, current_user)
-    mark_pending_todos_as_done(awardable, current_user)
+    resolve_todos_for_target(awardable, current_user)
   end
 
-  # When marking pending todos as done we should:
+  # When a SSH key is expiring soon we should:
   #
-  #  * mark all pending todos related to the target for the current user as done
+  # * create a todo for the user owning that SSH key
   #
-  def mark_pending_todos_as_done(target, user)
-    attributes = attributes_for_target(target)
-    pending_todos(user, attributes).update_all(state: :done)
-    user.update_todos_count_cache
+  def ssh_key_expiring_soon(ssh_keys)
+    create_ssh_key_todos(Array(ssh_keys), ::Todo::SSH_KEY_EXPIRING_SOON)
   end
 
-  # When user marks some todos as done
-  def mark_todos_as_done(todos, current_user)
-    update_todos_state(todos, current_user, :done)
+  # When a SSH key expired we should:
+  #
+  # * resolve any corresponding "expiring soon" todo
+  # * create a todo for the user owning that SSH key
+  #
+  def ssh_key_expired(ssh_keys)
+    ssh_keys = Array(ssh_keys)
+
+    # Resolve any pending "expiring soon" todos for these keys
+    expiring_key_todos = ::Todo.pending_for_expiring_ssh_keys(ssh_keys.map(&:id))
+    expiring_key_todos.batch_update(state: :done, resolved_by_action: :system_done)
+
+    create_ssh_key_todos(ssh_keys, ::Todo::SSH_KEY_EXPIRED)
   end
 
-  def mark_todos_as_done_by_ids(ids, current_user)
-    todos = todos_by_ids(ids, current_user)
-    mark_todos_as_done(todos, current_user)
+  # When a merge request receives a review
+  #
+  #   * Mark all outstanding todos on this MR for the current user as done
+  #
+  def new_review(merge_request, current_user)
+    resolve_todos_for_target(merge_request, current_user)
+
+    # Create a new todo for assignees and author
+    create_review_submitted_todo(merge_request, current_user)
   end
 
-  # When user marks some todos as pending
-  def mark_todos_as_pending(todos, current_user)
-    update_todos_state(todos, current_user, :pending)
+  # When user marks a target as todo
+  def mark_todo(target, current_user, note: nil)
+    project = target.project
+    attributes = attributes_for_todo(project, target, current_user, Todo::MARKED, note)
+
+    todos = create_todos(current_user, attributes, target_namespace(target), project)
+    work_item_activity_counter.track_work_item_mark_todo_action(author: current_user) if target.is_a?(WorkItem)
+
+    todos
   end
 
-  def mark_todos_as_pending_by_ids(ids, current_user)
-    todos = todos_by_ids(ids, current_user)
-    mark_todos_as_pending(todos, current_user)
-  end
-
-  # When user marks an issue as todo
-  def mark_todo(issuable, current_user)
-    attributes = attributes_for_todo(issuable.project, issuable, current_user, Todo::MARKED)
-    create_todos(current_user, attributes)
+  def transfer_failed(target, current_user)
+    attributes = attributes_for_todo(nil, target, current_user, Todo::TRANSFER_FAILED)
+    attributes[:project_id] = target.id if target.is_a?(Project)
+    attributes[:group_id] = target.id if target.is_a?(Group)
+    create_todos(current_user, attributes, nil, nil)
   end
 
   def todo_exist?(issuable, current_user)
-    TodosFinder.new(current_user).execute.exists?(target: issuable)
+    current_user.todos.any_for_target?(issuable, :pending)
+  end
+
+  # Resolves all todos related to target for the current_user
+  def resolve_todos_for_target(target, current_user)
+    attributes = attributes_for_target(target)
+
+    resolve_todos(pending_todos([current_user], attributes), current_user)
+
+    GraphqlTriggers.issuable_todo_updated(target)
+  end
+
+  def resolve_todos(todos, current_user, resolution: :done, resolved_by_action: :system_done)
+    todos_ids = todos.batch_update(state: resolution, resolved_by_action: resolved_by_action, snoozed_until: nil)
+
+    current_user.update_todos_count_cache
+
+    todos_ids
+  end
+
+  def resolve_todo(todo, current_user, resolution: :done, resolved_by_action: :system_done)
+    return if todo.done?
+
+    todo.update(state: resolution, resolved_by_action: resolved_by_action, snoozed_until: nil)
+
+    GraphqlTriggers.issuable_todo_updated(todo.target)
+
+    current_user.update_todos_count_cache
+  end
+
+  def resolve_access_request_todos(member)
+    return if member.nil?
+
+    # Group or Project
+    target = member.source
+
+    todos_params = {
+      state: :pending,
+      author_id: member.user_id,
+      action: ::Todo::MEMBER_ACCESS_REQUESTED,
+      type: target.class.polymorphic_name
+    }
+
+    resolve_todos_with_attributes_for_target(target, todos_params)
+  end
+
+  def restore_todos(todos, current_user)
+    todos_ids = todos.batch_update(state: :pending)
+
+    current_user.update_todos_count_cache
+
+    todos_ids
+  end
+
+  def restore_todo(todo, current_user)
+    return if todo.pending?
+
+    todo.update(state: :pending)
+
+    current_user.update_todos_count_cache
+  end
+
+  def create_request_review_todo(target, author, reviewers)
+    project = target.project
+    attributes = attributes_for_todo(project, target, author, Todo::REVIEW_REQUESTED)
+    create_todos(reviewers, attributes, project.namespace, project)
+  end
+
+  def create_member_access_request_todos(member)
+    source = member.source
+    attributes = attributes_for_access_request_todos(source, member.user, Todo::MEMBER_ACCESS_REQUESTED)
+
+    approvers = source.access_request_approvers_to_be_notified.map(&:user)
+    return true if approvers.empty?
+
+    if source.instance_of? Project
+      project = source
+      namespace = project.namespace
+    else
+      project = nil
+      namespace = source
+    end
+
+    create_todos(approvers, attributes, namespace, project)
+  end
+
+  def create_review_submitted_todo(target, review_author)
+    users = (target.assignees | [target.author]).reject { |u| u.id == review_author.id }
+    project = target.project
+    attributes = attributes_for_todo(project, target, review_author, Todo::REVIEW_SUBMITTED)
+
+    create_todos(users, attributes, project.namespace, project)
   end
 
   private
 
-  def todos_by_ids(ids, current_user)
-    current_user.todos.where(id: Array(ids))
-  end
+  # Resolves all todos related to target for all users
+  def resolve_todos_with_attributes_for_target(target, attributes, resolution: :done, resolved_by_action: :system_done)
+    target_attributes = { target_id: target.id, target_type: target.class.polymorphic_name }
+    attributes.merge!(target_attributes)
 
-  def update_todos_state(todos, current_user, state)
-    # Only update those that are not really on that state
-    todos = todos.where.not(state: state)
-    todos_ids = todos.pluck(:id)
-    todos.unscope(:order).update_all(state: state)
-    current_user.update_todos_count_cache
+    todos = PendingTodosFinder.new(attributes).execute
+    user_ids = todos.map(&:user_id).uniq
+    todos_ids = todos.batch_update(state: resolution, resolved_by_action: resolved_by_action, snoozed_until: nil)
+    Users::UpdateTodoCountCacheService.new(user_ids).execute
     todos_ids
   end
 
-  def create_todos(users, attributes)
-    Array(users).map do |user|
-      next if pending_todos(user, attributes).exists?
-      todo = Todo.create(attributes.merge(user_id: user.id))
-      user.update_todos_count_cache
-      todo
+  def resolve_merge_train_removed_todos(merge_request)
+    resolve_todos_with_attributes_for_target(
+      merge_request,
+      { action: Todo::MERGE_TRAIN_REMOVED }
+    )
+  end
+
+  def create_todos(users, attributes, namespace, project)
+    users = Array(users)
+
+    return if users.empty?
+
+    issue_type = attributes.delete(:issue_type)
+
+    excluded_user_ids = excluded_user_ids(users, attributes)
+    users.reject! { |user| excluded_user_ids.include?(user.id) }
+
+    todos = bulk_insert_todos(users, attributes)
+    users.each { |user| track_todo_creation(user, issue_type, namespace, project) }
+
+    Users::UpdateTodoCountCacheService.new(users.map(&:id)).execute
+
+    enqueue_push_notifications(todos)
+
+    todos
+  end
+
+  # Todos are bulk-inserted, so the records carry no AR transaction callbacks;
+  # when a surrounding transaction is open (for example merge-train abort) the
+  # job must wait for its commit rather than race it or fire on a rollback.
+  # One batch job per call, scoped to recipients that have a registered
+  # device; the worker enforces the :mobile_push_notifications flag per
+  # recipient.
+  def enqueue_push_notifications(todos)
+    return if todos.empty?
+    # Deliberately actor-less: this is the instance-wide enqueue gate and kill
+    # switch. It keeps the todo path free of subscription reads and enqueues
+    # while the feature is dark and protects rolling deploys (web nodes know
+    # the worker class before the Sidekiq fleet does). Per-user rollout rides
+    # :mobile_push_notifications, checked per recipient in the worker.
+    return unless Feature.enabled?(:mobile_push_notifications_dispatch) # rubocop:disable Gitlab/FeatureFlagWithoutActor -- instance-wide dispatch gate; per-user actor check happens in the worker
+
+    Todo.current_transaction.after_commit do
+      todo_ids = push_subscribed_todo_ids(todos)
+      ::Todos::PushNotificationWorker.perform_async(todo_ids) if todo_ids.any?
     end
+  end
+
+  # Push notifications are used by a small minority of users, so only todos
+  # whose recipient has a registered device produce a job: one indexed query
+  # per batch (after commit, so it never lengthens the write transaction)
+  # instead of a no-op Sidekiq job for almost every todo batch.
+  def push_subscribed_todo_ids(todos)
+    subscribed_user_ids = ::Notifications::MobileDevicePushSubscription
+      .subscribed_user_ids(todos.map(&:user_id).uniq).to_set
+
+    todos.select { |todo| subscribed_user_ids.include?(todo.user_id) }.map(&:id)
+  end
+
+  def excluded_user_ids(users, attributes)
+    return [] unless users.present?
+    return [] if Todo::ACTIONS_MULTIPLE_ALLOWED.include?(attributes.fetch(:action))
+
+    pending_todos(
+      users,
+      attributes.slice(:project_id, :target_id, :target_type, :commit_id, :discussion, :action)
+    ).for_note(attributes[:note]).distinct_user_ids
+  end
+
+  def bulk_insert_todos(users, attributes, &attribute_merger)
+    todos_ids = []
+    attribute_merger ||= ->(user, attrs) { attrs.merge(user_id: user.id) }
+
+    users.each_slice(BATCH_SIZE) do |users_batch|
+      todos_attributes = users_batch.map do |user|
+        Todo.new(attribute_merger.call(user, attributes)).attributes.except('id', 'created_at', 'updated_at')
+      end
+
+      todos_ids += Todo.insert_all(todos_attributes, returning: :id).rows.flatten unless todos_attributes.blank?
+    end
+
+    Todo.id_in(todos_ids).to_a
   end
 
   def new_issuable(issuable, author)
     create_assignment_todo(issuable, author)
+    create_reviewer_todo(issuable, author) if issuable.allows_reviewers?
     create_mention_todos(issuable.project, issuable, author)
   end
 
@@ -234,65 +434,100 @@ class TodoService
     create_mention_todos(issuable.project, issuable, author, nil, skip_users)
   end
 
-  def destroy_issuable(issuable, user)
-    user.update_todos_count_cache
-  end
-
   def toggling_tasks?(issuable)
     issuable.previous_changes.include?('description') &&
       issuable.tasks? && issuable.updated_tasks.any?
   end
 
   def handle_note(note, author, skip_users = [])
-    # Skip system notes, and notes on project snippet
-    return if note.system? || note.for_snippet?
+    return unless note.can_create_todo?
 
     project = note.project
-    target  = note.noteable
+    noteable = note.noteable
+    discussion = note.discussion
 
-    mark_pending_todos_as_done(target, author)
-    create_mention_todos(project, target, author, note, skip_users)
+    # Only update todos associated with the discussion if note is part of a thread
+    # Otherwise, update all todos associated with the noteable
+    #
+    target = discussion.individual_note? ? noteable : discussion
+
+    resolve_todos_for_target(target, author)
+    create_mention_todos(project, noteable, author, note, skip_users)
   end
 
-  def create_assignment_todo(issuable, author)
-    if issuable.assignees.any?
-      attributes = attributes_for_todo(issuable.project, issuable, author, Todo::ASSIGNED)
-      create_todos(issuable.assignees, attributes)
-    end
+  def create_assignment_todo(target, author, old_assignees = [])
+    return unless target.assignees.any?
+
+    project = target.project
+    assignees = target.assignees - old_assignees
+    attributes = attributes_for_todo(project, target, author, ::Todo::ASSIGNED)
+
+    create_todos(assignees, attributes, target_namespace(target), project)
   end
 
-  def create_mention_todos(project, target, author, note = nil, skip_users = [])
+  def create_reviewer_todo(target, author, old_reviewers = [])
+    return unless target.reviewers.any?
+
+    reviewers = target.reviewers - old_reviewers
+    create_request_review_todo(target, author, reviewers)
+  end
+
+  def create_mention_todos(parent, target, author, note = nil, skip_users = [])
     # Create Todos for directly addressed users
-    directly_addressed_users = filter_directly_addressed_users(project, note || target, author, skip_users)
-    attributes = attributes_for_todo(project, target, author, Todo::DIRECTLY_ADDRESSED, note)
-    create_todos(directly_addressed_users, attributes)
+    directly_addressed_users = filter_directly_addressed_users(parent, note || target, author, skip_users)
+    attributes = attributes_for_todo(parent, target, author, Todo::DIRECTLY_ADDRESSED, note)
+    create_todos(directly_addressed_users, attributes, parent&.namespace, parent)
 
     # Create Todos for mentioned users
-    mentioned_users = filter_mentioned_users(project, note || target, author, skip_users)
-    attributes = attributes_for_todo(project, target, author, Todo::MENTIONED, note)
-    create_todos(mentioned_users, attributes)
+    mentioned_users = filter_mentioned_users(parent, note || target, author, skip_users + directly_addressed_users)
+    attributes = attributes_for_todo(parent, target, author, Todo::MENTIONED, note)
+    create_todos(mentioned_users, attributes, parent&.namespace, parent)
   end
 
   def create_build_failed_todo(merge_request, todo_author)
-    attributes = attributes_for_todo(merge_request.project, merge_request, todo_author, Todo::BUILD_FAILED)
-    create_todos(todo_author, attributes)
+    project = merge_request.project
+    attributes = attributes_for_todo(project, merge_request, todo_author, Todo::BUILD_FAILED)
+    create_todos(todo_author, attributes, project.namespace, project)
   end
 
-  def create_unmergeable_todo(merge_request, merge_user)
-    attributes = attributes_for_todo(merge_request.project, merge_request, merge_user, Todo::UNMERGEABLE)
-    create_todos(merge_user, attributes)
+  def create_unmergeable_todo(merge_request, todo_author)
+    project = merge_request.project
+    attributes = attributes_for_todo(project, merge_request, todo_author, Todo::UNMERGEABLE)
+    create_todos(todo_author, attributes, project.namespace, project)
+  end
+
+  def create_ssh_key_todos(ssh_keys, action)
+    ssh_keys.each do |ssh_key|
+      user = ssh_key.user
+      attributes = {
+        target_id: ssh_key.id,
+        target_type: Key,
+        action: action,
+        author_id: user.id,
+        organization_id: user.organization_id
+      }
+      create_todos(user, attributes, nil, nil)
+    end
   end
 
   def attributes_for_target(target)
     attributes = {
-      project_id: target&.project&.id,
+      project_id: target.try(:project)&.id,
       target_id: target.id,
-      target_type: target.class.name,
+      target_type: target.class.try(:polymorphic_name) || target.class.name,
       commit_id: nil
     }
 
-    if target.is_a?(Commit)
+    case target
+    when Commit
       attributes.merge!(target_id: nil, commit_id: target.id)
+    when Issue
+      attributes[:issue_type] = target.issue_type
+      attributes[:group] = target.namespace if target.project.blank?
+    when DiscussionNote
+      attributes.merge!(target_type: nil, target_id: nil, discussion: target.discussion)
+    when Discussion
+      attributes.merge!(target_type: nil, target_id: nil, discussion: target)
     end
 
     attributes
@@ -300,36 +535,32 @@ class TodoService
 
   def attributes_for_todo(project, target, author, action, note = nil)
     attributes_for_target(target).merge!(
-      project_id: project.id,
-      author_id: author.id,
+      project_id: project&.id,
+      author_id: Gitlab::Auth::Identity.resolve_composite_identity_actor(author).id,
       action: action,
       note: note
     )
   end
 
-  def filter_todo_users(users, project, target)
-    reject_users_without_access(users, project, target).uniq
+  def filter_todo_users(users, parent, target)
+    reject_users_without_access(users, parent, target).uniq
   end
 
-  def filter_mentioned_users(project, target, author, skip_users = [])
+  def filter_mentioned_users(parent, target, author, skip_users = [])
     mentioned_users = target.mentioned_users(author) - skip_users
-    filter_todo_users(mentioned_users, project, target)
+    filter_todo_users(mentioned_users, parent, target)
   end
 
-  def filter_directly_addressed_users(project, target, author, skip_users = [])
+  def filter_directly_addressed_users(parent, target, author, skip_users = [])
     directly_addressed_users = target.directly_addressed_users(author) - skip_users
-    filter_todo_users(directly_addressed_users, project, target)
+    filter_todo_users(directly_addressed_users, parent, target)
   end
 
-  def reject_users_without_access(users, project, target)
-    if target.is_a?(Note) && (target.for_issue? || target.for_merge_request?)
-      target = target.noteable
-    end
-
-    if target.is_a?(Issuable)
+  def reject_users_without_access(users, parent, target)
+    if target.respond_to?(:to_ability_name)
       select_users(users, :"read_#{target.to_ability_name}", target)
     else
-      select_users(users, :read_project, project)
+      select_users(users, :read_project, parent)
     end
   end
 
@@ -339,8 +570,53 @@ class TodoService
     end
   end
 
-  def pending_todos(user, criteria = {})
-    valid_keys = [:project_id, :target_id, :target_type, :commit_id]
-    user.todos.pending.where(criteria.slice(*valid_keys))
+  def pending_todos(users, criteria = {})
+    PendingTodosFinder.new(criteria.merge(users: users)).execute
+  end
+
+  def track_todo_creation(user, issue_type, namespace, project)
+    return unless issue_type == 'incident'
+
+    event = "incident_management_incident_todo"
+    track_usage_event(event, user.id)
+
+    Gitlab::Tracking.event(
+      self.class.to_s,
+      event,
+      project: project,
+      namespace: namespace,
+      user: user,
+      label: 'redis_hll_counters.incident_management.incident_management_total_unique_counts_monthly',
+      context: [Gitlab::Tracking::ServicePingContext.new(data_source: :redis_hll, event: event).to_context]
+    )
+  end
+
+  def attributes_for_access_request_todos(source, author, action, note = nil)
+    attributes = {
+      target_id: source.id,
+      target_type: source.class.polymorphic_name,
+      author_id: author.id,
+      action: action,
+      note: note
+    }
+
+    if source.instance_of? Project
+      attributes[:project_id] = source.id
+    else
+      attributes[:group_id] = source.id
+    end
+
+    attributes
+  end
+
+  def target_namespace(target)
+    project = target.project
+    project&.namespace || target.try(:namespace)
+  end
+
+  def work_item_activity_counter
+    Gitlab::UsageDataCounters::WorkItemActivityUniqueCounter
   end
 end
+
+TodoService.prepend_mod_with('TodoService')

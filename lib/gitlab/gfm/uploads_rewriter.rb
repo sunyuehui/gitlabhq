@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'fileutils'
 
 module Gitlab
@@ -6,62 +8,65 @@ module Gitlab
     # Class that rewrites markdown links for uploads
     #
     # Using a pattern defined in `FileUploader` it copies files to a new
-    # project and rewrites all links to uploads in in a given text.
-    #
-    #
+    # project and rewrites all links to uploads in a given text.
     class UploadsRewriter
-      def initialize(text, source_project, _current_user)
+      include Gitlab::Utils::StrongMemoize
+
+      def initialize(text, _text_html, source_container, _current_user)
         @text = text
-        @source_project = source_project
+        @source_container = source_container
         @pattern = FileUploader::MARKDOWN_PATTERN
       end
 
-      def rewrite(target_project)
+      def rewrite(target_container)
         return @text unless needs_rewrite?
 
-        @text.gsub(@pattern) do |markdown|
-          file = find_file(@source_project, $~[:secret], $~[:file])
-          return markdown unless file.try(:exists?)
+        @target_container = target_container
 
-          new_uploader = FileUploader.new(target_project)
-          with_link_in_tmp_dir(file.file) do |open_tmp_file|
-            new_uploader.store!(open_tmp_file)
-          end
-          new_uploader.to_markdown
+        rewritten_text = Gitlab::StringRegexMarker.new(@text).mark(@pattern) do |markdown, left:, right:, mode:|
+          transform_markdown(markdown)
         end
+
+        # MarkdownContentRewriterService relies on the text being changed _in place_.
+        @text.gsub!(@text, rewritten_text)
       end
 
       def needs_rewrite?
-        files.any?
-      end
-
-      def files
-        referenced_files = @text.scan(@pattern).map do
-          find_file(@source_project, $~[:secret], $~[:file])
+        strong_memoize(:needs_rewrite) do
+          @pattern.match?(@text)
         end
-
-        referenced_files.compact.select(&:exists?)
       end
 
       private
 
-      def find_file(project, secret, file)
-        uploader = FileUploader.new(project, secret)
-        uploader.retrieve_from_store!(file)
-        uploader.file
+      def was_embedded?(markdown)
+        markdown.starts_with?("!")
       end
 
-      # Because the uploaders use 'move_to_store' we must have a temporary
-      # file that is allowed to be (re)moved.
-      def with_link_in_tmp_dir(file)
-        dir = Dir.mktmpdir('UploadsRewriter', File.dirname(file))
-        # The filename matters to Carrierwave so we make sure to preserve it
-        tmp_file = File.join(dir, File.basename(file))
-        File.link(file, tmp_file)
-        # Open the file to placate Carrierwave
-        File.open(tmp_file) { |open_file| yield open_file }
-      ensure
-        FileUtils.rm_rf(dir)
+      def find_file(secret, file_name)
+        UploaderFinder.new(@source_container, secret, file_name).execute
+      end
+
+      def transform_markdown(markdown)
+        match = @pattern.match(markdown)
+        file = find_file(match[:secret], match[:file])
+
+        # No file will be returned for a path traversal
+        return markdown unless file.try(:exists?)
+
+        moved = uploader_class.copy_to(file, @target_container)
+        moved_markdown = moved.markdown_link
+
+        # Prevents rewrite of plain links as embedded
+        if was_embedded?(markdown)
+          moved_markdown
+        else
+          moved_markdown.delete_prefix('!')
+        end
+      end
+
+      def uploader_class
+        @klass ||= @target_container.is_a?(Group) ? NamespaceFileUploader : FileUploader
       end
     end
   end

@@ -1,19 +1,7 @@
+- has_label = local_assigns.fetch(:has_label, false)
+- selected = projects_filter_selected(params[:visibility_level])
+
 - if current_user
-  .dropdown
-    %button.dropdown-toggle{ href: '#', "data-toggle" => "dropdown" }
-      = icon('globe')
-      %span.light Visibility:
-      - if params[:visibility_level].present?
-        = visibility_level_label(params[:visibility_level].to_i)
-      - else
-        Any
-      = icon('chevron-down')
-    %ul.dropdown-menu.dropdown-menu-align-right
-      %li
-        = link_to filter_projects_path(visibility_level: nil) do
-          Any
-      - Gitlab::VisibilityLevel.values.each do |level|
-        %li{ class: active_when(level.to_s == params[:visibility_level]) || 'light' }
-          = link_to filter_projects_path(visibility_level: level) do
-            = visibility_level_icon(level)
-            = visibility_level_label(level)
+  - unless has_label
+    %span.gl-float-left.gl-whitespace-nowrap.gl-text-sm.gl-text-subtle.gl-my-3= _("Visibility:")
+  = gl_redirect_listbox_tag(projects_filter_items, selected, class: 'gl-ml-3', data: { placement: 'right' })

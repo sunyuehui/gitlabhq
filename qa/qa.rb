@@ -1,87 +1,105 @@
-$: << File.expand_path(File.dirname(__FILE__))
+# frozen_string_literal: true
 
+Encoding.default_external = 'UTF-8'
+
+require 'gitlab/utils/all'
+
+require_relative '../lib/gitlab_edition'
+require_relative '../config/initializers/0_inject_enterprise_edition_module'
+
+require_relative '../config/bundler_setup'
+Bundler.require(:default)
+
+require 'securerandom'
+require 'pathname'
+require 'rainbow/refinement'
+require 'active_support'
+require 'active_support/core_ext/hash'
+require 'active_support/core_ext/object/blank'
+require 'active_support/core_ext/module/delegation'
+require 'active_support/parameter_filter'
 module QA
-  ##
-  # GitLab QA runtime classes, mostly singletons.
-  #
-  module Runtime
-    autoload :Release, 'qa/runtime/release'
-    autoload :User, 'qa/runtime/user'
-    autoload :Namespace, 'qa/runtime/namespace'
-  end
+  root = "#{__dir__}/qa"
 
-  ##
-  # GitLab QA Scenarios
-  #
-  module Scenario
-    ##
-    # Support files
-    #
-    autoload :Actable, 'qa/scenario/actable'
-    autoload :Template, 'qa/scenario/template'
+  loader = Zeitwerk::Loader.new
 
-    ##
-    # Test scenario entrypoints.
-    #
-    module Test
-      autoload :Instance, 'qa/scenario/test/instance'
-    end
+  # require jh/qa/qa.rb first, to load JH module make prepend module works
+  require '../jh/qa/qa' if GitlabEdition.jh?
 
-    ##
-    # GitLab instance scenarios.
-    #
-    module Gitlab
-      module Project
-        autoload :Create, 'qa/scenario/gitlab/project/create'
-      end
-    end
-  end
+  loader.push_dir(root, namespace: QA)
 
-  ##
-  # Classes describing structure of GitLab, pages, menus etc.
-  #
-  # Needed to execute click-driven-only black-box tests.
-  #
-  module Page
-    autoload :Base, 'qa/page/base'
+  loader.ignore("#{root}/factories")
+  loader.ignore("#{root}/specs/features")
+  loader.ignore("#{root}/specs/spec_helper.rb")
 
-    module Main
-      autoload :Entry, 'qa/page/main/entry'
-      autoload :Menu, 'qa/page/main/menu'
-    end
+  # we need to eager load scenario classes
+  # zeitwerk does not have option to configure what to eager load, so all exceptions have to be defined
+  loader.do_not_eager_load("#{root}/ce")
+  loader.do_not_eager_load("#{root}/ee")
+  loader.do_not_eager_load("#{root}/flow")
+  loader.do_not_eager_load("#{root}/git")
+  loader.do_not_eager_load("#{root}/mobile")
+  loader.do_not_eager_load("#{root}/page")
+  loader.do_not_eager_load("#{root}/resource")
+  loader.do_not_eager_load("#{root}/runtime")
+  loader.do_not_eager_load("#{root}/service")
+  loader.do_not_eager_load("#{root}/specs")
+  loader.do_not_eager_load("#{root}/support")
+  loader.do_not_eager_load("#{root}/tools")
+  loader.do_not_eager_load("#{root}/vendor")
 
-    module Dashboard
-      autoload :Groups, 'qa/page/dashboard/groups'
-    end
+  loader.inflector.inflect(
+    "ce" => "CE",
+    "ee" => "EE",
+    "api" => "API",
+    "ssh" => "SSH",
+    "ssh_key" => "SSHKey",
+    "ssh_keys" => "SSHKeys",
+    "ecdsa" => "ECDSA",
+    "ed25519" => "ED25519",
+    "graphql" => "GraphQL",
+    "rsa" => "RSA",
+    "ldap" => "LDAP",
+    "ldap_tls" => "LDAPTLS",
+    "ldap_no_tls" => "LDAPNoTLS",
+    "ldap_no_server" => "LDAPNoServer",
+    "rspec" => "RSpec",
+    "web_ide" => "WebIDE",
+    "ci_cd" => "CiCd",
+    "project_imported_from_url" => "ProjectImportedFromURL",
+    "repo_by_url" => "RepoByURL",
+    "oauth" => "OAuth",
+    "saml_sso_sign_in" => "SamlSSOSignIn",
+    "group_saml" => "GroupSAML",
+    "instance_saml" => "InstanceSAML",
+    "saml_sso" => "SamlSSO",
+    "ldap_sync" => "LDAPSync",
+    "ip_address" => "IPAddress",
+    "gpg" => "GPG",
+    "user_gpg" => "UserGPG",
+    "smtp" => "SMTP",
+    "otp" => "OTP",
+    "jira_api" => "JiraAPI",
+    "registry_tls" => "RegistryTLS",
+    "jetbrains" => "JetBrains",
+    "vscode" => "VSCode",
+    "registry_with_cdn" => "RegistryWithCDN",
+    "fips" => "FIPS",
+    "ci_cd_settings" => "CICDSettings",
+    "cli" => "CLI",
+    "import_with_smtp" => "ImportWithSMTP"
+  )
 
-    module Group
-      autoload :Show, 'qa/page/group/show'
-    end
-
-    module Project
-      autoload :New, 'qa/page/project/new'
-      autoload :Show, 'qa/page/project/show'
-    end
-
-    module Admin
-      autoload :Menu, 'qa/page/admin/menu'
-    end
-  end
-
-  ##
-  # Classes describing operations on Git repositories.
-  #
-  module Git
-    autoload :Repository, 'qa/git/repository'
-  end
-
-  ##
-  # Classes that make it possible to execute features tests.
-  #
-  module Specs
-    autoload :Config, 'qa/specs/config'
-    autoload :Runner, 'qa/specs/runner'
-  end
+  loader.setup
+  loader.eager_load
 end
 
-QA::Runtime::Release.extend_autoloads!
+# Custom warning processing
+Warning.process do |warning|
+  QA::Runtime::Logger.warn(warning.strip)
+end
+
+# ignore faraday-multipart warning produced by octokit as it is only required for functionality we don't use
+# see: https://github.com/octokit/octokit.rb/issues/1701
+Warning.ignore(/To use multipart middleware with Faraday v2\.0/)
+require "octokit"

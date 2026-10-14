@@ -1,15 +1,6 @@
-class WebHook < ActiveRecord::Base
-  include Sortable
+# frozen_string_literal: true
 
-  has_many :web_hook_logs, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
-
-  validates :url, presence: true, url: true
-
-  def execute(data, hook_name)
-    WebHookService.new(self, data, hook_name).execute
-  end
-
-  def async_execute(data, hook_name)
-    WebHookService.new(self, data, hook_name).async_execute
-  end
+class WebHook < ApplicationRecord
+  include FromUnion
+  include WebHooks::Hook
 end

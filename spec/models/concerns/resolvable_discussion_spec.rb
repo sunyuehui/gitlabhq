@@ -1,13 +1,22 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Discussion, ResolvableDiscussion do
+RSpec.describe Discussion, ResolvableDiscussion, feature_category: :code_review_workflow do
   subject { described_class.new([first_note, second_note, third_note]) }
 
-  let(:first_note) { create(:discussion_note_on_merge_request) }
-  let(:merge_request) { first_note.noteable }
-  let(:project) { first_note.project }
-  let(:second_note) { create(:discussion_note_on_merge_request, noteable: merge_request, project: project, in_reply_to: first_note) }
-  let(:third_note) { create(:discussion_note_on_merge_request, noteable: merge_request, project: project) }
+  let_it_be_with_reload(:first_note) { create(:discussion_note_on_merge_request) }
+  # `freeze: false` is required in this spec: one or more `let_it_be` subjects
+  # cannot be frozen by default (deep_freeze traversal failure, a non-AR
+  # subject, or an in-memory mutation that survives reload/refind). Do not
+  # drop these opt-outs or convert them to `let_it_be_with_reload`/`refind`
+  # (see gitlab-org/gitlab#602925).
+  let_it_be(:noteable, freeze: false) { first_note.noteable }
+  let_it_be_with_reload(:project) { first_note.project }
+  let_it_be_with_reload(:second_note) { create(:discussion_note_on_merge_request, noteable: noteable, project: project, in_reply_to: first_note) }
+  let_it_be_with_reload(:third_note) { create(:discussion_note_on_merge_request, noteable: noteable, project: project) }
+
+  let_it_be(:current_user) { create(:user) }
 
   describe "#resolvable?" do
     context "when potentially resolvable" do
@@ -152,8 +161,6 @@ describe Discussion, ResolvableDiscussion do
   end
 
   describe "#can_resolve?" do
-    let(:current_user) { create(:user) }
-
     context "when not resolvable" do
       before do
         allow(subject).to receive(:resolvable?).and_return(false)
@@ -183,18 +190,70 @@ describe Discussion, ResolvableDiscussion do
             subject.noteable.author = current_user
           end
 
-          it "returns true" do
-            expect(subject.can_resolve?(current_user)).to be true
+          context 'with access to the project' do
+            before_all do
+              project.add_developer(current_user)
+            end
+
+            it "returns true" do
+              expect(subject.can_resolve?(current_user)).to be true
+            end
+
+            context 'with confidential discussion' do
+              before_all do
+                first_note.confidential = true
+              end
+
+              it "returns true" do
+                expect(subject.can_resolve?(current_user)).to be true
+              end
+            end
+          end
+
+          context 'without access to the project' do
+            it "returns false" do
+              expect(subject.can_resolve?(current_user)).to be false
+            end
+
+            context 'with confidential discussion' do
+              before_all do
+                first_note.confidential = true
+              end
+
+              it "returns false" do
+                expect(subject.can_resolve?(current_user)).to be false
+              end
+            end
+          end
+
+          context 'when noteable is locked' do
+            before do
+              allow(subject.noteable).to receive(:discussion_locked?).and_return(true)
+            end
+
+            it 'returns false' do
+              expect(subject.can_resolve?(current_user)).to be_falsey
+            end
           end
         end
 
         context "when the signed in user can push to the project" do
-          before do
-            subject.project.team << [current_user, :master]
+          before_all do
+            project.add_maintainer(current_user)
           end
 
           it "returns true" do
             expect(subject.can_resolve?(current_user)).to be true
+          end
+
+          context "when the noteable has no author" do
+            before do
+              noteable.author = nil
+            end
+
+            it "returns true" do
+              expect(subject.can_resolve?(current_user)).to be true
+            end
           end
         end
 
@@ -202,14 +261,22 @@ describe Discussion, ResolvableDiscussion do
           it "returns false" do
             expect(subject.can_resolve?(current_user)).to be false
           end
+
+          context "when the noteable has no author" do
+            before do
+              subject.noteable.author = nil
+            end
+
+            it "returns false" do
+              expect(subject.can_resolve?(current_user)).to be false
+            end
+          end
         end
       end
     end
   end
 
   describe "#resolve!" do
-    let(:current_user) { create(:user) }
-
     context "when not resolvable" do
       before do
         allow(subject).to receive(:resolvable?).and_return(false)
@@ -239,8 +306,8 @@ describe Discussion, ResolvableDiscussion do
     end
 
     context "when resolvable" do
-      let(:user) { create(:user) }
-      let(:second_note) { create(:diff_note_on_commit) } # unresolvable
+      let_it_be(:user) { create(:user) }
+      let_it_be(:second_note) { create(:diff_note_on_commit) } # unresolvable
 
       before do
         allow(subject).to receive(:resolvable?).and_return(true)
@@ -415,6 +482,12 @@ describe Discussion, ResolvableDiscussion do
 
           expect(subject.resolved?).to be true
         end
+
+        it "broadcasts note change of the noteable" do
+          expect(subject.noteable).to receive(:broadcast_notes_changed)
+
+          subject.resolve!(current_user)
+        end
       end
     end
   end
@@ -431,7 +504,7 @@ describe Discussion, ResolvableDiscussion do
     end
 
     context "when resolvable" do
-      let(:user) { create(:user) }
+      let_it_be(:user) { create(:user) }
 
       before do
         allow(subject).to receive(:resolvable?).and_return(true)
@@ -495,6 +568,12 @@ describe Discussion, ResolvableDiscussion do
 
           expect(subject.resolved?).to be false
         end
+
+        it "broadcasts note change of the noteable" do
+          expect(subject.noteable).to receive(:broadcast_notes_changed)
+
+          subject.unresolve!
+        end
       end
 
       context "when some resolvable notes are resolved" do
@@ -533,16 +612,32 @@ describe Discussion, ResolvableDiscussion do
   end
 
   describe "#last_resolved_note" do
-    let(:current_user) { create(:user) }
+    let(:time) { Time.current.utc }
 
     before do
-      first_note.resolve!(current_user)
-      third_note.resolve!(current_user)
-      second_note.resolve!(current_user)
+      travel_to(time - 1.second) do
+        first_note.resolve!(current_user)
+      end
+      travel_to(time) do
+        third_note.resolve!(current_user)
+      end
+      travel_to(time + 1.second) do
+        second_note.resolve!(current_user)
+      end
     end
 
     it "returns the last note that was resolved" do
       expect(subject.last_resolved_note).to eq(second_note)
+    end
+  end
+
+  describe '#clear_memoized_values' do
+    it 'resets the memoized values' do
+      described_class.memoized_values.each do |memo|
+        subject.instance_variable_set("@#{memo}", 'memoized')
+        expect { subject.clear_memoized_values }.to change { subject.instance_variable_get("@#{memo}") }
+          .from('memoized').to(nil)
+      end
     end
   end
 end

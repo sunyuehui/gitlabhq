@@ -1,5 +1,11 @@
+# frozen_string_literal: true
+
 class EnvironmentSerializer < BaseSerializer
-  Item = Struct.new(:name, :size, :latest)
+  include WithPagination
+
+  Item = Struct.new(:name, :folder_size, :latest) do
+    alias_method :size, :folder_size
+  end
 
   entity EnvironmentEntity
 
@@ -7,16 +13,8 @@ class EnvironmentSerializer < BaseSerializer
     tap { @itemize = true }
   end
 
-  def with_pagination(request, response)
-    tap { @paginator = Gitlab::Serializer::Pagination.new(request, response) }
-  end
-
   def itemized?
     @itemize
-  end
-
-  def paginated?
-    @paginator.present?
   end
 
   def represent(resource, opts = {})
@@ -29,27 +27,104 @@ class EnvironmentSerializer < BaseSerializer
     else
       resource = @paginator.paginate(resource) if paginated?
 
-      super(resource, opts)
+      super(batch_load(resource), opts)
     end
   end
 
   private
 
+  # rubocop: disable CodeReuse/ActiveRecord
   def itemize(resource)
-    items = resource.order('folder_name ASC')
-      .group('COALESCE(environment_type, name)')
-      .select('COALESCE(environment_type, name) AS folder_name',
-              'COUNT(*) AS size', 'MAX(id) AS last_id')
+    items = resource.order('folder ASC')
+      .group('COALESCE(environment_type, id::text)', 'COALESCE(environment_type, name)')
+      .select(
+        'COALESCE(environment_type, id::text), COALESCE(environment_type, name) AS folder',
+        'COUNT(*) AS size', 'MAX(id) AS last_id'
+      )
 
     # It makes a difference when you call `paginate` method, because
     # although `page` is effective at the end, it calls counting methods
     # immediately.
     items = @paginator.paginate(items) if paginated?
 
-    environments = resource.where(id: items.map(&:last_id)).index_by(&:id)
+    environments = batch_load(Environment.where(id: items.map(&:last_id)))
+    environments_by_id = environments.index_by(&:id)
 
     items.map do |item|
-      Item.new(item.folder_name, item.size, environments[item.last_id])
+      Item.new(item.folder, item.size, environments_by_id[item.last_id])
     end
   end
+
+  def batch_load(resource)
+    resource = resource.preload(environment_associations)
+
+    Preloaders::Environments::DeploymentPreloader.new(resource)
+      .execute_with_union(:last_finished_deployment, deployment_associations)
+
+    Preloaders::Environments::DeploymentPreloader.new(resource)
+      .execute_with_union(:last_deployment, deployment_associations)
+
+    Preloaders::Environments::DeploymentPreloader.new(resource)
+      .execute_with_union(:upcoming_deployment, deployment_associations)
+
+    resource.to_a.tap do |environments|
+      environments.each do |environment|
+        # Batch loading the commits of the deployments
+        environment.last_deployment&.commit&.try(:lazy_author)
+        environment.upcoming_deployment&.commit&.try(:lazy_author)
+
+        # Batch loading last_finished_deployment_group,
+        #   which is called later by environment.stop_actions
+        environment.last_finished_deployment_group
+      end
+    end
+  end
+
+  def environment_associations
+    {
+      project: project_associations
+    }
+  end
+
+  def deployment_associations
+    {
+      user: [],
+      deployment_cluster: { cluster: [] },
+      project: {
+        route: [],
+        namespace: :route
+      },
+      deployable: {
+        user: [],
+        job_environment: [],
+        job_definition: [],
+        supply_chain_attestation: [],
+        pipeline: {
+          project: [],
+          manual_actions: [
+            :job_definition, :job_environment, :deployment, :supply_chain_attestation, :project,
+            { pipeline: :project }
+          ],
+          scheduled_actions: [
+            :job_definition, :job_environment, :supply_chain_attestation, :project,
+            { pipeline: :project }
+          ],
+          latest_successful_jobs: [:supply_chain_attestation],
+          latest_finished_jobs: [:supply_chain_attestation]
+        },
+        project: project_associations
+      }
+    }
+  end
+
+  def project_associations
+    {
+      project_feature: [],
+      route: [],
+      namespace: :route
+    }
+  end
+  # rubocop: enable CodeReuse/ActiveRecord
 end
+
+EnvironmentSerializer.prepend_mod_with('EnvironmentSerializer')

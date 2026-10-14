@@ -1,79 +1,85 @@
+# frozen_string_literal: true
+
 class Projects::RefsController < Projects::ApplicationController
   include ExtractsPath
   include TreeHelper
+  include HandlesGitalyErrors
+
+  around_action :allow_gitaly_ref_name_caching, only: [:logs_tree]
 
   before_action :require_non_empty_project
   before_action :validate_ref_id
   before_action :assign_ref_vars
-  before_action :authorize_download_code!
+  before_action :authorize_read_code!
+
+  feature_category :source_code_management
+  urgency :low, [:switch, :logs_tree]
 
   def switch
+    Gitlab::PathTraversal.check_path_traversal!(@id)
+
     respond_to do |format|
       format.html do
         new_path =
-          case params[:destination]
+          case permitted_params[:destination]
           when "tree"
             project_tree_path(@project, @id)
           when "blob"
             project_blob_path(@project, @id)
           when "graph"
-            project_network_path(@project, @id, @options)
+            project_network_path(@project, @id, ref_type: ref_type)
           when "graphs"
-            project_graph_path(@project, @id)
+            project_graph_path(@project, @id, ref_type: ref_type)
           when "find_file"
             project_find_file_path(@project, @id)
           when "graphs_commits"
             commits_project_graph_path(@project, @id)
           when "badges"
-            project_pipelines_settings_path(@project, ref: @id)
+            project_settings_ci_cd_path(@project, ref: @id)
           else
-            project_commits_path(@project, @id)
+            project_commits_path(@project, @id, ref_type: ref_type)
           end
 
         redirect_to new_path
       end
     end
+  rescue Gitlab::PathTraversal::PathTraversalAttackError, ActionController::UrlGenerationError
+    head :bad_request
   end
 
   def logs_tree
-    @offset = if params[:offset].present?
-                params[:offset].to_i
-              else
-                0
-              end
-
-    @limit = 25
-
-    @path = params[:path]
-
-    contents = []
-    contents.push(*tree.trees)
-    contents.push(*tree.blobs)
-    contents.push(*tree.submodules)
-
-    @logs = contents[@offset, @limit].to_a.map do |content|
-      file = @path ? File.join(@path, content.name) : content.name
-      last_commit = @repo.last_commit_for_path(@commit.id, file)
-      {
-        file_name: content.name,
-        commit: last_commit
-      }
-    end
-
-    offset = (@offset + @limit)
-    if contents.size > offset
-      @more_log_url = logs_file_project_ref_path(@project, @ref, @path || '', offset: offset)
-    end
+    authenticate_user! if require_auth?
 
     respond_to do |format|
-      format.html { render_404 }
-      format.js
+      format.json do
+        logs, next_offset = tree_summary.fetch_logs
+
+        response.headers["More-Logs-Offset"] = next_offset.to_s if next_offset
+
+        render json: logs
+      end
     end
   end
 
   private
 
+  def require_auth?
+    current_user.blank? && @ref != @project.default_branch_or_main &&
+      Feature.enabled?(:require_login_for_commit_tree, @project)
+  end
+
+  def tree_summary
+    ::Gitlab::TreeSummary.new(
+      @commit, @project, current_user,
+      path: @path, offset: permitted_params[:offset], limit: 25
+    )
+  end
+
   def validate_ref_id
-    return not_found! if params[:id].present? && params[:id] !~ Gitlab::PathRegex.git_reference_regex
+    not_found if permitted_params[:id].present? && permitted_params[:id] !~ Gitlab::PathRegex.git_reference_regex
+  end
+
+  def permitted_params
+    params.permit(:id, :offset, :destination)
   end
 end

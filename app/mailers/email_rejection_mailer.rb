@@ -1,4 +1,10 @@
-class EmailRejectionMailer < BaseMailer
+# frozen_string_literal: true
+
+class EmailRejectionMailer < ApplicationMailer
+  layout 'mailer'
+
+  helper EmailsHelper
+
   def rejection(reason, original_raw, can_retry = false)
     @reason = reason
     @original_message = Mail::Message.new(original_raw)
@@ -16,6 +22,6 @@ class EmailRejectionMailer < BaseMailer
 
     headers['Reply-To'] = @original_message.to.first if can_retry
 
-    mail(headers)
+    mail_with_locale(headers)
   end
 end

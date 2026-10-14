@@ -1,6 +1,7 @@
-- page_title "Edit", "#{@runner.description} ##{@runner.id}", "Runners"
+- runner_name = runner_short_name(@runner)
+- breadcrumb_title _('Edit')
+- page_title _('Edit'), runner_name
+- add_to_breadcrumbs _('CI/CD Settings'), project_settings_ci_cd_path(@project)
+- add_to_breadcrumbs runner_name, project_runner_path(@project, @runner)
 
-%h4 Runner ##{@runner.id}
-
-%hr
-  = render 'form', runner: @runner, runner_form_url: runner_path(@runner)
+#js-project-runner-edit{ data: {runner_id: @runner.id, runner_path: project_runner_path(@project, @runner) } }

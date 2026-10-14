@@ -1,19 +1,12 @@
-require 'spec_helper'
+# frozen_string_literal: true
 
-require 'rubocop'
-require 'rubocop/rspec/support'
-
+require 'rubocop_spec_helper'
 require_relative '../../../../rubocop/cop/migration/timestamps'
 
-describe RuboCop::Cop::Migration::Timestamps do
-  include CopHelper
-
-  subject(:cop) { described_class.new }
+RSpec.describe RuboCop::Cop::Migration::Timestamps, feature_category: :database do
   let(:migration_with_timestamps) do
     %q(
-      class Users < ActiveRecord::Migration
-        DOWNTIME = false
-
+      class Users < ActiveRecord::Migration[4.2]
         def change
           create_table :users do |t|
             t.string :username, null: false
@@ -27,9 +20,7 @@ describe RuboCop::Cop::Migration::Timestamps do
 
   let(:migration_without_timestamps) do
     %q(
-      class Users < ActiveRecord::Migration
-        DOWNTIME = false
-
+      class Users < ActiveRecord::Migration[4.2]
         def change
           create_table :users do |t|
             t.string :username, null: false
@@ -42,9 +33,7 @@ describe RuboCop::Cop::Migration::Timestamps do
 
   let(:migration_with_timestamps_with_timezone) do
     %q(
-      class Users < ActiveRecord::Migration
-        DOWNTIME = false
-
+      class Users < ActiveRecord::Migration[4.2]
         def change
           create_table :users do |t|
             t.string :username, null: false
@@ -62,38 +51,34 @@ describe RuboCop::Cop::Migration::Timestamps do
     end
 
     it 'registers an offense when the "timestamps" method is used' do
-      inspect_source(cop, migration_with_timestamps)
-
-      aggregate_failures do
-        expect(cop.offenses.size).to eq(1)
-        expect(cop.offenses.map(&:line)).to eq([8])
-      end
+      expect_offense(<<~RUBY)
+        class Users < ActiveRecord::Migration[4.2]
+          def change
+            create_table :users do |t|
+              t.string :username, null: false
+              t.timestamps null: true
+                ^^^^^^^^^^ Do not use `timestamps`, use `timestamps_with_timezone` instead
+              t.string :password
+            end
+          end
+        end
+      RUBY
     end
 
     it 'does not register an offense when the "timestamps" method is not used' do
-      inspect_source(cop, migration_without_timestamps)
-
-      aggregate_failures do
-        expect(cop.offenses.size).to eq(0)
-      end
+      expect_no_offenses(migration_without_timestamps)
     end
 
     it 'does not register an offense when the "timestamps_with_timezone" method is used' do
-      inspect_source(cop, migration_with_timestamps_with_timezone)
-
-      aggregate_failures do
-        expect(cop.offenses.size).to eq(0)
-      end
+      expect_no_offenses(migration_with_timestamps_with_timezone)
     end
   end
 
   context 'outside of migration' do
-    it 'registers no offense' do
-      inspect_source(cop, migration_with_timestamps)
-      inspect_source(cop, migration_without_timestamps)
-      inspect_source(cop, migration_with_timestamps_with_timezone)
-
-      expect(cop.offenses.size).to eq(0)
+    it 'registers no offense', :aggregate_failures do
+      expect_no_offenses(migration_with_timestamps)
+      expect_no_offenses(migration_without_timestamps)
+      expect_no_offenses(migration_with_timestamps_with_timezone)
     end
   end
 end

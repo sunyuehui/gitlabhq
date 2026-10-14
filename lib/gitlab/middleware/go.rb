@@ -1,97 +1,210 @@
-# A dumb middleware that returns a Go HTML document if the go-get=1 query string
-# is used irrespective if the namespace/project exists
+# frozen_string_literal: true
+
+# A middleware that returns a Go HTML document if the go-get=1 query string is present
 module Gitlab
   module Middleware
     class Go
+      include ActionView::Helpers::TagHelper
+      include ActionController::HttpAuthentication::Basic
+
+      PROJECT_PATH_REGEX = %r{\A(#{Gitlab::PathRegex.full_namespace_route_regex}/#{Gitlab::PathRegex.project_route_regex})/}
+
       def initialize(app)
         @app = app
       end
 
       def call(env)
-        request = Rack::Request.new(env)
+        request = ActionDispatch::Request.new(env)
 
-        if go_request?(request)
-          render_go_doc(request)
-        else
-          @app.call(env)
-        end
+        return handle_go_get_request(request) if go_get_request?(request)
+
+        @app.call(env)
+
+      rescue Gitlab::Auth::IpBlocked => e
+        Gitlab::AuthLogger.error(
+          message: 'Rack_Attack',
+          status: 403,
+          env: :blocklist,
+          remote_ip: request.ip,
+          request_method: request.request_method,
+          path: request.filtered_path
+        )
+        Rack::Response.new(e.message, 403).finish
+      rescue Gitlab::Auth::MissingPersonalAccessTokenError
+        not_found_response
       end
 
       private
 
-      def render_go_doc(request)
-        body = go_body(request)
-        response = Rack::Response.new(body, 200, { 'Content-Type' => 'text/html' })
-        response.finish
+      # not_found_response returns a message that the go cli toolchain displays directly.
+      def not_found_response
+        go_help_page_url = Rails.application.routes.url_helpers.help_page_url('user/project/use_project_as_go_package.md')
+        not_found_message = "Go package not found or access denied. If you are trying to access a private project, ensure your ~/.netrc file has credentials so the go toolchain can authenticate. See #{go_help_page_url} for details."
+
+        [404, { 'Content-Type' => 'text/plain' }, [not_found_message]]
       end
 
-      def go_request?(request)
-        request["go-get"].to_i == 1 && request.env["PATH_INFO"].present?
-      end
+      # handle_go_get_request responds to `go get` requests by either returning a successful 200
+      # response with meta tags as described in https://go.dev/ref/mod, or a 404 response with a
+      # message that the go toolchain will display.
+      #
+      # The go toolchain authenticates using basic auth. When credentials are not present, a
+      # successful response is always returned as if a project exists (using a two-segment path
+      # like `namespace/project`) in order to prevent leaking information about the existence of
+      # private projects, and to maintain backwards compatibility for users who have not set up
+      # authentication for their go toolchain.
+      def handle_go_get_request(request)
+        path_info = request.env["PATH_INFO"].delete_prefix('/')
 
-      def go_body(request)
-        project_url = URI.join(Gitlab.config.gitlab.url, project_path(request))
-        import_prefix = strip_url(project_url.to_s)
+        paths = candidate_paths(path_info)
+        project = project_for_paths(paths)
+        redirect = nil
 
-        "<!DOCTYPE html><html><head><meta content='#{import_prefix} git #{project_url}.git' name='go-import'></head></html>\n"
-      end
+        unless project
+          redirect = redirect_for_paths(paths)
+          project = redirect&.source
+        end
 
-      def strip_url(url)
-        url.gsub(/\Ahttps?:\/\//, '')
-      end
+        if project && can_read_project?(request, project)
+          return not_found_response unless project.repository_exists?
 
-      def project_path(request)
-        path_info = request.env["PATH_INFO"]
-        path_info.sub!(/^\//, '')
-
-        # Go subpackages may be in the form of `namespace/project/path1/path2/../pathN`.
-        # In a traditional project with a single namespace, this would denote repo
-        # `namespace/project` with subpath `path1/path2/../pathN`, but with nested
-        # groups, this could also be `namespace/project/path1` with subpath
-        # `path2/../pathN`, for example.
-
-        # We find all potential project paths out of the path segments
-        path_segments = path_info.split('/')
-        simple_project_path = path_segments.first(2).join('/')
-
-        # If the path is at most 2 segments long, it is a simple `namespace/project` path and we're done
-        return simple_project_path if path_segments.length <= 2
-
-        project_paths = []
-        begin
-          project_paths << path_segments.join('/')
-          path_segments.pop
-        end while path_segments.length >= 2
-
-        # We see if a project exists with any of these potential paths
-        project = project_for_paths(project_paths, request)
-
-        if project
-          # If a project is found and the user has access, we return the full project path
-          project.full_path
+          # When accessed via redirect, use the requested path as import prefix
+          # but point repo URL to actual location. This follows Go's vanity import pattern.
+          import_prefix = redirect&.path || project.full_path
+          create_go_get_html_response(import_prefix, project.full_path)
+        elsif request.authorization.present?
+          not_found_response
         else
-          # If not, we return the first two components as if it were a simple `namespace/project` path,
-          # so that we don't reveal the existence of a nested project the user doesn't have access to.
-          # This means that for an unauthenticated request to `group/subgroup/project/subpackage`
-          # for a private `group/subgroup/project` with subpackage path `subpackage`, GitLab will respond
-          # as if the user is looking for project `group/subgroup`, with subpackage path `project/subpackage`.
-          # Since `go get` doesn't authenticate by default, this means that
-          # `go get gitlab.com/group/subgroup/project/subpackage` will not work for private projects.
-          # `go get gitlab.com/group/subgroup/project.git/subpackage` will work, since Go is smart enough
-          # to figure that out. `import 'gitlab.com/...'` behaves the same as `go get`.
-          simple_project_path
+          path_segments = path_info.split('/')
+          return not_found_response unless path_segments.length >= 2
+
+          two_segment_path = path_segments.first(2).join('/')
+
+          create_go_get_html_response(two_segment_path, two_segment_path)
         end
       end
 
-      def project_for_paths(paths, request)
-        project = Project.where_full_path_in(paths).first
-        return unless Ability.allowed?(current_user(request), :read_project, project)
-
-        project
+      def go_get_request?(request)
+        request["go-get"].to_i == 1 && request.env["PATH_INFO"].present?
       end
 
-      def current_user(request)
-        request.env['warden']&.authenticate
+      def get_repo_url(project_full_path)
+        return ssh_url(project_full_path) if Gitlab::CurrentSettings.enabled_git_access_protocol == 'ssh'
+
+        "#{http_url(project_full_path)}.git"
+      end
+
+      # create_go_get_html_response creates a HTML document for go get with the expected meta tags.
+      # import_prefix: the path used in the go-import meta tag (what users import)
+      # repo_path: the actual repository path for the repo URL
+      def create_go_get_html_response(import_prefix, repo_path)
+        root_path = get_root_path(import_prefix)
+        repo_url = get_repo_url(repo_path)
+
+        go_import_meta_tag = tag.meta(name: 'go-import', content: "#{root_path} git #{repo_url}")
+        head_tag = content_tag :head, go_import_meta_tag
+        body_tag = content_tag :body, "go get #{root_path}"
+        html = content_tag :html, head_tag + body_tag
+
+        response = Rack::Response.new(html, 200, { 'Content-Type' => 'text/html' })
+        response.finish
+      end
+
+      # get_root_path returns a root path based on the instance URL
+      # that includes a relative part of URL if it was set
+      def get_root_path(project_full_path)
+        http_url(project_full_path).gsub(%r{\Ahttps?://}, '')
+      end
+
+      # http_url returns a direct link to the project
+      def http_url(project_full_path)
+        Gitlab::Utils.append_path(Gitlab.config.gitlab.url, project_full_path)
+      end
+
+      # candidate_paths builds a list of potential project paths from longest to shortest
+      def candidate_paths(path_info)
+        project_path_match = "#{path_info}/".match(PROJECT_PATH_REGEX)
+        return [] unless project_path_match
+
+        path = project_path_match[1]
+
+        # A go package path may use a subdirectory. For example a valid package path
+        # is `example.com/namespace/group/group/project/path1/path2/path3`.
+        # So we need to find all potential gitlab project paths from the package path.
+        # For more details on package paths see https://go.dev/ref/mod.
+
+        # Apply maximum upper limit to number of segments (group + 20 subgroups + project = 22 elements)
+        path_segments = path.split('/').take(22) # rubocop: disable CodeReuse/ActiveRecord -- not an active record operation
+
+        paths = []
+        begin
+          paths << path_segments.join('/')
+          path_segments.pop
+        end while path_segments.length >= 2
+
+        paths
+      end
+
+      def project_for_paths(paths)
+        return if paths.empty?
+
+        Project.where_full_path_in(paths).first
+      end
+
+      def redirect_for_paths(paths)
+        return if paths.empty?
+
+        RedirectRoute.for_source_type(Project).by_paths(paths).first
+      end
+
+      # can_read_project? checks if the request's credentials have read access to the project
+      def can_read_project?(request, project)
+        return true if project.public?
+        return false unless has_basic_credentials?(request)
+
+        login, password = user_name_and_password(request)
+        auth_result = Gitlab::Auth.find_for_git_client(login, password, project: project, request: request)
+
+        return false unless auth_result.success?
+        return false unless token_authorized?(auth_result, project)
+
+        auth_result.can_perform_action_on_project?(:download_code, project) ||
+          auth_result.can_perform_action_on_project?(:read_project, project)
+      end
+
+      # Mirrors Gitlab::GitAccess#check_authentication_abilities!: granular tokens carry no legacy
+      # authentication abilities, so they are checked against their granular scopes instead. The
+      # permission is `download_code` because `go get` clones the repository next.
+      def token_authorized?(auth_result, project)
+        token = auth_result.access_token
+        return false unless granular_scopes_authorized?(token, project)
+        return true if token.try(:granular?)
+
+        legacy_token_authorized?(auth_result)
+      end
+
+      # AuthorizeGranularScopesService is called for legacy tokens too, but it only errors for
+      # them when the namespace enforces granular tokens, where denying access is correct.
+      def granular_scopes_authorized?(token, project)
+        return true unless token
+
+        ::Authz::Tokens::AuthorizeGranularScopesService.new(
+          boundaries: ::Authz::Boundary.for(project),
+          permissions: [:download_code],
+          token: token
+        ).execute.success?
+      end
+
+      def legacy_token_authorized?(auth_result)
+        auth_result.authentication_abilities_include?(:download_code) ||
+          auth_result.authentication_abilities_include?(:read_project)
+      end
+
+      def ssh_url(path)
+        shell = Gitlab.config.gitlab_shell
+        user = "#{shell.ssh_user}@" unless shell.ssh_user.empty?
+        port = ":#{shell.ssh_port}" unless shell.ssh_port == 22
+        "ssh://#{user}#{shell.ssh_host}#{port}/#{path}.git"
       end
     end
   end

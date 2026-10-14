@@ -42,6 +42,7 @@ es:
       default: "%d/%m/%Y"
       long: "%d de %B de %Y"
       short: "%d de %b"
+      admin: "%e %b, %Y"
     month_names:
     -
     - enero
@@ -61,7 +62,7 @@ es:
     - :month
     - :year
   datetime:
-    # used in a custom scope that has been created to fix https://gitlab.com/gitlab-org/gitlab-ce/issues/32747
+    # used in a custom scope that has been created to fix https://gitlab.com/gitlab-org/gitlab-foss/issues/32747
     time_ago_in_words:
       half_a_minute: "hace medio minuto"
       less_than_x_seconds:
@@ -226,13 +227,13 @@ es:
       storage_units:
         format: "%n %u"
         units:
-          byte:
-            one: Byte
-            other: Bytes
-          gb: GB
-          kb: KB
-          mb: MB
-          tb: TB
+          byte: B
+          kb: KiB
+          mb: MiB
+          gb: GiB
+          tb: TiB
+          pb: PiB
+          eb: EiB
     percentage:
       format:
         delimiter: ''

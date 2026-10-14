@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::SQL::Glob do
+RSpec.describe Gitlab::SQL::Glob do
   describe '.to_like' do
     it 'matches * as %' do
       expect(glob('apple', '*')).to be(true)
@@ -36,7 +38,7 @@ describe Gitlab::SQL::Glob do
               .rows.flatten.first
 
     case value
-    when 't', 1
+    when true, 1
       true
     else
       false
@@ -44,10 +46,10 @@ describe Gitlab::SQL::Glob do
   end
 
   def query(sql)
-    ActiveRecord::Base.connection.select_all(sql)
+    ApplicationRecord.connection.select_all(sql)
   end
 
   def quote(string)
-    ActiveRecord::Base.connection.quote(string)
+    ApplicationRecord.connection.quote(string)
   end
 end

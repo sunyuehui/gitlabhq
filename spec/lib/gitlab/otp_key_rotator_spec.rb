@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::OtpKeyRotator do
+RSpec.describe Gitlab::OtpKeyRotator do
   let(:file) { Tempfile.new("otp-key-rotator-test") }
   let(:filename) { file.path }
-  let(:old_key) { Gitlab::Application.secrets.otp_key_base }
+  let(:old_key) { Gitlab::Application.credentials.otp_key_base }
   let(:new_key) { "00" * 32 }
   let!(:users) { create_list(:user, 5, :two_factor) }
 
@@ -40,7 +42,7 @@ describe Gitlab::OtpKeyRotator do
     it 'stores the calculated values in a spreadsheet' do
       rotation
 
-      expect(data).to match_array(users.map {|u| build_row(u) })
+      expect(data).to match_array(users.map { |u| build_row(u) })
     end
 
     context 'new key is too short' do

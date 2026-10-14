@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Template
     class GitignoreTemplate < BaseTemplate
@@ -9,7 +11,7 @@ module Gitlab
         def categories
           {
             "Languages" => '',
-            "Global"    => 'Global'
+            "Global" => 'Global'
           }
         end
 

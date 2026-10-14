@@ -1,21 +1,44 @@
+# frozen_string_literal: true
+
 module Ci
-  class BuildPresenter < Gitlab::View::Presenter::Delegated
-    presents :build
+  class BuildPresenter < ProcessablePresenter
+    presents ::Ci::Build, as: :build
 
-    def erased_by_user?
-      # Build can be erased through API, therefore it does not have
-      # `erased_by` user assigned in that case.
-      erased? && erased_by
-    end
-
-    def erased_by_name
-      erased_by.name if erased_by_user?
-    end
-
-    def status_title
+    def status_title(status = detailed_status)
       if auto_canceled?
         "Job is redundant and is auto-canceled by Pipeline ##{auto_canceled_by_id}"
+      else
+        tooltip_for_badge(status)
       end
+    end
+
+    def trigger_variables
+      @trigger_variables ||=
+        if pipeline.trigger_id.blank?
+          []
+        else
+          pipeline.variables.map(&:to_hash_variable)
+        end
+    end
+
+    def execute_in
+      scheduled? && scheduled_at && [0, scheduled_at - Time.now].max
+    end
+
+    def failure_message
+      callout_failure_message if build.failed?
+    end
+
+    private
+
+    def tooltip_for_badge(status)
+      status.badge_tooltip.capitalize
+    end
+
+    def detailed_status
+      @detailed_status ||= build.detailed_status(user)
     end
   end
 end
+
+Ci::BuildPresenter.prepend_mod_with('Ci::BuildPresenter')

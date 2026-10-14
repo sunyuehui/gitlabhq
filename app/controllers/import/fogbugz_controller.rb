@@ -1,77 +1,106 @@
+# frozen_string_literal: true
+
 class Import::FogbugzController < Import::BaseController
+  extend ::Gitlab::Utils::Override
+
+  include SafeFormatHelper
+
   before_action :verify_fogbugz_import_enabled
+  before_action -> {
+    check_rate_limit!(:fogbugz_import, scope: { user: current_user }, redirect_back: true)
+  }, only: :callback
+
   before_action :user_map, only: [:new_user_map, :create_user_map]
+  before_action :verify_blocked_uri, only: :callback
 
-  rescue_from Fogbugz::AuthenticationException, with: :fogbugz_unauthorized
+  rescue_from Gitlab::FogbugzImport::Interface::AuthenticationError, with: :fogbugz_unauthorized
 
-  def new
-  end
+  def new; end
 
   def callback
     begin
-      res = Gitlab::FogbugzImport::Client.new(import_params.symbolize_keys)
-    rescue
+      res = Gitlab::FogbugzImport::Client.new(import_params.to_h.symbolize_keys)
+    rescue StandardError
       # If the URI is invalid various errors can occur
-      return redirect_to new_import_fogbugz_path, alert: 'Could not connect to FogBugz, check your URL'
+      return redirect_to new_import_fogbugz_path(namespace_id: namespace_id_param),
+        alert: _('Could not connect to FogBugz, check your URL')
     end
-    session[:fogbugz_token] = res.get_token
-    session[:fogbugz_uri] = params[:uri]
+    session[:fogbugz_token] = res.get_token.to_s
+    session[:fogbugz_uri] = uri_param
 
-    redirect_to new_user_map_import_fogbugz_path
+    redirect_to new_user_map_import_fogbugz_path(namespace_id: namespace_id_param)
   end
 
-  def new_user_map
-  end
+  def new_user_map; end
 
   def create_user_map
-    user_map = params[:users]
+    user_map = user_map_params.to_h[:users]
 
-    unless user_map.is_a?(Hash) && user_map.all? { |k, v| !v[:name].blank? }
-      flash.now[:alert] = 'All users must have a name.'
+    unless user_map.is_a?(Hash) && user_map.all? { |_k, v| !v[:name].blank? }
+      flash.now[:alert] = _('All users must have a name.')
 
       return render 'new_user_map'
     end
 
     session[:fogbugz_user_map] = user_map
 
-    flash[:notice] = 'The user map has been saved. Continue by selecting the projects you want to import.'
+    flash[:notice] = _('The user map has been saved. Continue by selecting the projects you want to import.')
 
-    redirect_to status_import_fogbugz_path
+    redirect_to status_import_fogbugz_path(namespace_id: namespace_id_param)
   end
 
   def status
-    unless client.valid?
-      return redirect_to new_import_fogbugz_path
-    end
+    return redirect_to new_import_fogbugz_path(namespace_id: namespace_id_param) unless client.valid?
 
-    @repos = client.repos
-
-    @already_added_projects = current_user.created_projects.where(import_type: 'fogbugz')
-    already_added_projects_names = @already_added_projects.pluck(:import_source)
-
-    @repos.reject! { |repo| already_added_projects_names.include? repo.name }
-  end
-
-  def jobs
-    jobs = current_user.created_projects.where(import_type: 'fogbugz').to_json(only: [:id, :import_status])
-    render json: jobs
+    super
   end
 
   def create
-    @repo_id = params[:repo_id]
-    repo = client.repo(@repo_id)
-    fb_session = { uri: session[:fogbugz_uri], token: session[:fogbugz_token] }
-    @target_namespace = current_user.namespace
-    @project_name = repo.name
+    credentials = { uri: session[:fogbugz_uri], token: session[:fogbugz_token] }
 
-    namespace = @target_namespace
+    service_params = fogbugz_import_params.merge(
+      umap: session[:fogbugz_user_map] || client.user_map,
+      organization_id: Current.organization.id
+    )
 
-    umap = session[:fogbugz_user_map] || client.user_map
+    import_service = Import::FogbugzService.new(client, current_user, service_params)
+    import_service.request_channel = ::Gitlab::Import::RequestChannel::UI
+    result = import_service.execute(credentials)
 
-    @project = Gitlab::FogbugzImport::ProjectCreator.new(repo, fb_session, namespace, current_user, umap).execute
+    if result[:status] == :success
+      render json: ProjectSerializer.new.represent(result[:project], serializer: :import)
+    else
+      render json: { errors: result[:message] }, status: result[:http_status]
+    end
+  end
+
+  protected
+
+  override :importable_repos
+  def importable_repos
+    client.repos
+  end
+
+  override :incompatible_repos
+  def incompatible_repos
+    []
+  end
+
+  override :provider_name
+  def provider_name
+    :fogbugz
+  end
+
+  override :provider_url
+  def provider_url
+    session[:fogbugz_uri]
   end
 
   private
+
+  def uri_param
+    import_params[:uri]
+  end
 
   def client
     @client ||= Gitlab::FogbugzImport::Client.new(token: session[:fogbugz_token], uri: session[:fogbugz_uri])
@@ -89,14 +118,34 @@ class Import::FogbugzController < Import::BaseController
   end
 
   def fogbugz_unauthorized(exception)
-    redirect_to new_import_fogbugz_path, alert: exception.message
+    redirect_to new_import_fogbugz_path(namespace_id: namespace_id_param),
+      alert: exception.message
   end
 
   def import_params
     params.permit(:uri, :email, :password)
   end
 
+  def fogbugz_import_params
+    params.permit(:repo_id, :new_name, :target_namespace)
+  end
+
+  def user_map_params
+    params.permit(users: %w[name email gitlab_user])
+  end
+
   def verify_fogbugz_import_enabled
     render_404 unless fogbugz_import_enabled?
+  end
+
+  def verify_blocked_uri
+    Gitlab::HTTP_V2::UrlBlocker.validate!(
+      uri_param,
+      **Import::Framework::UrlBlockerParams.new.to_h
+    )
+  rescue Gitlab::HTTP_V2::UrlBlocker::BlockedUrlError => e
+    redirect_to new_import_fogbugz_url, alert: safe_format(
+      _('Specified URL cannot be used: "%{reason}"'), reason: e.message
+    )
   end
 end

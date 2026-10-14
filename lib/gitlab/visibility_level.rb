@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Gitlab::VisibilityLevel module
 #
 # Define allowed public modes that can be used for
@@ -5,33 +7,42 @@
 #
 module Gitlab
   module VisibilityLevel
-    extend CurrentSettings
     extend ActiveSupport::Concern
 
     included do
       scope :public_only,               -> { where(visibility_level: PUBLIC) }
-      scope :public_and_internal_only,  -> { where(visibility_level: [PUBLIC, INTERNAL] ) }
+      scope :public_and_internal_only,  -> { where(visibility_level: [PUBLIC, INTERNAL]) }
+      scope :private_only,              -> { where(visibility_level: PRIVATE) }
       scope :non_public_only,           -> { where.not(visibility_level: PUBLIC) }
 
-      scope :public_to_user, -> (user = nil) do
+      scope :public_to_user, ->(user = nil) do
         where(visibility_level: VisibilityLevel.levels_for_user(user))
       end
+
+      scope :by_visibility_level, ->(levels) do
+        where(visibility_level: levels)
+      end
+
+      alias_method :visibility_level=, :visibility=
     end
 
     PRIVATE  = 0 unless const_defined?(:PRIVATE)
     INTERNAL = 10 unless const_defined?(:INTERNAL)
     PUBLIC   = 20 unless const_defined?(:PUBLIC)
+    LEVELS_FOR_ADMINS = [PRIVATE, INTERNAL, PUBLIC].freeze
 
     class << self
       delegate :values, to: :options
 
-      def levels_for_user(user = nil)
+      def levels_for_user(user = nil, include_private: false)
         return [PUBLIC] unless user
 
-        if user.full_private_access?
-          [PRIVATE, INTERNAL, PUBLIC]
+        if user.can_read_all_resources?
+          LEVELS_FOR_ADMINS
         elsif user.external?
           [PUBLIC]
+        elsif include_private
+          [INTERNAL, PUBLIC, PRIVATE]
         else
           [INTERNAL, PUBLIC]
         end
@@ -43,45 +54,79 @@ module Gitlab
 
       def options
         {
-          N_('VisibilityLevel|Private')  => PRIVATE,
-          N_('VisibilityLevel|Internal') => INTERNAL,
-          N_('VisibilityLevel|Public')   => PUBLIC
+          s_('VisibilityLevel|Private') => PRIVATE,
+          s_('VisibilityLevel|Internal') => INTERNAL,
+          s_('VisibilityLevel|Public') => PUBLIC
         }
       end
 
       def string_options
         {
-          'private'  => PRIVATE,
+          'private' => PRIVATE,
           'internal' => INTERNAL,
-          'public'   => PUBLIC
+          'public' => PUBLIC
         }
       end
 
-      def highest_allowed_level
-        restricted_levels = current_application_settings.restricted_visibility_levels
+      def allowed_levels
+        restricted_levels = Gitlab::CurrentSettings.restricted_visibility_levels
 
-        allowed_levels = self.values - restricted_levels
-        allowed_levels.max || PRIVATE
+        self.values - Array(restricted_levels)
+      end
+
+      def closest_allowed_level(target_level)
+        highest_allowed_level = allowed_levels.select { |level| level <= target_level }.max
+
+        # If all levels are restricted, fall back to PRIVATE
+        highest_allowed_level || PRIVATE
       end
 
       def allowed_for?(user, level)
-        user.admin? || allowed_level?(level.to_i)
+        return true if user.can_admin_all_resources?
+
+        allowed_level?(level.to_i)
       end
 
+      # Level should be a numeric value, e.g. `20`
       # Return true if the specified level is allowed for the current user.
-      # Level should be a numeric value, e.g. `20`.
       def allowed_level?(level)
         valid_level?(level) && non_restricted_level?(level)
       end
 
+      def allowed_levels_for_user(user, subject)
+        return [] if user.nil?
+
+        visibility_levels = if user.can_admin_all_resources?
+                              # admin can create groups even with restricted visibility levels
+                              self.values
+                            else
+                              self.allowed_levels
+                            end
+
+        # visibility_level_allowed? is not supporting root-groups, so we have to create a dummy subgroup in the same
+        # organization.
+        subgroup = Group.new(parent_id: subject.id, organization_id: subject.organization_id)
+
+        # return the allowed visibility levels for the subject
+        visibility_levels.select { |level| subgroup.visibility_level_allowed?(level) }
+      end
+
       def non_restricted_level?(level)
-        restricted_levels = current_application_settings.restricted_visibility_levels
+        !restricted_level?(level)
+      end
+
+      def restricted_level?(level)
+        restricted_levels = Gitlab::CurrentSettings.restricted_visibility_levels
 
         if restricted_levels.nil?
-          true
+          false
         else
-          !restricted_levels.include?(level)
+          restricted_levels.include?(level)
         end
+      end
+
+      def public_visibility_restricted?
+        restricted_level?(PUBLIC)
       end
 
       def valid_level?(level)
@@ -89,22 +134,22 @@ module Gitlab
       end
 
       def level_name(level)
-        level_name = N_('VisibilityLevel|Unknown')
-        options.each do |name, lvl|
-          level_name = name if lvl == level.to_i
-        end
-
-        s_(level_name)
+        options.key(level.to_i) || s_('VisibilityLevel|Unknown')
       end
 
-      def level_value(level)
+      def level_value(level, fallback_value: PRIVATE)
         return level.to_i if level.to_i.to_s == level.to_s && string_options.key(level.to_i)
-        string_options[level] || PRIVATE
+
+        string_options[level] || fallback_value
       end
 
       def string_level(level)
         string_options.key(level)
       end
+    end
+
+    def visibility_level_previous_changes
+      previous_changes[:visibility_level]
     end
 
     def private?
@@ -129,6 +174,27 @@ module Gitlab
 
     def visibility=(level)
       self[visibility_level_field] = Gitlab::VisibilityLevel.level_value(level)
+    end
+
+    def visibility_attribute_present?(attributes)
+      visibility_level_attributes.each do |attr|
+        return true if attributes[attr].present?
+      end
+
+      false
+    end
+
+    def visibility_attribute_value(attributes)
+      visibility_level_attributes.each do |attr|
+        return attributes[attr] if attributes.has_key?(attr)
+      end
+
+      nil
+    end
+
+    def visibility_level_attributes
+      [visibility_level_field, visibility_level_field.to_s,
+        :visibility, 'visibility']
     end
   end
 end

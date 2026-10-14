@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module RequestAwareEntity
   extend ActiveSupport::Concern
 
@@ -8,6 +10,6 @@ module RequestAwareEntity
   end
 
   def request
-    options.fetch(:request)
+    options.fetch(:request, nil)
   end
 end

@@ -1,92 +1,45 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Gitlab::EtagCaching::Router do
-  it 'matches issue notes endpoint' do
-    result = described_class.match(
-      '/my-group/and-subgroup/here-comes-the-project/noteable/issue/1/notes'
-    )
+RSpec.describe Gitlab::EtagCaching::Router do
+  describe '.match', :aggregate_failures do
+    context 'with RESTful routes' do
+      it 'matches project pipelines endpoint' do
+        result = match_route('/my-group/my-project/-/pipelines.json')
 
-    expect(result).to be_present
-    expect(result.name).to eq 'issue_notes'
+        expect(result).to be_present
+        expect(result.name).to eq 'project_pipelines'
+        expect(result.router).to eq Gitlab::EtagCaching::Router::Rails
+        expect(result.urgency).to eq Projects::PipelinesController.urgency_for_action(:index)
+      end
+    end
+
+    context 'with GraphQL routes' do
+      it 'matches pipelines endpoint' do
+        result = match_route('/api/graphql', 'pipelines/id/12')
+
+        expect(result).to be_present
+        expect(result.name).to eq 'pipelines_graph'
+        expect(result.router).to eq Gitlab::EtagCaching::Router::Graphql
+        expect(result.urgency).to eq ::Gitlab::EndpointAttributes::DEFAULT_URGENCY
+      end
+
+      it 'matches pipeline sha endpoint' do
+        result = match_route('/api/graphql', 'pipelines/sha/4asd12lla2jiwjdqw9as32glm8is8hiu8s2c5jsw')
+
+        expect(result).to be_present
+        expect(result.name).to eq 'ci_editor'
+        expect(result.router).to eq Gitlab::EtagCaching::Router::Graphql
+      end
+    end
   end
 
-  it 'matches issue title endpoint' do
-    result = described_class.match(
-      '/my-group/my-project/issues/123/realtime_changes'
+  def match_route(path, header = nil)
+    headers = { 'X-GITLAB-GRAPHQL-RESOURCE-ETAG' => header }.compact
+
+    described_class.match(
+      double(path_info: path, headers: headers)
     )
-
-    expect(result).to be_present
-    expect(result.name).to eq 'issue_title'
-  end
-
-  it 'matches project pipelines endpoint' do
-    result = described_class.match(
-      '/my-group/my-project/pipelines.json'
-    )
-
-    expect(result).to be_present
-    expect(result.name).to eq 'project_pipelines'
-  end
-
-  it 'matches commit pipelines endpoint' do
-    result = described_class.match(
-      '/my-group/my-project/commit/aa8260d253a53f73f6c26c734c72fdd600f6e6d4/pipelines.json'
-    )
-
-    expect(result).to be_present
-    expect(result.name).to eq 'commit_pipelines'
-  end
-
-  it 'matches new merge request pipelines endpoint' do
-    result = described_class.match(
-      '/my-group/my-project/merge_requests/new.json'
-    )
-
-    expect(result).to be_present
-    expect(result.name).to eq 'new_merge_request_pipelines'
-  end
-
-  it 'matches merge request pipelines endpoint' do
-    result = described_class.match(
-      '/my-group/my-project/merge_requests/234/pipelines.json'
-    )
-
-    expect(result).to be_present
-    expect(result.name).to eq 'merge_request_pipelines'
-  end
-
-  it 'matches build endpoint' do
-    result = described_class.match(
-      '/my-group/my-project/builds/234.json'
-    )
-
-    expect(result).to be_present
-    expect(result.name).to eq 'project_build'
-  end
-
-  it 'does not match blob with confusing name' do
-    result = described_class.match(
-      '/my-group/my-project/blob/master/pipelines.json'
-    )
-
-    expect(result).to be_blank
-  end
-
-  it 'matches the environments path' do
-    result = described_class.match(
-      '/my-group/my-project/environments.json'
-    )
-
-    expect(result).to be_present
-    expect(result.name).to eq 'environments'
-  end
-
-  it 'matches pipeline#show endpoint' do
-    result = described_class.match(
-      '/my-group/my-project/pipelines/2.json'
-    )
-
-    expect(result).to be_present
-    expect(result.name).to eq 'project_pipeline'
   end
 end

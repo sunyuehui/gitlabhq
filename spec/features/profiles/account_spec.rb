@@ -1,35 +1,37 @@
-require 'rails_helper'
+# frozen_string_literal: true
 
-feature 'Profile > Account' do
-  given(:user) { create(:user, username: 'foo') }
+require 'spec_helper'
+
+RSpec.describe 'Profile > Account', :js, feature_category: :user_profile do
+  let(:user) { create(:user, username: 'foo') }
 
   before do
     sign_in(user)
   end
 
   describe 'Change username' do
-    given(:new_username) { 'bar' }
-    given(:new_user_path) { "/#{new_username}" }
-    given(:old_user_path) { "/#{user.username}" }
+    let(:new_username) { 'bar' }
+    let(:new_user_path) { "/#{new_username}" }
+    let(:old_user_path) { "/#{user.username}" }
 
-    scenario 'the user is accessible via the new path' do
+    it 'the user is accessible via the new path' do
       update_username(new_username)
       visit new_user_path
-      expect(current_path).to eq(new_user_path)
-      expect(find('.user-info')).to have_content(new_username)
+      expect(page).to have_current_path(new_user_path, ignore_query: true)
+      expect(find_by_testid('user-profile-header')).to have_content(new_username)
     end
 
-    scenario 'the old user path redirects to the new path' do
+    it 'the old user path redirects to the new path' do
       update_username(new_username)
       visit old_user_path
-      expect(current_path).to eq(new_user_path)
-      expect(find('.user-info')).to have_content(new_username)
+      expect(page).to have_current_path(new_user_path, ignore_query: true)
+      expect(find_by_testid('user-profile-header')).to have_content(new_username)
     end
 
     context 'with a project' do
-      given!(:project) { create(:project, namespace: user.namespace) }
-      given(:new_project_path) { "/#{new_username}/#{project.path}" }
-      given(:old_project_path) { "/#{user.username}/#{project.path}" }
+      let!(:project) { create(:project, namespace: user.namespace) }
+      let(:new_project_path) { "/#{new_username}/#{project.path}" }
+      let(:old_project_path) { "/#{user.username}/#{project.path}" }
 
       before(:context) do
         TestEnv.clean_test_path
@@ -39,18 +41,49 @@ feature 'Profile > Account' do
         TestEnv.clean_test_path
       end
 
-      scenario 'the project is accessible via the new path' do
+      it 'the project is accessible via the new path' do
         update_username(new_username)
         visit new_project_path
-        expect(current_path).to eq(new_project_path)
-        expect(find('h1.title')).to have_content(project.path)
+        expect(page).to have_current_path(new_project_path, ignore_query: true)
+        expect(find_by_testid('breadcrumb-links')).to have_content(user.name)
       end
 
-      scenario 'the old project path redirects to the new path' do
+      it 'the old project path redirects to the new path' do
         update_username(new_username)
         visit old_project_path
-        expect(current_path).to eq(new_project_path)
-        expect(find('h1.title')).to have_content(project.path)
+        expect(page).to have_current_path(new_project_path, ignore_query: true)
+        expect(find_by_testid('breadcrumb-links')).to have_content(user.name)
+      end
+    end
+  end
+
+  describe 'Delete account' do
+    before do
+      create_list(:project, number_of_projects, namespace: user.namespace)
+      visit profile_account_path
+    end
+
+    context 'when there are no personal projects' do
+      let(:number_of_projects) { 0 }
+
+      it 'does not show personal projects removal message' do
+        expect(page).to have_no_content(/Removes \d personal project/)
+      end
+    end
+
+    context 'when one personal project exists' do
+      let(:number_of_projects) { 1 }
+
+      it 'does show personal project removal message' do
+        expect(page).to have_content('Removes 1 personal project. This project cannot be restored.')
+      end
+    end
+
+    context 'when more than one personal projects exists' do
+      let(:number_of_projects) { 3 }
+
+      it 'shows pluralized personal project removal message' do
+        expect(page).to have_content('Removes 3 personal projects. These projects cannot be restored.')
       end
     end
   end
@@ -59,6 +92,14 @@ end
 def update_username(new_username)
   allow(user.namespace).to receive(:move_dir)
   visit profile_account_path
-  fill_in 'user_username', with: new_username
-  click_button 'Update username'
+
+  fill_in 'username-change-input', with: new_username
+
+  find_by_testid('username-change-confirmation-modal').click
+
+  page.within('.modal') do
+    find('.js-modal-action-primary').click
+  end
+
+  wait_for_requests
 end

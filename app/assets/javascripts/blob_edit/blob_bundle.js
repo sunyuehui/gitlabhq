@@ -1,38 +1,52 @@
-/* eslint-disable func-names, space-before-function-paren, prefer-arrow-callback, no-var, quotes, vars-on-top, no-unused-vars, no-new, max-len */
-/* global EditBlob */
-/* global NewCommitForm */
+import $ from 'jquery';
+import { createAlert } from '~/alert';
+import initBlobEditHeader from '~/blob_edit/blob_edit_header';
 
-import EditBlob from './edit_blob';
-import BlobFileDropzone from '../blob/blob_file_dropzone';
-
-$(() => {
+export default () => {
   const editBlobForm = $('.js-edit-blob-form');
-  const uploadBlobForm = $('.js-upload-blob-form');
-  const deleteBlobForm = $('.js-delete-blob-form');
 
   if (editBlobForm.length) {
-    const urlRoot = editBlobForm.data('relative-url-root');
-    const assetsPath = editBlobForm.data('assets-prefix');
-    const blobLanguage = editBlobForm.data('blob-language');
-    const currentAction = $('.js-file-title').data('current-action');
+    const urlRoot = editBlobForm.data('relativeUrlRoot');
+    const assetsPath = editBlobForm.data('assetsPrefix');
+    const filePath = editBlobForm.data('blobFilename') && `${editBlobForm.data('blobFilename')}`;
+    const currentAction = $('.js-file-title').data('currentAction');
+    const projectId = editBlobForm.data('project-id');
+    const projectPath = editBlobForm.data('project-path');
+    const previewMarkdownPath = editBlobForm.data('previewMarkdownPath');
+    const commitButton = $('.js-commit-button');
+    const commitButtonLoading = $('.js-commit-button-loading');
+    const cancelLink = $('#cancel-changes');
 
-    new EditBlob(`${urlRoot}${assetsPath}`, blobLanguage, currentAction);
-    new NewCommitForm(editBlobForm);
+    import('./edit_blob')
+      .then(({ default: EditBlob } = {}) => {
+        const editor = new EditBlob({
+          assetsPath: `${urlRoot}${assetsPath}`,
+          filePath,
+          currentAction,
+          projectId,
+          projectPath,
+          previewMarkdownPath,
+        });
+
+        initBlobEditHeader(editor);
+      })
+      .catch((e) =>
+        createAlert({
+          message: e.message,
+        }),
+      );
+
+    cancelLink.on('click', () => {
+      window.onbeforeunload = null;
+    });
+
+    commitButton.on('click', () => {
+      commitButton.addClass('gl-hidden');
+      commitButtonLoading.removeClass('gl-hidden');
+      window.onbeforeunload = null;
+    });
+
+    // returning here blocks page navigation
+    window.onbeforeunload = () => '';
   }
-
-  if (uploadBlobForm.length) {
-    const method = uploadBlobForm.data('method');
-
-    new BlobFileDropzone(uploadBlobForm, method);
-    new NewCommitForm(uploadBlobForm);
-
-    window.gl.utils.disableButtonIfEmptyField(
-      uploadBlobForm.find('.js-commit-message'),
-      '.btn-upload-file',
-    );
-  }
-
-  if (deleteBlobForm.length) {
-    new NewCommitForm(deleteBlobForm);
-  }
-});
+};

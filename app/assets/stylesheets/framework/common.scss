@@ -1,48 +1,70 @@
+// stylelint-disable length-zero-no-unit
+:root {
+  @each $name, $size in $grid-breakpoints {
+    --breakpoint-#{$name}: #{$size};
+  }
+}
+
+.with-performance-bar {
+  --performance-bar-height: #{$performance-bar-height};
+}
+
+.with-system-header {
+  --system-header-height: #{$system-header-height};
+}
+
+.with-header {
+  --header-height: #{$header-height};
+}
+
+.with-top-bar {
+  --top-bar-height: #{$top-bar-height};
+}
+
+.with-system-footer {
+  --system-footer-height: #{$system-footer-height};
+}
+
+@include gl-container-width-up(sm, panel) {
+  .right-sidebar-collapsed {
+    --application-bar-right: #{$right-sidebar-collapsed-width};
+
+    &.is-merge-request {
+      --application-bar-right: 0px;
+    }
+  }
+
+  .right-sidebar-expanded {
+    --application-bar-right: #{$right-sidebar-width};
+  }
+}
+
 /** COLORS **/
-.cgray { color: $common-gray; }
-.clgray { color: $common-gray-light; }
-.cred { color: $common-red; }
-.cgreen { color: $common-green; }
-.cdark { color: $common-gray-dark; }
-
-/** COMMON CLASSES **/
-.prepend-top-0 { margin-top: 0; }
-.prepend-top-5 { margin-top: 5px; }
-.prepend-top-10 { margin-top: 10px; }
-.prepend-top-default { margin-top: $gl-padding !important; }
-.prepend-top-20 { margin-top: 20px; }
-.prepend-left-5 { margin-left: 5px; }
-.prepend-left-10 { margin-left: 10px; }
-.prepend-left-default { margin-left: $gl-padding; }
-.prepend-left-20 { margin-left: 20px; }
-.append-right-5 { margin-right: 5px; }
-.append-right-10 { margin-right: 10px; }
-.append-right-default { margin-right: $gl-padding; }
-.append-right-20 { margin-right: 20px; }
-.append-bottom-0 { margin-bottom: 0; }
-.append-bottom-10 { margin-bottom: 10px; }
-.append-bottom-15 { margin-bottom: 15px; }
-.append-bottom-20 { margin-bottom: 20px; }
-.append-bottom-default { margin-bottom: $gl-padding; }
-.inline { display: inline-block; }
-.center { text-align: center; }
-.vertical-align-middle { vertical-align: middle; }
-
-.underlined-link { text-decoration: underline; }
-.hint { font-style: italic; color: $hint-color; }
-.light { color: $common-gray; }
-
-.slead {
-  color: $common-gray;
-  font-size: 14px;
-  margin-bottom: 12px;
-  font-weight: normal;
-  line-height: 24px;
+.text-secondary {
+  @apply gl-text-subtle;
 }
 
-.bold {
-  font-weight: 600;
+.text-warning,
+.text-warning:hover {
+  color: $brand-warning;
 }
+
+.text-info,
+.text-info:hover {
+  color: $brand-info;
+}
+
+.text-underline,
+.text-underline:hover {
+  text-decoration: underline;
+}
+
+.hint {
+  font-style: italic;
+  @apply gl-text-disabled;
+}
+
+.light { @apply gl-text-default; }
 
 .tab-content {
   overflow: visible;
@@ -51,16 +73,9 @@
 pre {
   &.clean {
     background: none;
-    border: none;
+    border: 0;
     margin: 0;
     padding: 0;
-  }
-
-  &.well-pre {
-    border: 1px solid $well-pre-bg;
-    background: $gray-light;
-    border-radius: 0;
-    color: $well-pre-color;
   }
 
   &.wrap {
@@ -70,74 +85,36 @@ pre {
 }
 
 hr {
-  margin: 24px 0;
-  border-top: 1px solid darken($gray-normal, 8%);
+  @apply gl-my-6;
+  @apply gl-mx-0;
+  @apply gl-border-t;
+  @apply gl-border-subtle;
 }
 
 .str-truncated {
   @include str-truncated;
 }
 
-.block-truncated {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-
-  > div,
-  .str-truncated {
-    display: inline;
-  }
+.str-truncated-30 {
+  @include str-truncated(30%);
 }
 
-.item-title { font-weight: 600; }
-
-/** FLASH message **/
-.author_link,
-.author-link {
-  color: $gl-link-color;
+.str-truncated-100 {
+  @include str-truncated(100%);
 }
 
-.back-link {
-  font-size: 14px;
-}
-
-table a code {
-  position: relative;
-  top: -2px;
-  margin-right: 3px;
-}
+.item-title { font-weight: $gl-font-weight-bold; }
 
 .loading {
   margin: 20px auto;
   height: 40px;
-  color: $loading-color;
+  @apply gl-text-subtle;
   font-size: 32px;
   text-align: center;
 }
 
-span.update-author {
-  display: block;
-  color: $update-author-color;
-  font-weight: normal;
-  font-style: italic;
-
-  strong {
-    font-weight: bold;
-    font-style: normal;
-  }
-}
-
-.user-mention {
-  color: $user-mention-color;
-  font-weight: bold;
-}
-
-.field_with_errors {
-  display: inline;
-}
-
 p.time {
-  color: $time-color;
+  @apply gl-text-disabled;
   font-size: 90%;
   margin: 30px 3px 3px 2px;
 }
@@ -146,18 +123,9 @@ p.time {
   text-shadow: none;
 }
 
-.thin_area {
-  height: 150px;
-}
-
 // Fix issue with notes & lists creating a bunch of bottom borders.
 li.note {
   img { max-width: 100%; }
-  .note-title {
-    li {
-      border-bottom: none !important;
-    }
-  }
 }
 
 .markdown {
@@ -171,116 +139,60 @@ li.note {
   background-color: inherit;
 }
 
-.project_member_show {
-  td:first-child {
-    color: $project-member-show-color;
-  }
-}
-
-.rss-icon {
-  img {
-    width: 24px;
-    vertical-align: top;
-  }
-
-  strong {
-    line-height: 24px;
-  }
-}
-
-.show-suppressed-diff,
-.show-all-commits {
-  cursor: pointer;
-}
-
-.git_error_tips {
-  @extend .col-md-6;
-  text-align: left;
-  margin-top: 40px;
-
-  pre {
-    background: $white-light;
-    border: none;
-    font-size: 12px;
-  }
-}
-
 .error-message {
   padding: 10px;
-  background: $error-bg;
+  background: $red-400;
   margin: 0;
-  color: $white-light;
+  color: $white;
 
   a {
-    color: $white-light;
+    color: $white;
     text-decoration: underline;
   }
 }
 
-.browser-alert {
-  padding: 10px;
-  text-align: center;
-  background: $error-bg;
-  color: $white-light;
-  font-weight: bold;
-
-  a {
-    color: $white-light;
-    text-decoration: underline;
-  }
-}
-
-.warning_message {
-  border-left: 4px solid $warning-message-border;
-  color: $warning-message-color;
-  padding: 10px;
-  margin-bottom: 10px;
-  background: $warning-message-bg;
-  padding-left: 20px;
+@mixin message($background-color, $border-color, $text-color) {
+  border-left: 4px solid $border-color;
+  color: $text-color;
+  padding: $gl-padding $gl-padding-24;
+  margin-bottom: $gl-padding-12;
+  background-color: $background-color;
 
   &.centered {
     text-align: center;
   }
+
+  .close {
+    svg {
+      width: $gl-font-size-large;
+      height: $gl-font-size-large;
+    }
+
+    color: inherit;
+  }
+}
+
+.warning_message {
+  @include message($orange-50, $orange-200, $gray-900);
+}
+
+.danger_message {
+  @include message($red-100, $red-200, $red-900);
 }
 
 .gitlab-promo {
   a {
-    color: $gl-promo-color;
+    @apply gl-text-disabled;
     margin-right: 30px;
   }
 }
 
 .milestone {
-  &.milestone-closed {
-    background: $gray-light;
-  }
-
   .progress {
-    margin-bottom: 0;
     margin-top: 4px;
     box-shadow: none;
-    background-color: $border-gray-light;
+    background-color: $gray-100;
   }
-}
-
-.control-group {
-  .controls {
-    span {
-      &.descr {
-        position: relative;
-        top: 2px;
-        left: 5px;
-        color: $control-group-descr-color;
-      }
-    }
-  }
-}
-
-img.emoji {
-  height: 20px;
-  vertical-align: top;
-  width: 20px;
-  margin-top: 1px;
 }
 
 .chart {
@@ -288,154 +200,49 @@ img.emoji {
   height: 220px;
 }
 
-.description-block {
-  @extend .light-well;
-  @extend .light;
-  margin-bottom: 10px;
-}
-
-table {
-  td.permission-x {
-    background: $table-permission-x-bg !important;
-    text-align: center;
-  }
-}
-
-.btn-sign-in {
-  text-shadow: none;
-
-  @media (min-width: $screen-sm-min) {
-    margin-top: 8px;
-  }
-}
-
-.side-filters {
-  fieldset {
-    margin-bottom: 15px;
-  }
-}
-
-.footer-links {
-  margin-bottom: 20px;
-
-  a {
-    margin-right: 15px;
-  }
-}
-
-.well {
+.card.card-body {
   margin-bottom: $gl-padding;
 
   hr {
-    border-color: $gray-darker;
+    @apply gl-border-subtle;
   }
 }
 
-.search_box {
-  @extend .well;
-  text-align: center;
-}
-
-.header-with-avatar {
-  h3 {
-    margin: 0;
-    font-weight: bold;
-  }
-
-  .username {
-    font-size: 18px;
-    color: $username-color;
-    margin-top: 8px;
-  }
-
-  .description {
-    font-size: $gl-font-size;
-    color: $description-color;
-    margin-top: 8px;
-  }
-}
-
-.profiler-results {
-  top: 73px !important;
-
-  .profiler-button,
-  .profiler-controls {
-    border-color: $profiler-border !important;
-  }
-}
-
+// these classes override styles from the dropzone node package
 .dropzone .dz-preview .dz-progress {
-  border-color: $border-color !important;
-}
+  @apply gl-border #{!important};
 
-.dropzone .dz-preview .dz-progress .dz-upload {
-  background: $gl-success !important;
+  .dz-upload {
+    background: $green-500 !important;
+  }
 }
 
 .dz-message {
   margin: 0;
 }
 
-.space-right {
-  margin-right: 10px;
-}
-
-.alert,
-.progress {
+.alert {
   margin-bottom: $gl-padding;
 }
 
-.project-item-select-holder {
-  display: inline-block;
-  position: relative;
-
-  .project-item-select {
-    position: absolute;
-    top: 0;
-    right: 0;
-    min-width: 250px;
-    visibility: hidden;
-  }
-}
-
-.content-separator {
-  margin-left: -$gl-padding;
-  margin-right: -$gl-padding;
-  border-top: 1px solid $border-color;
-}
-
-.hide-bottom-border {
-  border-bottom: none !important;
+.progress {
+  height: 4px;
 }
 
 .gl-accessibility {
-  &:focus {
+  &:focus-visible {
+    display: flex;
+    align-items: center;
     top: 1px;
     left: 1px;
     width: auto;
     height: 100%;
-    line-height: 50px;
     padding: 0 10px;
     clip: auto;
     text-decoration: none;
-    color: $gl-text-color;
-    background: $gray-light;
+    @apply gl-text-default;
+    @apply gl-bg-subtle;
     z-index: 1;
-  }
-}
-
-.bordered-box {
-  border: 1px solid $border-color;
-  border-radius: $border-radius-default;
-}
-
-.str-truncated {
-  &-60 {
-    @include str-truncated(60%);
-  }
-
-  &-100 {
-    @include str-truncated(100%);
   }
 }
 
@@ -447,5 +254,142 @@ table {
 
 .disabled-content {
   pointer-events: none;
-  opacity: .5;
+  opacity: 0.5;
+}
+
+.break-word {
+  word-wrap: break-word;
+}
+
+/** COMMON CLASSES **/
+/**
+  🚨 Do not use these classes — they are deprecated and being removed. 🚨
+  See https://gitlab.com/gitlab-org/gitlab/-/issues/217418 for more details.
+**/
+.center { text-align: center; }
+.block { display: block; }
+.vertical-align-text-top { vertical-align: text-top; }
+.vertical-align-middle { vertical-align: middle; }
+.ws-normal { white-space: normal; }
+.overflow-auto { overflow: auto; }
+
+/** COMMON SIZING CLASSES **/
+.w-0 { width: 0; }
+.w-8em { width: 8em; }
+.w-15p { width: 15%; }
+.w-30p { width: 30%; }
+.w-60p { width: 60%; }
+
+.h-32-px { height: 32px;}
+
+.mw-6em { max-width: 6em; }
+
+// By default flex items don't shrink below their minimum content size.
+// To change this, these clases set a min-width or min-height
+.min-height-0 { min-height: 0; }
+
+.drag-handle {
+  width: 4px;
+
+  &:hover {
+    @apply gl-bg-strong;
+  }
+
+  &.is-dragging {
+    background-color: $gray-400;
+  }
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+// this needs to use "!important" due to some very specific styles
+// around buttons
+.cursor-default {
+  cursor: default !important;
+}
+
+// Make buttons/dropdowns full-width on mobile
+.full-width-mobile {
+  @include gl-container-width-down(sm, panel) {
+    width: 100%;
+
+    > .dropdown-menu,
+    > .btn,
+    > .gl-new-dropdown-toggle > .gl-button-text {
+      width: 100%;
+    }
+  }
+}
+
+.gl-font-size-0 { font-size: 0; }
+
+.gl-pseudo-placeholder:empty::before {
+  content: attr(data-placeholder);
+  font-weight: $gl-font-weight-normal;
+  color: var(--gl-control-placeholder-color);
+  cursor: text;
+}
+
+// Temporarily restore the browser-default bottom margin that @gitlab/ui@135
+// removed from GlPagination, until all usages are audited individually.
+// See https://gitlab.com/gitlab-org/gitlab-services/design.gitlab.com/-/merge_requests/5437
+.gl-pagination ul {
+  margin-bottom: 1rem;
+}
+
+// --- moved from labels.scss when moving to page_bundles ---
+// Fix scoped label padding in cases where old markdown uses the old label structure */
+.gl-label-text + .gl-label-text {
+  padding-left: $gl-spacing-scale-2;
+  padding-right: $gl-spacing-scale-3;
+}
+
+.gl-label-scoped {
+  box-shadow: 0 0 0 2px currentColor inset;
+}
+
+.gl-label-tooltip-footer {
+  color: var(--gl-tooltip-text-color-subtle);
+}
+
+.ref-container,
+.commit-sha-container {
+  font-family: $gl-monospace-font;
+  font-variant-ligatures: none;
+  font-size: $gl-font-size-sm;
+  padding-left: $gl-spacing-scale-2;
+  padding-right: $gl-spacing-scale-2;
+  border-radius: $gl-border-radius-base;
+}
+
+.ref-container {
+  color: var(--gl-link-mention-text-color-default) !important;
+  background-color: var(--gl-link-mention-background-color-default);
+}
+
+.commit-sha-container {
+  @apply gl-bg-strong #{!important};
+  @apply gl-text-subtle #{!important};
+}
+
+[readonly] {
+  cursor: default;
+}
+
+copy-code {
+  position: absolute;
+  opacity: 0;
+  top: $gl-spacing-scale-3;
+  right: $gl-spacing-scale-3;
+
+  .markdown-code-block:hover &,
+  &:focus-within {
+    opacity: 1;
+  }
+}
+
+.markdown-code-block insert-code-snippet {
+  display: none;
 }

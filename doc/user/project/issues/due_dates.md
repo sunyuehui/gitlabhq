@@ -1,39 +1,106 @@
-# Due dates
+---
+stage: Plan
+group: Work Items
+info: To determine the technical writer assigned to the Stage/Group associated with this page, see <https://handbook.gitlab.com/handbook/product/ux/technical-writing/#assignments>
+title: Due dates
+description: Set due dates on issues, epics, and other work items to track deadlines, view upcoming work, and export due dates to a calendar.
+---
 
-> [Introduced][ce-3614] in GitLab 8.7.
+{{< details >}}
 
-Please read through the [GitLab Issue Documentation](index.md) for an overview on GitLab Issues.
+- Tier: Free, Premium, Ultimate
+- Offering: GitLab.com, GitLab Self-Managed, GitLab Dedicated
 
-Due dates can be used in issues to keep track of deadlines and make sure
-features are shipped on time. Due dates require at least [Reporter permissions][permissions]
-to be able to edit them. On the contrary, they can be seen by everybody.
+{{< /details >}}
 
-## Setting a due date
+{{< history >}}
 
-When creating or editing an issue, you can see the due date field from where
-a calendar will appear to help you choose the date you want. To remove it,
-select the date text and delete it.
+- Minimum role to set due dates [changed](https://gitlab.com/gitlab-org/gitlab/-/merge_requests/169256) from Reporter to Planner in GitLab 17.7.
 
-![Create a due date](img/due_dates_create.png)
+{{< /history >}}
 
-A quicker way to set a due date is via the issue sidebar. Simply expand the
-sidebar and select **Edit** to pick a due date or remove the existing one.
-Changes are saved immediately.
+Use due dates in work items to track deadlines, and make sure features are
+shipped on time.
 
-![Edit a due date via the sidebar](img/due_dates_edit_sidebar.png)
+Due dates are supported in:
 
-## Making use of due dates
+- [Issues](_index.md)
+- [Epics](../../group/epics/_index.md)
+- [Tasks](../../tasks.md)
+- [Objectives and key results](../../okrs.md)
+- [Incidents](../../../operations/incident_management/incidents.md)
 
-Issues that have a due date can be distinctively seen in the issue tracker
-displaying a date next to them. Issues where the date is overdue will have
-the icon and the date colored red. You can sort issues by those that are
-_Due soon_ or _Due later_ from the dropdown menu in the right.
+The day before an open item is due, an email is sent to all participants.
+<!-- For issue due timing source, see 'issue_due_scheduler_worker' in <https://gitlab.com/gitlab-org/gitlab/-/blob/master/config/initializers/1_settings.rb> -->
+The notification is sent at 00:50 in the server's time zone (for GitLab.com this is UTC)
+for all open items with a due date of the next calendar day.
 
-![Issues with due dates in the issues index page](img/due_dates_issues_index_page.png)
+Due dates also appear in your [to-do items](../../todos.md).
 
-Due dates also appear in your [todos list](../../../workflow/todos.md).
+## View issues with due dates
 
-![Issues with due dates in the todos](img/due_dates_todos.png)
+You can see issues with their due dates on the **Work items** page.
+If an issue contains a due date,
+it is shown below the issue title:
 
-[ce-3614]: https://gitlab.com/gitlab-org/gitlab-ce/merge_requests/3614
-[permissions]: ../../permissions.md#project
+![An issue with a due date in 2024.](img/overdue_issue_v17_9.png)
+
+Issue dates in the past are shown with a red icon ({{< icon name="calendar-overdue" >}}).
+
+To view and sort issues containing due dates in your project:
+
+1. In the top bar, select **Search or go to** and find your project.
+1. In the left sidebar, select **Plan** > **Work items** and filter by **Type** = **Issue**.
+1. On the right of the filter bar, select **Display** ({{< icon name="preferences" >}}) to open the display preferences drawer.
+1. At the top of the drawer, from the **Sort by** dropdown list, select **Due date**.
+1. Optional. To reverse the sort order, in the display preferences drawer, next to the **Sort by** dropdown list, select **Sort direction** ({{< icon name="sort-lowest" >}}).
+
+## Set a due date for an issue
+
+All users with permission to view the issue can view its due date.
+
+### When creating an issue
+
+If you have the Planner, Reporter, Developer, Maintainer, or Owner role, when creating an issue, select **Due date** to show a calendar.
+This date uses the server's time zone, not the current user's time zone.
+
+To remove the date, select the date text, then delete the text.
+
+### In an existing issue
+
+Prerequisites:
+
+- You must have the Planner, Reporter, Developer, Maintainer, or Owner role.
+
+To do this:
+
+1. In the top bar, select **Search or go to** and find your project.
+1. In the left sidebar, select **Plan** > **Work items**, then filter by **Type** = **Issue** and select your issue.
+1. In the right sidebar, in the **Dates** section, select **Edit**.
+1. Select your desired date, then select **Apply** to save your changes.
+
+### With a quick action
+
+To set a due date with quick actions in an issue's description or comment:
+
+- [`/due`](../quick_actions.md#due): Set the due date.
+- [`/remove_due_date`](../quick_actions.md#remove_due_date): Remove an existing due date.
+
+## Export issue due dates to a calendar
+
+Issues with due dates can also be exported as an iCalendar feed. The URL of the
+feed can be added to calendar applications.
+
+- The **Project work items** page
+- The **Group work items** page
+
+1. Go to the page that contains the list of issues you want to subscribe to.
+   For example:
+
+   - [Issues assigned to you](managing_issues.md#view-all-issues-assigned-to-you)
+   - [Issues in a specific project](managing_issues.md#issue-list)
+   - Issues for all projects [in a group](../../group/_index.md)
+
+1. On the right, from the **Actions** ({{< icon name="ellipsis_v" >}}) dropdown list, select **Subscribe to calendar** to display the `.ics` file.
+1. Copy the full link to the page (including the full query string) and use it in your
+   preferred calendar application.

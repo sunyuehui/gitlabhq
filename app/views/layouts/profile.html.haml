@@ -1,10 +1,12 @@
-- page_title    "User Settings"
-- header_title  "User Settings", profile_path unless header_title
+- page_title    _("User Settings")
+- header_title  _("User Settings"), user_settings_profile_path unless header_title
 - sidebar       "dashboard"
-- if show_new_nav?
-  - nav         "new_profile_sidebar"
-  - @new_sidebar = true
-- else
-  - nav         "profile"
+- nav           "profile"
+
+- enable_search_settings
+
+- content_for :flash_message do
+  = dispensable_render_if_exists "profiles/storage_enforcement_alert", context: current_user.namespace
+  = dispensable_render_if_exists "shared/namespace_storage_limit_alert", context: current_user.namespace
 
 = render template: "layouts/application"

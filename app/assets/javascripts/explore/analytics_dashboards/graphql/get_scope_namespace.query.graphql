@@ -1,0 +1,24 @@
+# @feature_category: custom_dashboards_foundation
+
+query getAnalyticsDashboardScopeNamespace($fullPath: ID!, $fullPaths: [String!]) {
+  group(fullPath: $fullPath) {
+    id
+    name
+    fullName
+    fullPath
+    userPermissions {
+      readProAiAnalytics @gl_introduced(version: "19.5.0")
+    }
+  }
+  projects(fullPaths: $fullPaths) {
+    nodes {
+      id
+      name
+      fullName: nameWithNamespace
+      fullPath
+      userPermissions {
+        readProAiAnalytics @gl_introduced(version: "19.5.0")
+      }
+    }
+  }
+}

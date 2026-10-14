@@ -1,32 +1,64 @@
-import ProtectedTagAccessDropdown from './protected_tag_access_dropdown';
-import ProtectedTagDropdown from './protected_tag_dropdown';
+import $ from 'jquery';
+import CreateItemDropdown from '~/create_item_dropdown';
+import { createAlert } from '~/alert';
+import axios from '~/lib/utils/axios_utils';
+import { s__, __ } from '~/locale';
+import { initAccessDropdown } from '~/projects/settings/init_access_dropdown';
+import { ACCESS_LEVELS } from './constants';
 
 export default class ProtectedTagCreate {
-  constructor() {
+  constructor({ hasLicense, sectionSelector }) {
+    this.hasLicense = hasLicense;
+    this.sectionSelector = sectionSelector;
     this.$form = $('.js-new-protected-tag');
-    this.buildDropdowns();
+
+    if (this.$form.length > 0) {
+      this.buildDropdowns();
+      this.bindEvents();
+    }
+
+    this.selectedItems = [];
+  }
+
+  bindEvents() {
+    this.$form.on('submit', this.onFormSubmit.bind(this));
   }
 
   buildDropdowns() {
-    const $allowedToCreateDropdown = this.$form.find('.js-allowed-to-create');
-
     // Cache callback
     this.onSelectCallback = this.onSelect.bind(this);
 
-    // Allowed to Create dropdown
-    this.protectedTagAccessDropdown = new ProtectedTagAccessDropdown({
-      $dropdown: $allowedToCreateDropdown,
-      data: gon.create_access_levels,
+    // Protected tag dropdown
+    this.createItemDropdown = new CreateItemDropdown({
+      $dropdown: this.$form.find('.js-protected-tag-select'),
+      defaultToggleLabel: __('Protected Tag'),
+      fieldName: 'protected_tag[name]',
       onSelect: this.onSelectCallback,
+      getData: ProtectedTagCreate.getProtectedTags,
     });
 
-    // Select default
-    $allowedToCreateDropdown.data('glDropdown').selectRowAtIndex(0);
+    // Allowed to Create dropdown
+    const createTagSelector = 'js-allowed-to-create';
+    const [dropdownEl] = this.$form.find(`.${createTagSelector}`);
 
-    // Protected tag dropdown
-    this.protectedTagDropdown = new ProtectedTagDropdown({
-      $dropdown: this.$form.find('.js-protected-tag-select'),
-      onSelect: this.onSelectCallback,
+    this.protectedTagAccessDropdown = initAccessDropdown(dropdownEl, {
+      toggleClass: createTagSelector,
+      hasLicense: this.hasLicense,
+      accessLevel: ACCESS_LEVELS.CREATE,
+      accessLevelsData: gon.create_access_levels,
+      groupsWithProjectAccess: true,
+      searchEnabled: dropdownEl.dataset.filter !== undefined,
+      testId: 'allowed-to-create-dropdown',
+      sectionSelector: this.sectionSelector,
+    });
+
+    this.protectedTagAccessDropdown.$on('select', (selected) => {
+      this.selectedItems = selected;
+      this.onSelectCallback();
+    });
+
+    this.protectedTagAccessDropdown.$on('shown', () => {
+      this.createItemDropdown.close();
     });
   }
 
@@ -34,8 +66,45 @@ export default class ProtectedTagCreate {
   onSelect() {
     // Enable submit button
     const $tagInput = this.$form.find('input[name="protected_tag[name]"]');
-    const $allowedToCreateInput = this.$form.find('#create_access_levels_attributes');
+    this.$form
+      .find('button[type="submit"]')
+      .prop('disabled', !($tagInput.val() && this.selectedItems.length));
+  }
 
-    this.$form.find('input[type="submit"]').attr('disabled', !($tagInput.val() && $allowedToCreateInput.length));
+  static getProtectedTags(term, callback) {
+    callback(gon.open_tags);
+  }
+
+  getFormData() {
+    const formData = {
+      authenticity_token: this.$form.find('input[name="authenticity_token"]').val(),
+      protected_tag: {
+        name: this.$form.find('input[name="protected_tag[name]"]').val(),
+      },
+    };
+    formData.protected_tag[`${ACCESS_LEVELS.CREATE}_attributes`] = this.selectedItems;
+    return formData;
+  }
+
+  onFormSubmit(e) {
+    e.preventDefault();
+
+    axios[this.$form.attr('method')](this.$form.attr('action'), this.getFormData())
+      .then(() => {
+        // The form names the section to return to; the non-JS flow uses it as the
+        // redirect anchor. Apply it to the reload so the section renders expanded.
+        const sectionId = this.$form.find('input[name="update_section"]').val();
+
+        if (sectionId) {
+          window.location.hash = sectionId;
+        }
+
+        window.location.reload();
+      })
+      .catch(() =>
+        createAlert({
+          message: s__('ProjectSettings|Failed to protect the tag'),
+        }),
+      );
   }
 }

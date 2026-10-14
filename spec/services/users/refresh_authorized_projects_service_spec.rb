@@ -1,252 +1,247 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe Users::RefreshAuthorizedProjectsService do
+RSpec.describe Users::RefreshAuthorizedProjectsService, feature_category: :user_management do
   # We're using let! here so that any expectations for the service class are not
   # triggered twice.
   let!(:project) { create(:project) }
 
-  let(:user) { project.namespace.owner }
+  let(:user) { project.namespace.first_owner }
   let(:service) { described_class.new(user) }
 
-  describe '#execute', :clean_gitlab_redis_shared_state do
-    it 'refreshes the authorizations using a lease' do
-      expect_any_instance_of(Gitlab::ExclusiveLease).to receive(:try_obtain)
-        .and_return('foo')
-
-      expect(Gitlab::ExclusiveLease).to receive(:cancel)
-        .with(an_instance_of(String), 'foo')
-
-      expect(service).to receive(:execute_without_lease)
-
-      service.execute
+  # For deltas the finder would never compute on its own. These only arise when a
+  # concurrent refresh has already applied the change, so they cannot be set up
+  # through the database.
+  def stub_refresh_delta(remove, add)
+    allow_next_instance_of(AuthorizedProjectUpdate::FindRecordsDueForRefreshService) do |finder|
+      allow(finder).to receive(:execute).and_return([remove, add])
     end
   end
 
-  describe '#execute_without_lease' do
-    before do
-      user.project_authorizations.delete_all
-    end
+  describe '#execute' do
+    context 'callbacks' do
+      let(:callback) { double('callback') }
 
-    it 'updates the authorized projects of the user' do
-      project2 = create(:project)
-      to_remove = user.project_authorizations
-        .create!(project: project2, access_level: Gitlab::Access::MASTER)
+      context 'incorrect_auth_found_callback callback' do
+        let(:user) { create(:user) }
+        let(:service) do
+          described_class.new(user, incorrect_auth_found_callback: callback)
+        end
 
-      expect(service).to receive(:update_authorizations)
-        .with([to_remove.project_id], [[user.id, project.id, Gitlab::Access::MASTER]])
+        it 'is called' do
+          access_level = Gitlab::Access::DEVELOPER
+          create(:project_authorization, user: user, project: project, access_level: access_level)
 
-      service.execute_without_lease
-    end
+          expect(callback).to receive(:call).with(project.id, access_level).once
 
-    it 'sets the access level of a project to the highest available level' do
-      user.project_authorizations.delete_all
+          service.execute
+        end
+      end
 
-      to_remove = user.project_authorizations
-        .create!(project: project, access_level: Gitlab::Access::DEVELOPER)
+      context 'missing_auth_found_callback callback' do
+        let(:service) do
+          described_class.new(user, missing_auth_found_callback: callback)
+        end
 
-      expect(service).to receive(:update_authorizations)
-        .with([to_remove.project_id], [[user.id, project.id, Gitlab::Access::MASTER]])
+        it 'is called' do
+          ProjectAuthorization.delete_all
 
-      service.execute_without_lease
-    end
+          expect(callback).to receive(:call).with(project.id, Gitlab::Access::OWNER).once
 
-    it 'returns a User' do
-      expect(service.execute_without_lease).to be_an_instance_of(User)
-    end
-  end
-
-  describe '#update_authorizations' do
-    context 'when there are no rows to add and remove' do
-      it 'does not change authorizations' do
-        expect(user).not_to receive(:remove_project_authorizations)
-        expect(ProjectAuthorization).not_to receive(:insert_authorizations)
-
-        service.update_authorizations([], [])
+          service.execute
+        end
       end
     end
 
-    it 'removes authorizations that should be removed' do
-      authorization = user.project_authorizations.find_by(project_id: project.id)
+    context 'when authorizations are outdated' do
+      it 'removes authorizations that should be removed' do
+        stale_project = create(:project)
+        user.project_authorizations.create!(project: stale_project, access_level: Gitlab::Access::DEVELOPER)
 
-      service.update_authorizations([authorization.project_id])
+        service.execute
 
-      expect(user.project_authorizations).to be_empty
-    end
-
-    it 'inserts authorizations that should be added' do
-      user.project_authorizations.delete_all
-
-      service.update_authorizations([], [[user.id, project.id, Gitlab::Access::MASTER]])
-
-      authorizations = user.project_authorizations
-
-      expect(authorizations.length).to eq(1)
-      expect(authorizations[0].user_id).to eq(user.id)
-      expect(authorizations[0].project_id).to eq(project.id)
-      expect(authorizations[0].access_level).to eq(Gitlab::Access::MASTER)
-    end
-  end
-
-  describe '#fresh_access_levels_per_project' do
-    let(:hash) { service.fresh_access_levels_per_project }
-
-    it 'returns a Hash' do
-      expect(hash).to be_an_instance_of(Hash)
-    end
-
-    it 'sets the keys to the project IDs' do
-      expect(hash.keys).to eq([project.id])
-    end
-
-    it 'sets the values to the access levels' do
-      expect(hash.values).to eq([Gitlab::Access::MASTER])
-    end
-
-    context 'personal projects' do
-      it 'includes the project with the right access level' do
-        expect(hash[project.id]).to eq(Gitlab::Access::MASTER)
-      end
-    end
-
-    context 'projects the user is a member of' do
-      let!(:other_project) { create(:project) }
-
-      before do
-        other_project.team.add_reporter(user)
+        expect(user.project_authorizations.map(&:project_id)).to contain_exactly(project.id)
       end
 
-      it 'includes the project with the right access level' do
-        expect(hash[other_project.id]).to eq(Gitlab::Access::REPORTER)
-      end
-    end
-
-    context 'projects of groups the user is a member of' do
-      let(:group) { create(:group) }
-      let!(:other_project) { create(:project, group: group) }
-
-      before do
-        group.add_owner(user)
-      end
-
-      it 'includes the project with the right access level' do
-        expect(hash[other_project.id]).to eq(Gitlab::Access::OWNER)
-      end
-    end
-
-    context 'projects of subgroups of groups the user is a member of', :nested_groups do
-      let(:group) { create(:group) }
-      let(:nested_group) { create(:group, parent: group) }
-      let!(:other_project) { create(:project, group: nested_group) }
-
-      before do
-        group.add_master(user)
-      end
-
-      it 'includes the project with the right access level' do
-        expect(hash[other_project.id]).to eq(Gitlab::Access::MASTER)
-      end
-    end
-
-    context 'projects shared with groups the user is a member of' do
-      let(:group) { create(:group) }
-      let(:other_project) { create(:project) }
-      let!(:project_group_link) { create(:project_group_link, project: other_project, group: group, group_access: Gitlab::Access::GUEST) }
-
-      before do
-        group.add_master(user)
-      end
-
-      it 'includes the project with the right access level' do
-        expect(hash[other_project.id]).to eq(Gitlab::Access::GUEST)
-      end
-    end
-
-    context 'projects shared with subgroups of groups the user is a member of', :nested_groups do
-      let(:group) { create(:group) }
-      let(:nested_group) { create(:group, parent: group) }
-      let(:other_project) { create(:project) }
-      let!(:project_group_link) { create(:project_group_link, project: other_project, group: nested_group, group_access: Gitlab::Access::DEVELOPER) }
-
-      before do
-        group.add_master(user)
-      end
-
-      it 'includes the project with the right access level' do
-        expect(hash[other_project.id]).to eq(Gitlab::Access::DEVELOPER)
-      end
-    end
-  end
-
-  describe '#current_authorizations_per_project' do
-    let(:hash) { service.current_authorizations_per_project }
-
-    it 'returns a Hash' do
-      expect(hash).to be_an_instance_of(Hash)
-    end
-
-    it 'sets the keys to the project IDs' do
-      expect(hash.keys).to eq([project.id])
-    end
-
-    it 'sets the values to the project authorization rows' do
-      expect(hash.values.length).to eq(1)
-
-      value = hash.values[0]
-
-      expect(value.project_id).to eq(project.id)
-      expect(value.access_level).to eq(Gitlab::Access::MASTER)
-    end
-  end
-
-  describe '#current_authorizations' do
-    context 'without authorizations' do
-      it 'returns an empty list' do
+      it 'inserts authorizations that should be added' do
         user.project_authorizations.delete_all
 
-        expect(service.current_authorizations.empty?).to eq(true)
+        service.execute
+
+        authorizations = user.project_authorizations
+
+        expect(authorizations.length).to eq(1)
+        expect(authorizations[0].user_id).to eq(user.id)
+        expect(authorizations[0].project_id).to eq(project.id)
+        expect(authorizations[0].access_level).to eq(Gitlab::Access::OWNER)
+      end
+
+      it 'sets the access level to the highest of the paths granting access' do
+        group = create(:group)
+        group_project = create(:project, group: group)
+        multi_path_user = create(:user)
+
+        group.add_developer(multi_path_user)
+        group_project.add_maintainer(multi_path_user)
+
+        # Adding the members already refreshed the rows. Replace them with a row at the
+        # lower of the two access levels, so the refresh has to correct an existing row
+        # rather than only insert a missing one.
+        multi_path_user.project_authorizations.delete_all
+        multi_path_user.project_authorizations.create!(
+          project: group_project, access_level: Gitlab::Access::DEVELOPER
+        )
+
+        expect { described_class.new(multi_path_user).execute }
+          .to change { multi_path_user.project_authorizations.find_by(project_id: group_project.id).access_level }
+          .from(Gitlab::Access::DEVELOPER).to(Gitlab::Access::MAINTAINER)
+      end
+
+      it 'updates project_authorizations_recalculated_at', :freeze_time do
+        user.project_authorizations.delete_all
+
+        default_date = Time.zone.local('2010')
+        expect do
+          service.execute
+        end.to change { user.project_authorizations_recalculated_at }.from(default_date).to(Time.zone.now)
+      end
+
+      it 'returns a User' do
+        user.project_authorizations.delete_all
+
+        expect(service.execute).to be_an_instance_of(User)
+      end
+
+      it 'logs the details of the refresh' do
+        source = :foo
+        service = described_class.new(user, source: source)
+        user.project_authorizations.delete_all
+
+        expect(Gitlab::AppJsonLogger).to receive(:info).with(
+          hash_including(
+            event: 'authorized_projects_refresh',
+            user_id: user.id,
+            'authorized_projects_refresh.source': source,
+            'authorized_projects_refresh.rows_deleted_count': 0,
+            'authorized_projects_refresh.rows_added_count': 1,
+            'authorized_projects_refresh.rows_deleted_slice': [],
+            'authorized_projects_refresh.rows_added_slice': [[user.id, project.id, Gitlab::Access::OWNER]]
+          )
+        )
+
+        service.execute
+      end
+
+      it 'logs the rows actually affected rather than the ones requested' do
+        existing = user.project_authorizations.find_by(project_id: project.id)
+
+        # Nothing ends up being written: the removal names a project the user holds no row
+        # for, and the addition duplicates a row that is already there.
+        to_be_removed = [non_existing_record_id]
+        to_be_added = [
+          { user_id: user.id, project_id: project.id, access_level: existing.access_level }
+        ]
+
+        stub_refresh_delta(to_be_removed, to_be_added)
+
+        expect(Gitlab::AppJsonLogger).to receive(:info).with(
+          hash_including(
+            'authorized_projects_refresh.rows_deleted_count': 0,
+            'authorized_projects_refresh.rows_added_count': 0,
+            # The slices keep reporting what was requested, so the two can be compared.
+            'authorized_projects_refresh.rows_deleted_slice': to_be_removed
+          )
+        )
+
+        service.execute
+      end
+
+      it 'includes the related_class from the ambient context as the trigger' do
+        user.project_authorizations.delete_all
+
+        expect(Gitlab::AppJsonLogger).to receive(:info).with(
+          hash_including('authorized_projects_refresh.trigger': 'SomeCaller')
+        )
+
+        Gitlab::ApplicationContext.with_context(related_class: 'SomeCaller') do
+          service.execute
+        end
+      end
+
+      describe 'safety-net refresh metrics', :prometheus do
+        let(:counter) { Gitlab::Metrics.counter(:gitlab_authorized_projects_safety_net_refresh_rows_total, 'test') }
+
+        before do
+          # A wrong access level makes the refresh both delete the stale row and insert a
+          # corrected one, so each direction of the counter is exercised.
+          user.project_authorizations.delete_all
+          user.project_authorizations.create!(project: project, access_level: Gitlab::Access::DEVELOPER)
+
+          allow(Gitlab::Metrics).to receive(:counter).and_call_original
+          allow(Gitlab::Metrics).to receive(:counter)
+            .with(:gitlab_authorized_projects_safety_net_refresh_rows_total, anything)
+            .and_return(counter)
+        end
+
+        context 'when the refresh is marked with the safety-net purpose' do
+          it 'increments the refresh trend counter for each direction, including the trigger label' do
+            expect(counter).to receive(:increment)
+              .with(hash_including(trigger: 'SomeCaller', direction: 'deleted'), 1)
+            expect(counter).to receive(:increment)
+              .with(hash_including(trigger: 'SomeCaller', direction: 'added'), 1)
+
+            Gitlab::ApplicationContext.with_raw_context(
+              authorized_projects_refresh_purpose: UserProjectAccessChangedService::SAFETY_NET_REFRESH_PURPOSE
+            ) do
+              Gitlab::ApplicationContext.with_context(related_class: 'SomeCaller') do
+                service.execute
+              end
+            end
+          end
+        end
+
+        context "when the refresh isn't marked with the safety-net purpose" do
+          it 'does not increment the refresh trend counter' do
+            expect(counter).not_to receive(:increment)
+
+            service.execute
+          end
+        end
+
+        # Guards the case that prompted this counting: a stale replica read still listed
+        # rows for a project whose authorizations Postgres had already removed through the
+        # `projects` cascade, so the refresh asked to delete rows that were already gone.
+        context 'when the requested changes no longer match the rows in the database' do
+          it 'does not increment the refresh trend counter' do
+            stub_refresh_delta([non_existing_record_id], [])
+
+            expect(counter).not_to receive(:increment)
+
+            Gitlab::ApplicationContext.with_raw_context(
+              authorized_projects_refresh_purpose: UserProjectAccessChangedService::SAFETY_NET_REFRESH_PURPOSE
+            ) do
+              service.execute
+            end
+          end
+        end
       end
     end
 
-    context 'with an authorization' do
-      let(:row) { service.current_authorizations.take }
-
-      it 'returns the currently authorized projects' do
-        expect(service.current_authorizations.length).to eq(1)
+    context 'when the refresh finds nothing to change' do
+      it 'does not apply any authorization changes' do
+        expect { service.execute }.not_to change { user.reload.project_authorizations_recalculated_at }
       end
 
-      it 'includes the project ID for every row' do
-        expect(row.project_id).to eq(project.id)
+      it 'does not log the refresh' do
+        expect(Gitlab::AppJsonLogger).not_to receive(:info)
+          .with(hash_including(event: 'authorized_projects_refresh'))
+
+        service.execute
       end
 
-      it 'includes the access level for every row' do
-        expect(row.access_level).to eq(Gitlab::Access::MASTER)
-      end
-    end
-  end
-
-  describe '#fresh_authorizations' do
-    it 'returns the new authorized projects' do
-      expect(service.fresh_authorizations.length).to eq(1)
-    end
-
-    it 'returns the highest access level' do
-      project.team.add_guest(user)
-
-      rows = service.fresh_authorizations.to_a
-
-      expect(rows.length).to eq(1)
-      expect(rows.first.access_level).to eq(Gitlab::Access::MASTER)
-    end
-
-    context 'every returned row' do
-      let(:row) { service.fresh_authorizations.take }
-
-      it 'includes the project ID' do
-        expect(row.project_id).to eq(project.id)
-      end
-
-      it 'includes the access level' do
-        expect(row.access_level).to eq(Gitlab::Access::MASTER)
+      it 'returns a User' do
+        expect(service.execute).to be_an_instance_of(User)
       end
     end
   end

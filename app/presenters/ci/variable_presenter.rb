@@ -1,25 +1,23 @@
+# frozen_string_literal: true
+
 module Ci
   class VariablePresenter < Gitlab::View::Presenter::Delegated
-    presents :variable
+    presents ::Ci::Variable, as: :variable
 
     def placeholder
       'PROJECT_VARIABLE'
     end
 
     def form_path
-      if variable.persisted?
-        project_variable_path(project, variable)
-      else
-        project_variables_path(project)
-      end
+      project_settings_ci_cd_path(project)
     end
 
     def edit_path
-      project_variable_path(project, variable)
+      project_variables_path(project)
     end
 
     def delete_path
-      project_variable_path(project, variable)
+      project_variables_path(project)
     end
   end
 end

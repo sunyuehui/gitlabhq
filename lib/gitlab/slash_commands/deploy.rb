@@ -1,8 +1,20 @@
+# frozen_string_literal: true
+
 module Gitlab
   module SlashCommands
     class Deploy < BaseCommand
+      DEPLOY_REGEX = /\Adeploy\s/
+
       def self.match(text)
-        /\Adeploy\s+(?<from>\S+.*)\s+to+\s+(?<to>\S+.*)\z/.match(text)
+        return unless text&.match?(DEPLOY_REGEX)
+
+        from, _, to = text.sub(DEPLOY_REGEX, '').rpartition(/\sto+\s/)
+        return if from.blank? || to.blank?
+
+        {
+          from: from.strip,
+          to: to.strip
+        }
       end
 
       def self.help_message
@@ -27,21 +39,27 @@ module Gitlab
           Gitlab::SlashCommands::Presenters::Deploy
             .new(action).action_not_found
         else
-          deployment = action.play(current_user)
+          result = action.play(current_user)
 
-          Gitlab::SlashCommands::Presenters::Deploy
-            .new(deployment).present(from, to)
+          if result.error?
+            Gitlab::SlashCommands::Presenters::Deploy
+              .new(action).action_failed(result.message)
+          else
+            Gitlab::SlashCommands::Presenters::Deploy
+              .new(result.payload[:job]).present(from, to)
+          end
         end
       end
 
       private
 
+      # rubocop: disable CodeReuse/ActiveRecord
       def find_action(from, to)
         environment = project.environments.find_by(name: from)
         return unless environment
 
         actions = environment.actions_for(to).select do |action|
-          action.starts_environment?
+          action.deployment_job?
         end
 
         if actions.many?
@@ -50,6 +68,7 @@ module Gitlab
           actions.first
         end
       end
+      # rubocop: enable CodeReuse/ActiveRecord
     end
   end
 end

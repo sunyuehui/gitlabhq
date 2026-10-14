@@ -1,46 +1,29 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'project owner sees a link to create a license file in empty project', js: true do
-  let(:project_master) { create(:user) }
-  let(:project) { create(:project) }
-  background do
-    project.team << [project_master, :master]
-    sign_in(project_master)
+RSpec.describe 'Projects > Files > Project owner sees a link to create a license file in empty project', :js,
+  feature_category: :source_code_management do
+  include Features::WebIdeSpecHelpers
+
+  let(:project) { create(:project_empty_repo) }
+  let(:project_maintainer) { project.first_owner }
+
+  before do
+    sign_in(project_maintainer)
   end
 
-  scenario 'project master creates a license file from a template' do
+  it 'allows project maintainer creates a license file from a template in Web IDE' do
     visit project_path(project)
-    click_link 'Create empty bare repository'
-    click_on 'LICENSE'
-    expect(page).to have_content('New file')
+    click_on 'Add LICENSE'
 
-    expect(current_path).to eq(
-      project_new_blob_path(project, 'master'))
-    expect(find('#file_name').value).to eq('LICENSE')
-    expect(page).to have_selector('.license-selector')
+    expect(page).to have_current_path(
+      "/-/ide/project/#{project.full_path}/edit/#{project.default_branch_or_main}/-/LICENSE",
+      ignore_query: true
+    )
 
-    select_template('MIT License')
-
-    file_content = first('.file-editor')
-    expect(file_content).to have_content('MIT License')
-    expect(file_content).to have_content("Copyright (c) #{Time.now.year} #{project.namespace.human_name}")
-
-    fill_in :commit_message, with: 'Add a LICENSE file', visible: true
-    # Remove pre-receive hook so we can push without auth
-    FileUtils.rm_f(File.join(project.repository.path, 'hooks', 'pre-receive'))
-    click_button 'Commit changes'
-
-    expect(current_path).to eq(
-      project_blob_path(project, 'master/LICENSE'))
-    expect(page).to have_content('MIT License')
-    expect(page).to have_content("Copyright (c) #{Time.now.year} #{project.namespace.human_name}")
-  end
-
-  def select_template(template)
-    page.within('.js-license-selector-wrap') do
-      click_button 'Apply a license template'
-      click_link template
-      wait_for_requests
+    within_web_ide do
+      expect(page).to have_text('LICENSE')
     end
   end
 end

@@ -1,71 +1,51 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'projects/commit/_commit_box.html.haml' do
-  let(:user) { create(:user) }
-  let(:project) { create(:project, :repository) }
+RSpec.describe 'projects/commit/_commit_box.html.haml' do
+  let_it_be(:user) { create(:user) }
+  let_it_be(:project) { create(:project, :repository, developers: user) }
 
   before do
     assign(:project, project)
     assign(:commit, project.commit)
-    allow(view).to receive(:can_collaborate_with_project?).and_return(false)
+    allow(view).to receive_messages(current_user: user, can_collaborate_with_project?: false)
   end
 
   it 'shows the commit SHA' do
     render
 
-    expect(rendered).to have_text("#{Commit.truncate_sha(project.commit.sha)}")
+    expect(rendered).to have_text(Commit.truncate_sha(project.commit.sha).to_s)
   end
 
   context 'when there is a pipeline present' do
-    context 'when there are multiple pipelines for a commit' do
-      it 'shows the last pipeline' do
-        create(:ci_pipeline, project: project, sha: project.commit.id, status: 'success')
-        create(:ci_pipeline, project: project, sha: project.commit.id, status: 'canceled')
-        third_pipeline = create(:ci_pipeline, project: project, sha: project.commit.id, status: 'failed')
+    let(:pipeline) { create(:ci_pipeline, project: project, sha: project.commit.id, status: 'success') }
 
-        render
-
-        expect(rendered).to have_text("Pipeline ##{third_pipeline.id} failed")
-      end
-    end
-
-    context 'when pipeline for the commit is blocked' do
-      let!(:pipeline) do
-        create(:ci_pipeline, :blocked, project: project,
-                                       sha: project.commit.id)
-      end
-
-      it 'shows correct pipeline description' do
-        render
-
-        expect(rendered).to have_text "Pipeline ##{pipeline.id} " \
-                                      'waiting for manual action'
-      end
-    end
-  end
-
-  context 'viewing a commit' do
-    context 'as a developer' do
+    context 'when pipeline has stages' do
       before do
-        expect(view).to receive(:can_collaborate_with_project?).and_return(true)
+        create(:ci_build, pipeline: pipeline, stage: 'build')
+
+        assign(:last_pipeline, project.commit.last_pipeline)
       end
 
-      it 'has a link to create a new tag' do
+      it 'shows pipeline stages in vue' do
         render
 
-        expect(rendered).to have_link('Tag')
+        expect(rendered).to have_selector("#js-commit-box-pipeline-summary[data-iid='#{pipeline.iid}']")
       end
     end
 
-    context 'as a non-developer' do
+    context 'when pipeline has no iid' do
       before do
-        expect(view).to receive(:can_collaborate_with_project?).and_return(false)
+        pipeline.update_column(:iid, nil)
+
+        assign(:last_pipeline, pipeline)
       end
 
-      it 'does not have a link to create a new tag' do
+      it 'does not show the pipeline summary' do
         render
 
-        expect(rendered).not_to have_link('Tag')
+        expect(rendered).not_to have_selector('#js-commit-box-pipeline-summary')
       end
     end
   end

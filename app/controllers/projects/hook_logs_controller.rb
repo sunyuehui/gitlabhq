@@ -1,33 +1,27 @@
+# frozen_string_literal: true
+
 class Projects::HookLogsController < Projects::ApplicationController
-  include HooksExecution
+  before_action :authorize_admin_hook!
 
-  before_action :authorize_admin_project!
-
-  before_action :hook, only: [:show, :retry]
-  before_action :hook_log, only: [:show, :retry]
-
-  respond_to :html
+  include WebHooks::HookLogActions
 
   layout 'project_settings'
-
-  def show
-  end
-
-  def retry
-    result = hook.execute(hook_log.request_data, hook_log.trigger)
-
-    set_hook_execution_notice(result)
-
-    redirect_to edit_project_hook_path(@project, @hook)
-  end
 
   private
 
   def hook
-    @hook ||= @project.hooks.find(params[:hook_id])
+    @hook ||= @project.hooks.find(hook_id_param)
   end
 
-  def hook_log
-    @hook_log ||= hook.web_hook_logs.find(params[:id])
+  def hook_id_param
+    params.permit(:hook_id)[:hook_id]
+  end
+
+  def after_retry_redirect_path
+    edit_project_hook_path(@project, hook)
+  end
+
+  def authorize_admin_hook!
+    render_404 unless can?(current_user, :admin_web_hook, project)
   end
 end

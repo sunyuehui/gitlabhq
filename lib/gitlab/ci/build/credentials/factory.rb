@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module Ci
     module Build
@@ -18,7 +20,7 @@ module Gitlab
           end
 
           def providers
-            [Registry]
+            [Registry::GitlabRegistry, Registry::DependencyProxy]
           end
         end
       end

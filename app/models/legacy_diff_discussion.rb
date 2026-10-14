@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # A discussion on merge request or commit diffs consisting of `LegacyDiffNote` notes.
 #
 # All new diff discussions are of the type `DiffDiscussion`, but any diff discussions created
@@ -17,10 +19,18 @@ class LegacyDiffDiscussion < Discussion
     true
   end
 
-  def active?(*args)
+  def on_image?
+    false
+  end
+
+  def on_text?
+    true
+  end
+
+  def active?(...)
     return @active if @active.present?
 
-    @active = first_note.active?(*args)
+    @active = first_note.active?(...)
   end
 
   def collapsed?

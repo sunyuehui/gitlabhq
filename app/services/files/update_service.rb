@@ -1,43 +1,50 @@
+# frozen_string_literal: true
+
 module Files
   class UpdateService < Files::BaseService
-    FileChangedError = Class.new(StandardError)
+    def create_commit!
+      transformer = Lfs::FileTransformer.new(project, repository, @branch_name, start_branch_name: @start_branch)
 
-    def initialize(*args)
-      super
+      result = transformer.new_file(@file_path, @file_content)
 
-      @last_commit_sha = params[:last_commit_sha]
+      create_transformed_commit(result.content)
     end
 
-    def create_commit!
-      repository.update_file(current_user, @file_path, @file_content,
-                             message: @commit_message,
-                             branch_name: @branch_name,
-                             previous_path: @previous_path,
-                             author_email: @author_email,
-                             author_name: @author_name,
-                             start_project: @start_project,
-                             start_branch_name: @start_branch)
+    def create_transformed_commit(content_or_lfs_pointer)
+      repository.update_file(
+        current_user,
+        @file_path,
+        content_or_lfs_pointer,
+        message: @commit_message,
+        branch_name: @branch_name,
+        previous_path: @previous_path,
+        author_email: @author_email,
+        author_name: @author_name,
+        start_project: @start_project,
+        start_branch_name: @start_branch,
+        execute_filemode: @execute_filemode
+      )
     end
 
     private
 
-    def file_has_changed?
-      return false unless @last_commit_sha && last_commit
-
-      @last_commit_sha != last_commit.sha
-    end
-
-    def last_commit
-      @last_commit ||= Gitlab::Git::Commit
-        .last_for_path(@start_project.repository, @start_branch, @file_path)
-    end
-
     def validate!
       super
 
-      if file_has_changed?
-        raise FileChangedError, "You are attempting to update a file that has changed since you started editing it."
+      raise Commits::CreateService::ValidationError, _('Path is a directory, not a file') if path_is_directory?
+
+      if file_has_changed?(@file_path, @last_commit_sha)
+        raise FileChangedError, _('You are attempting to update a file that has changed since you started editing it.')
       end
+    end
+
+    def path_is_directory?
+      ref = @start_branch.presence || @branch_name
+      commit = @start_project.repository.commit(ref)
+      return false unless commit
+
+      entry = commit.tree_entry(@file_path)
+      entry.present? && entry[:type] == :tree
     end
   end
 end

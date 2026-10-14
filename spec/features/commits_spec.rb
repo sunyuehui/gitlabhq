@@ -1,10 +1,24 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe 'Commits' do
-  include CiStatusHelper
+RSpec.describe 'Commits', feature_category: :source_code_management do
+  let_it_be(:project, freeze: false) { create(:project, :repository) }
+  let_it_be(:user) { create(:user) }
 
-  let(:project) { create(:project, :repository) }
-  let(:user) { create(:user) }
+  let(:ref_selector) { '.ref-selector' }
+  let(:ref_with_hash) { 'ref-#-hash' }
+
+  def switch_ref_to(ref_name)
+    find(ref_selector).click
+    wait_for_requests
+
+    page.within ref_selector do
+      fill_in 'Search by Git revision', with: ref_name
+      wait_for_requests
+      find('li', text: ref_name, match: :prefer_exact).click
+    end
+  end
 
   describe 'CI' do
     before do
@@ -12,34 +26,42 @@ describe 'Commits' do
       stub_ci_pipeline_to_return_yaml_file
     end
 
-    let(:creator) { create(:user) }
-
+    let(:creator) { create(:user, developer_of: project) }
     let!(:pipeline) do
-      create(:ci_pipeline,
-             project: project,
-             user: creator,
-             ref: project.default_branch,
-             sha: project.commit.sha,
-             status: :success,
-             created_at: 5.months.ago)
+      create(
+        :ci_pipeline,
+        project: project,
+        user: creator,
+        ref: project.default_branch,
+        sha: project.commit.sha,
+        status: :success,
+        created_at: 5.months.ago
+      )
     end
 
     context 'commit status is Generic Commit Status' do
-      let!(:status) { create(:generic_commit_status, pipeline: pipeline) }
+      let(:stage) { create(:ci_stage, pipeline: pipeline, name: 'external') }
+      let!(:status) { create(:generic_commit_status, pipeline: pipeline, ref: pipeline.ref, ci_stage: stage) }
 
       before do
-        project.team << [user, :reporter]
+        project.add_reporter(user)
       end
 
-      describe 'Commit builds' do
+      describe 'Commit builds', :js do
         before do
-          visit ci_status_path(pipeline)
+          visit builds_project_pipeline_path(project, pipeline)
+
+          wait_for_requests
         end
 
-        it { expect(page).to have_content pipeline.sha[0..7] }
+        it 'contains commit short id' do
+          within_testid('pipeline-header') do
+            expect(page).to have_content pipeline.sha[0..7]
+          end
+        end
 
         it 'contains generic commit status build' do
-          page.within('.table-holder') do
+          within_testid('jobs-tab-table') do
             expect(page).to have_content "##{status.id}" # build id
             expect(page).to have_content 'generic'       # build name
           end
@@ -49,114 +71,206 @@ describe 'Commits' do
 
     context 'commit status is Ci Build' do
       let!(:build) { create(:ci_build, pipeline: pipeline) }
-      let(:artifacts_file) { fixture_file_upload(Rails.root + 'spec/fixtures/banana_sample.gif', 'image/gif') }
+      let(:artifacts_file) { fixture_file_upload('spec/fixtures/banana_sample.gif', 'image/gif') }
 
       context 'when logged as developer' do
         before do
-          project.team << [user, :developer]
+          project.add_developer(user)
         end
 
-        describe 'Project commits' do
+        describe 'Project commits', :js do
+          let_it_be(:commit_short_id) { project.commit.short_id }
+
           let!(:pipeline_from_other_branch) do
-            create(:ci_pipeline,
-                   project: project,
-                   ref: 'fix',
-                   sha: project.commit.sha,
-                   status: :failed)
+            create(
+              :ci_pipeline,
+              project: project,
+              ref: 'fix',
+              sha: project.commit.sha,
+              status: :failed
+            )
           end
 
-          before do
-            visit project_commits_path(project, :master)
+          context 'while viewing a branch' do
+            before do
+              visit project_commits_path(project, :master)
+            end
+
+            it 'shows correct build status from default branch', :aggregate_failures do
+              page.within("#commit-#{commit_short_id}") do
+                expect(page).to have_css("[data-testid='ci-icon']")
+                expect(page).to have_css('[data-testid="status_success_borderless-icon"]')
+              end
+            end
           end
 
-          it 'shows correct build status from default branch' do
-            page.within("//li[@id='commit-#{pipeline.short_sha}']") do
-              expect(page).to have_css('.ci-status-link')
-              expect(page).to have_css('.ci-status-icon-success')
+          # Regression test for https://gitlab.com/gitlab-org/gitlab/-/issues/579690:
+          # a dangling-source pipeline (e.g. a security policy scan) newer than the
+          # commit's real CI pipeline must not determine the badge status.
+          context 'when a newer dangling pipeline exists' do
+            # Newer than the default-branch pipeline above, so it is the latest CI-source pipeline.
+            let!(:failed_ci_pipeline) do
+              create(
+                :ci_pipeline,
+                project: project,
+                ref: project.default_branch,
+                sha: project.commit.sha,
+                status: :failed,
+                source: :push
+              )
+            end
+
+            # Newest pipeline overall and green; a naive "latest of any source" would surface this.
+            let!(:dangling_pipeline) do
+              create(
+                :ci_pipeline,
+                project: project,
+                ref: project.default_branch,
+                sha: project.commit.sha,
+                status: :success,
+                source: :security_orchestration_policy
+              )
+            end
+
+            before do
+              visit project_commits_path(project, :master)
+            end
+
+            it 'shows the CI pipeline status and ignores the dangling pipeline', :aggregate_failures do
+              page.within("#commit-#{commit_short_id}") do
+                expect(page).to have_css("[data-testid='ci-icon']")
+                expect(page).to have_css('[data-testid="status_failed_borderless-icon"]')
+              end
+            end
+          end
+
+          context 'while viewing a commit' do
+            let_it_be(:sha) { project.commit.sha }
+            let_it_be(:short_sha) { sha[..7] }
+
+            before_all do
+              project.repository.add_branch(user, sha, 'master', skip_ci: true)
+              project.repository.add_branch(user, short_sha, 'master', skip_ci: true)
+            end
+
+            context 'when ref is a commit short sha' do
+              context 'without ref_type' do
+                before do
+                  visit project_commits_path(project, short_sha)
+                end
+
+                # Git prioritizes matching short SHAs to branches over commits
+                it 'does not show any build status' do
+                  page.within("#commit-#{commit_short_id}") do
+                    expect(page).not_to have_css("[data-testid='ci-icon']")
+                  end
+                end
+              end
+
+              context 'with ref_type' do
+                before do
+                  visit project_commits_path(project, short_sha, ref_type: 'heads')
+                end
+
+                it 'does not show any build status' do
+                  page.within("#commit-#{commit_short_id}") do
+                    expect(page).not_to have_css("[data-testid='ci-icon']")
+                  end
+                end
+              end
+            end
+
+            context 'when ref is a commit sha' do
+              context 'without ref_type' do
+                before do
+                  visit project_commits_path(project, sha)
+                end
+
+                it 'shows latest build status for the commit sha', :aggregate_failures do
+                  page.within("#commit-#{commit_short_id}") do
+                    expect(page).to have_css("[data-testid='ci-icon']")
+                    expect(page).to have_css('[data-testid="status_failed_borderless-icon"]')
+                  end
+                end
+              end
+
+              context 'with ref_type' do
+                before do
+                  visit project_commits_path(project, sha, ref_type: 'heads')
+                end
+
+                it 'does not show any build status' do
+                  page.within("#commit-#{commit_short_id}") do
+                    expect(page).not_to have_css("[data-testid='ci-icon']")
+                  end
+                end
+              end
             end
           end
         end
 
         describe 'Commit builds', :js do
           before do
-            visit ci_status_path(pipeline)
+            project.add_developer(user)
+            visit pipeline_path(pipeline)
           end
 
-          it 'shows pipeline`s data' do
+          it 'shows pipeline data' do
             expect(page).to have_content pipeline.sha[0..7]
-            expect(page).to have_content pipeline.git_commit_message
             expect(page).to have_content pipeline.user.name
           end
         end
 
-        context 'Download artifacts' do
+        context 'Download artifacts', :js do
           before do
-            build.update_attributes(artifacts_file: artifacts_file)
+            create(:ci_job_artifact, :archive, file: artifacts_file, job: build)
           end
 
           it do
-            visit ci_status_path(pipeline)
-            click_on 'Download artifacts'
-            expect(page.response_headers['Content-Type']).to eq(artifacts_file.content_type)
+            visit builds_project_pipeline_path(project, pipeline)
+            wait_for_requests
+            expect(page).to have_link('Download artifacts', href: download_project_job_artifacts_path(project, build, file_type: :archive))
           end
         end
 
-        describe 'Cancel all builds' do
-          it 'cancels commit', :js do
-            visit ci_status_path(pipeline)
-            click_on 'Cancel running'
-            expect(page).to have_content 'canceled'
-          end
-        end
-
-        describe 'Cancel build' do
-          it 'cancels build', :js do
-            visit ci_status_path(pipeline)
-            find('.js-btn-cancel-pipeline').click
-            expect(page).to have_content 'canceled'
-          end
-        end
-
-        describe '.gitlab-ci.yml not found warning' do
-          context 'ci builds enabled' do
-            it "does not show warning" do
-              visit ci_status_path(pipeline)
-              expect(page).not_to have_content '.gitlab-ci.yml not found in this commit'
-            end
-
-            it 'shows warning' do
-              stub_ci_pipeline_yaml_file(nil)
-              visit ci_status_path(pipeline)
-              expect(page).to have_content '.gitlab-ci.yml not found in this commit'
-            end
+        describe 'Cancel jobs' do
+          let!(:pipeline) do
+            create(
+              :ci_pipeline,
+              project: project,
+              user: creator,
+              ref: project.default_branch,
+              sha: project.commit.sha,
+              status: :running,
+              created_at: 5.months.ago
+            )
           end
 
-          context 'ci builds disabled' do
-            before do
-              stub_ci_builds_disabled
-              stub_ci_pipeline_yaml_file(nil)
-              visit ci_status_path(pipeline)
-            end
+          before do
+            visit pipeline_path(pipeline)
+            wait_for_requests
+            click_on 'Cancel the running pipeline'
+            wait_for_requests
+          end
 
-            it 'does not show warning' do
-              expect(page).not_to have_content '.gitlab-ci.yml not found in this commit'
-            end
+          it 'cancels pipeline and jobs', :js, :sidekiq_might_not_need_inline do
+            expect(page).to have_content 'Canceled'
           end
         end
       end
 
-      context "when logged as reporter" do
+      context "when logged as reporter", :js do
         before do
-          project.team << [user, :reporter]
-          build.update_attributes(artifacts_file: artifacts_file)
-          visit ci_status_path(pipeline)
+          project.add_reporter(user)
+          create(:ci_job_artifact, :archive, file: artifacts_file, job: build)
+          visit builds_project_pipeline_path(project, pipeline)
+          wait_for_requests
         end
 
-        it 'Renders header', :js do
+        it 'renders header' do
           expect(page).to have_content pipeline.sha[0..7]
-          expect(page).to have_content pipeline.git_commit_message
           expect(page).to have_content pipeline.user.name
-          expect(page).not_to have_link('Cancel running')
+          expect(page).not_to have_button('Cancel the running pipeline')
           expect(page).not_to have_link('Retry')
         end
 
@@ -167,19 +281,19 @@ describe 'Commits' do
 
       context 'when accessing internal project with disallowed access', :js do
         before do
-          project.update(
+          project.add_reporter(user)
+          project.update!(
             visibility_level: Gitlab::VisibilityLevel::INTERNAL,
             public_builds: false)
-          build.update_attributes(artifacts_file: artifacts_file)
-          visit ci_status_path(pipeline)
+          create(:ci_job_artifact, :archive, file: artifacts_file, job: build)
+          visit pipeline_path(pipeline)
         end
 
         it do
           expect(page).to have_content pipeline.sha[0..7]
-          expect(page).to have_content pipeline.git_commit_message
           expect(page).to have_content pipeline.user.name
 
-          expect(page).not_to have_link('Cancel running')
+          expect(page).not_to have_button('Cancel the running pipeline')
           expect(page).not_to have_link('Retry')
         end
       end
@@ -190,118 +304,169 @@ describe 'Commits' do
     let(:branch_name) { 'master' }
 
     before do
-      project.team << [user, :master]
+      stub_feature_flags(project_commits_refactor: false)
+      project.add_maintainer(user)
       sign_in(user)
+      project.repository.create_branch(ref_with_hash, branch_name)
       visit project_commits_path(project, branch_name)
     end
 
+    it 'includes a date on which the commits were authored' do
+      commits = project.repository.commits(branch_name, limit: 40)
+      commits.chunk { |c| c.committed_date.in_time_zone.to_date }.each do |day, _daily_commits|
+        expect(page).to have_content(day.strftime("%b %d, %Y"))
+      end
+    end
+
     it 'includes the committed_date for each commit' do
-      commits = project.repository.commits(branch_name)
+      commits = project.repository.commits(branch_name, limit: 40)
 
       commits.each do |commit|
-        expect(page).to have_content("committed #{commit.committed_date.strftime("%b %d, %Y")}")
+        expect(page).to have_content("authored #{commit.authored_date.strftime('%b %d, %Y')}")
       end
+    end
+
+    it 'switches ref to ref containing a hash', :js do
+      switch_ref_to(ref_with_hash)
+
+      expect(page).to have_selector ref_selector, text: ref_with_hash
+    end
+
+    it 'shows the ref switcher with the multi-file editor enabled', :js do
+      set_cookie('new_repo', 'true')
+      visit project_commits_path(project, branch_name)
+
+      expect(find(ref_selector)).to have_content branch_name
     end
   end
 
-  describe 'GPG signed commits', :js do
-    it 'changes from unverified to verified when the user changes his email to match the gpg key' do
-      user = create :user, email: 'unrelated.user@example.org'
-      project.team << [user, :master]
+  context 'viewing commits for a branch with refactored UI', :js do
+    let(:branch_name) { 'master' }
 
-      Sidekiq::Testing.inline! do
-        create :gpg_key, key: GpgHelpers::User1.public_key, user: user
-      end
-
+    before do
+      project.add_maintainer(user)
       sign_in(user)
+      project.repository.create_branch(ref_with_hash, branch_name)
+      visit project_commits_path(project, branch_name)
+    end
 
-      visit project_commits_path(project, :'signed-commits')
+    it 'shows commits grouped by day with dates', :aggregate_failures do
+      commits = project.repository.commits(branch_name, limit: 20)
+      # The UI renders day headers in the browser's (OS-local) timezone,
+      # so mirror that with +localtime+ rather than +Time.zone+.
+      expected_days = commits.map { |c| c.committed_date.localtime.strftime('%b %-d, %Y') }.uniq
 
-      within '#commits-list' do
-        expect(page).to have_content 'Unverified'
-        expect(page).not_to have_content 'Verified'
+      expect(page).to have_testid('daily-commits', count: expected_days.length)
+
+      expected_days.each do |day|
+        expect(page).to have_content(day)
       end
 
-      # user changes his email which makes the gpg key verified
-      Sidekiq::Testing.inline! do
-        user.skip_reconfirmation!
-        user.update_attributes!(email: GpgHelpers::User1.emails.first)
-      end
-
-      visit project_commits_path(project, :'signed-commits')
-
-      within '#commits-list' do
-        expect(page).to have_content 'Unverified'
-        expect(page).to have_content 'Verified'
+      within_testid('daily-commits', match: :first) do
+        expect(page).to have_testid('daily-commits-date', text: expected_days.first)
+        expect(page).to have_testid('commit-row', text: commits.first.title)
       end
     end
 
-    it 'changes from unverified to verified when the user adds the missing gpg key' do
-      user = create :user, email: GpgHelpers::User1.emails.first
-      project.team << [user, :master]
+    it 'shows the author and a relative authored date for each commit', :aggregate_failures do
+      commits = project.repository.commits(branch_name, limit: 20)
 
-      sign_in(user)
+      expect(page).to have_testid('commit-row', count: commits.length)
 
-      visit project_commits_path(project, :'signed-commits')
-
-      within '#commits-list' do
-        expect(page).to have_content 'Unverified'
-        expect(page).not_to have_content 'Verified'
-      end
-
-      # user adds the gpg key which makes the signature valid
-      Sidekiq::Testing.inline! do
-        create :gpg_key, key: GpgHelpers::User1.public_key, user: user
-      end
-
-      visit project_commits_path(project, :'signed-commits')
-
-      within '#commits-list' do
-        expect(page).to have_content 'Unverified'
-        expect(page).to have_content 'Verified'
+      within_testid('commit-row', match: :first) do
+        expect(page).to have_content("#{commits.first.author_name} authored")
+        expect(page).to have_testid('commit-authored-date')
       end
     end
 
-    it 'shows popover badges' do
-      gpg_user = create :user, email: GpgHelpers::User1.emails.first, username: 'nannie.bernhard', name: 'Nannie Bernhard'
-      Sidekiq::Testing.inline! do
-        create :gpg_key, key: GpgHelpers::User1.public_key, user: gpg_user
-      end
+    it 'switches ref to ref containing a hash' do
+      switch_ref_to(ref_with_hash)
 
-      user = create :user
-      project.team << [user, :master]
+      expect(page).to have_selector ref_selector, text: ref_with_hash
+    end
+  end
 
+  context 'viewing commits for an author' do
+    let(:author_commit) { project.repository.commits(nil, limit: 1).first }
+    let(:commits) { project.repository.commits(nil, author: author, limit: 40) }
+
+    before do
+      stub_feature_flags(project_commits_refactor: false)
+      project.add_maintainer(user)
       sign_in(user)
-      visit project_commits_path(project, :'signed-commits')
+      visit project_commits_path(project, nil, author: author)
+    end
 
-      # unverified signature
-      click_on 'Unverified', match: :first
-      within '.popover' do
-        expect(page).to have_content 'This commit was signed with an unverified signature.'
-        expect(page).to have_content "GPG Key ID: #{GpgHelpers::User2.primary_keyid}"
+    shared_examples 'show commits by author' do
+      it "includes the author's commits" do
+        commits.each do |commit|
+          expect(page).to have_content("#{author_commit.author_name} authored #{commit.authored_date.strftime('%b %d, %Y')}")
+        end
       end
+    end
 
-      # verified and the gpg user has a gitlab profile
-      click_on 'Verified', match: :first
-      within '.popover' do
-        expect(page).to have_content 'This commit was signed with a verified signature.'
-        expect(page).to have_content 'Nannie Bernhard'
-        expect(page).to have_content '@nannie.bernhard'
-        expect(page).to have_content "GPG Key ID: #{GpgHelpers::User1.primary_keyid}"
+    context 'author is complete' do
+      let(:author) { "#{author_commit.author_name} <#{author_commit.author_email}>" }
+
+      it_behaves_like 'show commits by author'
+    end
+
+    context 'author is just a name' do
+      let(:author) { author_commit.author_name.to_s }
+
+      it_behaves_like 'show commits by author'
+    end
+
+    context 'author is just an email' do
+      let(:author) { author_commit.author_email.to_s }
+
+      it_behaves_like 'show commits by author'
+    end
+  end
+
+  context 'viewing commits for an author with refactored UI', :js do
+    let(:author_commit) { project.repository.commit }
+    let(:other_author_commit) do
+      # A commit on the first (unfiltered) page authored by someone else,
+      # so it would be visible if author filtering did not work.
+      project.repository.commits(nil, limit: 20).find do |commit|
+        commit.author_email != author_commit.author_email
       end
+    end
 
-      # verified and the gpg user's profile doesn't exist anymore
-      gpg_user.destroy!
+    before do
+      project.add_maintainer(user)
+      sign_in(user)
+    end
 
-      visit project_commits_path(project, :'signed-commits')
+    shared_examples 'show commits filtered by author' do
+      it 'shows only commits by the selected author', :aggregate_failures do
+        visit project_commits_path(project, nil, author: author)
 
-      click_on 'Verified', match: :first
-      within '.popover' do
-        expect(page).to have_content 'This commit was signed with a verified signature.'
-        expect(page).to have_content 'Nannie Bernhard'
-        expect(page).to have_content 'nannie.bernhard@example.com'
-        expect(page).to have_content "GPG Key ID: #{GpgHelpers::User1.primary_keyid}"
+        expect(page).to have_testid('commit-row')
+        expect(page).to have_content("#{author_commit.author_name} authored")
+
+        expect(page).not_to have_content("#{other_author_commit.author_name} authored")
+        expect(page).not_to have_content(other_author_commit.title)
       end
+    end
+
+    context 'when author is specified as both a name and an email' do
+      let(:author) { "#{author_commit.author_name} <#{author_commit.author_email}>" }
+
+      it_behaves_like 'show commits filtered by author'
+    end
+
+    context 'when author is just a name' do
+      let(:author) { author_commit.author_name.to_s }
+
+      it_behaves_like 'show commits filtered by author'
+    end
+
+    context 'when author is just an email' do
+      let(:author) { author_commit.author_email.to_s }
+
+      it_behaves_like 'show commits filtered by author'
     end
   end
 end

@@ -1,19 +1,28 @@
+# frozen_string_literal: true
+
 require "nokogiri"
-require "asciidoctor-plantuml/plantuml"
+require "asciidoctor_plantuml/plantuml"
 
 module Banzai
   module Filter
-    # HTML that replaces all `code plantuml` tags with PlantUML img tags.
+    # HTML that replaces all `lang plantuml` tags with PlantUML img tags.
     #
     class PlantumlFilter < HTML::Pipeline::Filter
+      prepend Concerns::PipelineTimingCheck
+      prepend Concerns::DiagramService
+
       def call
-        return doc unless doc.at('pre > code[lang="plantuml"]') && settings.plantuml_enabled
+        return doc unless settings.plantuml_enabled?
 
-        plantuml_setup
+        doc.xpath(lang_tag).each do |node|
+          diagram_src = node.content.chomp
+          img_tag = self.class.plantuml_img_tag(diagram_src)
 
-        doc.css('pre > code[lang="plantuml"]').each do |node|
-          img_tag = Nokogiri::HTML::DocumentFragment.parse(
-            Asciidoctor::PlantUml::Processor.plantuml_content(node.content, {}))
+          next if img_tag.nil?
+
+          img_tag.set_attribute('data-diagram', 'plantuml')
+          img_tag.set_attribute('data-diagram-src', "data:text/plain;base64,#{Base64.strict_encode64(diagram_src)}")
+
           node.parent.replace(img_tag)
         end
 
@@ -22,16 +31,23 @@ module Banzai
 
       private
 
-      def settings
-        ApplicationSetting.current || ApplicationSetting.create_from_defaults
+      def lang_tag
+        @lang_tag ||= Gitlab::Utils::Nokogiri.css_to_xpath(css_selector_for_code_blocks(lang: 'plantuml')).freeze
       end
 
-      def plantuml_setup
-        Asciidoctor::PlantUml.configure do |conf|
-          conf.url = settings.plantuml_url
-          conf.png_enable = settings.plantuml_enabled
-          conf.svg_enable = false
-          conf.txt_enable = false
+      class << self
+        def plantuml_img_tag(diagram_src)
+          Gitlab::Plantuml.configure
+
+          Nokogiri::HTML5::DocumentFragment.parse(
+            Asciidoctor::PlantUml::Processor.plantuml_content(diagram_src, {})).css('img').first
+        end
+
+        def plantuml_img_src(diagram_src)
+          img_tag = plantuml_img_tag(diagram_src)
+          return unless img_tag
+
+          img_tag['src']
         end
       end
     end

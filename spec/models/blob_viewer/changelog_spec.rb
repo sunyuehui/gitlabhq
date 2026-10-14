@@ -1,14 +1,18 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-describe BlobViewer::Changelog do
+RSpec.describe BlobViewer::Changelog do
   include FakeBlobHelpers
 
-  let(:project) { create(:project, :repository) }
   let(:blob) { fake_blob(path: 'CHANGELOG') }
+
   subject { described_class.new(blob) }
 
   describe '#render_error' do
     context 'when there are no tags' do
+      let(:project) { create(:project, :small_repo) }
+
       before do
         allow(project.repository).to receive(:tag_count).and_return(0)
       end
@@ -19,6 +23,8 @@ describe BlobViewer::Changelog do
     end
 
     context 'when there are tags' do
+      let(:project) { create(:project, :small_repo, create_tag: 'v1.0.0') }
+
       it 'returns nil' do
         expect(subject.render_error).to be_nil
       end

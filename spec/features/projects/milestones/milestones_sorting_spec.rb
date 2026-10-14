@@ -1,52 +1,60 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
-feature 'Milestones sorting', :js do
-  include SortingHelper
+RSpec.describe 'Milestones sorting', :js, feature_category: :team_planning do
+  include ListboxHelpers
+
   let(:user)    { create(:user) }
   let(:project) { create(:project, name: 'test', namespace: user.namespace) }
+  let(:milestones_for_sort_by) do
+    {
+      'Due later' => %w[b c a],
+      'Name, ascending' => %w[a b c],
+      'Name, descending' => %w[c b a],
+      'Start later' => %w[a c b],
+      'Start soon' => %w[b c a],
+      'Due soon' => %w[a c b]
+    }
+  end
+
+  let(:ordered_milestones) do
+    ['Due soon', 'Due later', 'Start soon', 'Start later', 'Name, ascending', 'Name, descending']
+  end
 
   before do
-    # Milestones
-    create(:milestone,
-      due_date: 10.days.from_now,
-      created_at:  2.hours.ago,
-      title: "aaa", project: project)
-    create(:milestone,
-      due_date: 11.days.from_now,
-      created_at:  1.hour.ago,
-      title: "bbb", project: project)
+    create(:milestone, start_date: 7.days.from_now, due_date: 10.days.from_now, title: "a", project: project)
+    create(:milestone, start_date: 6.days.from_now, due_date: 11.days.from_now, title: "c", project: project)
+    create(:milestone, start_date: 5.days.from_now, due_date: 12.days.from_now, title: "b", project: project)
     sign_in(user)
   end
 
-  scenario 'visit project milestones and sort by due_date_asc' do
+  it 'visit project milestones and sort by various orders' do
     visit project_milestones_path(project)
 
     expect(page).to have_button('Due soon')
 
-    # assert default sorting
+    # assert default sorting order
     within '.milestones' do
-      expect(page.all('ul.content-list > li').first.text).to include('aaa')
-      expect(page.all('ul.content-list > li').last.text).to include('bbb')
+      expect(page.all('[data-testid="milestone-link"]').map(&:text)).to eq(%w[a c b])
     end
 
-    click_button 'Due soon'
+    # assert milestones listed for given sort order
+    selected_sort_order = 'Due soon'
+    milestones_for_sort_by.each do |sort_by, expected_milestones|
+      click_button selected_sort_order
 
-    sort_options = find('ul.dropdown-menu-sort li').all('a').collect(&:text)
+      expect_listbox_items(ordered_milestones)
 
-    expect(sort_options[0]).to eq('Due soon')
-    expect(sort_options[1]).to eq('Due later')
-    expect(sort_options[2]).to eq('Start soon')
-    expect(sort_options[3]).to eq('Start later')
-    expect(sort_options[4]).to eq('Name, ascending')
-    expect(sort_options[5]).to eq('Name, descending')
+      select_listbox_item(sort_by)
 
-    click_link 'Due later'
+      expect(page).to have_button(sort_by)
 
-    expect(page).to have_button('Due later')
+      within '.milestones' do
+        expect(page.all('[data-testid="milestone-link"]').map(&:text)).to eq(expected_milestones)
+      end
 
-    within '.milestones' do
-      expect(page.all('ul.content-list > li').first.text).to include('bbb')
-      expect(page.all('ul.content-list > li').last.text).to include('aaa')
+      selected_sort_order = sort_by
     end
   end
 end

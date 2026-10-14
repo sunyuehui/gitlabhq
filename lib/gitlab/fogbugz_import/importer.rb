@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Gitlab
   module FogbugzImport
     class Importer
@@ -18,11 +20,13 @@ module Gitlab
 
       def execute
         return true unless repo.valid?
+
         client = Gitlab::FogbugzImport::Client.new(token: fb_session[:token], uri: fb_session[:uri])
 
         @cases = client.cases(@repo.id.to_i)
         @categories = client.categories
 
+        preallocate_iids!
         import_cases
 
         true
@@ -30,13 +34,22 @@ module Gitlab
 
       private
 
+      def preallocate_iids!
+        return if @cases.blank?
+
+        max_iid = @cases.filter_map { |bug| bug['ixBug']&.to_i }.max
+        return unless Gitlab::Import::IidPreallocator.valid_iid_value?(max_iid)
+
+        Gitlab::Import::IidPreallocator.new(project, { issues: max_iid }).execute
+      end
+
       def fb_session
         @import_data_credentials ||= project.import_data.credentials[:fb_session] if project.import_data && project.import_data.credentials
       end
 
       def user_map
         @user_map ||= begin
-          user_map = Hash.new
+          user_map = {}
           import_data = project.import_data.try(:data)
           stored_user_map = import_data['user_map'] if import_data
           user_map.update(stored_user_map) if stored_user_map
@@ -78,6 +91,7 @@ module Gitlab
         ::Labels::FindOrCreateService.new(nil, project, params).execute(skip_authorization: true)
       end
 
+      # rubocop: disable CodeReuse/ActiveRecord
       def user_info(person_id)
         user_hash = user_map[person_id.to_s]
 
@@ -94,7 +108,9 @@ module Gitlab
 
         { name: user_name, gitlab_id: gitlab_id }
       end
+      # rubocop: enable CodeReuse/ActiveRecord
 
+      # rubocop: disable CodeReuse/ActiveRecord
       def import_cases
         return unless @cases
 
@@ -109,12 +125,13 @@ module Gitlab
 
           labels = []
           [bug['sCategory'], bug['sPriority']].each do |label|
-            unless label.blank?
-              labels << label
-              unless @known_labels.include?(label)
-                create_label(label)
-                @known_labels << label
-              end
+            next if label.blank?
+
+            labels << label
+
+            unless @known_labels.include?(label)
+              create_label(label)
+              @known_labels << label
             end
           end
 
@@ -122,15 +139,15 @@ module Gitlab
           author_id = user_info(bug['ixPersonOpenedBy'])[:gitlab_id] || project.creator_id
 
           issue = Issue.create!(
-            iid:          bug['ixBug'],
-            project_id:   project.id,
-            title:        bug['sTitle'],
-            description:  body,
-            author_id:    author_id,
+            iid: bug['ixBug'],
+            project_id: project.id,
+            title: bug['sTitle'],
+            description: body,
+            author_id: author_id,
             assignee_ids: [assignee_id],
-            state:        bug['fOpen'] == 'true' ? 'opened' : 'closed',
-            created_at:   date,
-            updated_at:   DateTime.parse(bug['dtLastUpdated'])
+            state: bug['fOpen'] == 'true' ? 'opened' : 'closed',
+            created_at: date,
+            updated_at: DateTime.parse(bug['dtLastUpdated'])
           )
 
           issue_labels = ::LabelsFinder.new(nil, project_id: project.id, title: labels).execute(skip_authorization: true)
@@ -139,6 +156,7 @@ module Gitlab
           import_issue_comments(issue, comments)
         end
       end
+      # rubocop: enable CodeReuse/ActiveRecord
 
       def opened_content(comments)
         while comment = comments.shift
@@ -150,62 +168,59 @@ module Gitlab
       end
 
       def import_issue_comments(issue, comments)
-        Note.transaction do
-          while comment = comments.shift
-            verb = comment['sVerb']
+        while comment = comments.shift
+          verb = comment['sVerb']
 
-            next if verb == 'Opened'
+          next if verb == 'Opened'
 
-            content = format_content(comment['s'])
-            attachments = format_attachments(comment['rgAttachments'])
-            updates = format_updates(comment)
+          content = format_content(comment['s'])
+          attachments = format_attachments(comment['rgAttachments'])
+          updates = format_updates(comment)
 
-            next if content.blank? && attachments.empty? && updates.empty?
+          next if content.blank? && attachments.empty? && updates.empty?
 
-            author = user_info(comment['ixPerson'])[:name]
-            author_id = user_info(comment['ixPerson'])[:gitlab_id] || project.creator_id
-            date = DateTime.parse(comment['dt'])
+          author = user_info(comment['ixPerson'])[:name]
+          author_id = user_info(comment['ixPerson'])[:gitlab_id] || project.creator_id
+          date = DateTime.parse(comment['dt'])
 
-            body = format_issue_comment_body(
-              comment['ixBugEvent'],
-              author,
-              date,
-              content,
-              attachments,
-              updates
-            )
+          body = format_issue_comment_body(
+            comment['ixBugEvent'],
+            author,
+            date,
+            content,
+            attachments,
+            updates
+          )
 
-            note = Note.create!(
-              project_id:     project.id,
-              noteable_type:  "Issue",
-              noteable_id:    issue.id,
-              author_id:      author_id,
-              note:           body
-            )
-
-            note.update_attribute(:created_at, date)
-            note.update_attribute(:updated_at, date)
-          end
+          Note.create!(
+            importing: true,
+            project_id: project.id,
+            noteable_type: "Issue",
+            noteable_id: issue.id,
+            author_id: author_id,
+            note: body,
+            created_at: date,
+            updated_at: date
+          )
         end
       end
 
-      def linkify_issues(s)
-        s = s.gsub(/([Ii]ssue) ([0-9]+)/, '\1 #\2')
-        s = s.gsub(/([Cc]ase) ([0-9]+)/, '\1 #\2')
-        s
+      def linkify_issues(str)
+        str = str.gsub(/([Ii]ssue) ([0-9]+)/, '\1 #\2')
+        str.gsub(/([Cc]ase) ([0-9]+)/, '\1 #\2')
       end
 
-      def escape_for_markdown(s)
-        s = s.gsub(/^#/, "\\#")
-        s = s.gsub(/^-/, "\\-")
-        s = s.gsub("`", "\\~")
-        s = s.delete("\r")
-        s = s.gsub("\n", "  \n")
-        s
+      def escape_for_markdown(str)
+        str = str.gsub(/^#/, "\\#")
+        str = str.gsub(/^-/, "\\-")
+        str = str.gsub("`", "\\~")
+        str = str.delete("\r")
+        str.gsub("\n", "  \n")
       end
 
       def format_content(raw_content)
         return raw_content if raw_content.nil?
+
         linkify_issues(escape_for_markdown(raw_content))
       end
 
@@ -230,7 +245,7 @@ module Gitlab
 
         res = ::Projects::DownloadService.new(project, link).execute
 
-        return nil if res.nil?
+        return if res.nil?
 
         res[:markdown]
       end
@@ -263,6 +278,7 @@ module Gitlab
         if content.blank?
           content = '*(No description has been entered for this issue)*'
         end
+
         body << content
 
         body.join("\n\n")
@@ -276,6 +292,7 @@ module Gitlab
         if content.blank?
           content = "*(No comment has been entered for this change)*"
         end
+
         body << content
 
         if updates.any?
